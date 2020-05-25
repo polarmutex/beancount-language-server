@@ -41,13 +41,10 @@ pygls = ">=0.8.1"
 pylint = "^2.3"
 black = {version = "^19.10b0", allow-prereleases = true}
 pytest = "^5.0"
+jedi-language-server = "^0.15.1"
 
 [tool.poetry.scripts]
 beancount-language-server = 'beancount_language_server.cli:cli'
-
-[build-system]
-requires = ["poetry>=0.12"]
-build-backend = "poetry.masonry.api"
 
 [tool.black]
 line-length = 79
@@ -57,3 +54,7 @@ line_length = 79
 indent = '    '
 multi_line_output = 3
 include_trailing_comma = true
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"
+

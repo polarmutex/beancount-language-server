@@ -6,7 +6,7 @@ import sys
 
 from .server import SERVER
 
-logging.basicConfig(filename="bls.log", level=logging.DEBUG, filemode="w")
+# logging.basicConfig(filename="bls.log", level=logging.DEBUG, filemode="w")
 
 @click.command()
 def cli() -> None:

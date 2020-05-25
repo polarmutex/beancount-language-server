@@ -1,3 +1,4 @@
+import datetime
 import itertools
 import logging
 from typing import Dict, List, Optional, Union
@@ -23,6 +24,7 @@ from pygls.protocol import LanguageServerProtocol
 from pygls.server import LanguageServer
 from pygls.types import (
     CompletionItem,
+    CompletionItemKind,
     CompletionList,
     CompletionParams,
     Diagnostic,
@@ -55,6 +57,7 @@ from pygls.types import (
 )
 
 from beancount import loader
+from beancount.core.getters import get_accounts, get_all_payees, get_all_tags
 
 class BeancountLanguageServerProtocol(LanguageServerProtocol):
 
@@ -62,7 +65,7 @@ class BeancountLanguageServerProtocol(LanguageServerProtocol):
         result :InitializeResult = super().bf_initialize(params)
 
         # pygls does not support TextDocumentSyncOptions that neovim lsp needs, hack it in
-        result.capabilities.textDocumentSync = TextDocumentSyncOptions(True,TextDocumentSyncKind.INCREMENTAL,False,False,SaveOptions(True))
+        result.capabilities.textDocumentSync = TextDocumentSyncOptions(True,TextDocumentSyncKind.INCREMENTAL,False,False,SaveOptions(include_text=False))
 
         return result
 
@@ -74,6 +77,9 @@ class BeancountLanguageServer(LanguageServer):
         super().__init__(*args, **kwargs)
         self.logger = logging.getLogger()
         self.diagnostics = {}
+        self.accounts = []
+        self.payees = []
+        self.tags = []
 
 SERVER = BeancountLanguageServer(protocol_cls=BeancountLanguageServerProtocol)
 
@@ -119,6 +125,10 @@ def _validate(server: BeancountLanguageServer, params):
 
     server.show_message_log('Done Validating')
 
+    server.accounts = get_accounts(entries)
+    server.payees = get_all_payees(entries)
+    server.tags = get_all_tags(entries)
+
 
 @SERVER.feature(INITIALIZE)
 def initialize(server:BeancountLanguageServer, params: InitializeParams):
@@ -135,3 +145,89 @@ def did_save(server: BeancountLanguageServer, params: DidSaveTextDocumentParams)
 def did_open(server: BeancountLanguageServer, params: DidOpenTextDocumentParams):
     """Actions run on textDocument/didOpen"""
     _validate(server, params)
+
+@SERVER.feature(COMPLETION, trigger_characters=["^",'"'])
+def completion(server: BeancountLanguageServer, params: CompletionParams) -> CompletionList:
+    """Returns completion items."""
+
+    position = params.position
+    document = server.workspace.get_document(params.textDocument.uri)
+    word = document.word_at_position(position)
+    trigger_char = document.lines[position.line][position.character]
+
+    completion_items = []
+
+    server.logger.debug(f"trigger_char: {trigger_char} - word: {word} - {position.character}")
+
+    # Match start of Date
+    if word.startswith("2"):
+
+        today = datetime.date.today()
+        year = today.year
+        month = f"{today.month}".zfill(2)
+        day = f"{today.day}".zfill(2)
+
+        # Todays Date
+        completion_item = CompletionItem(
+            f"{year}-{month}-{day}",
+            kind=CompletionItemKind.Reference,
+            detail="Todays date",
+            preselect=True
+        )
+        completion_items.append(completion_item)
+
+        # Current Month
+        completion_item = CompletionItem(
+            f"{year}-{month}-",
+            kind=CompletionItemKind.Reference,
+            detail="Current Month"
+        )
+        completion_items.append(completion_item)
+
+        # Prev Month
+        first_of_current_month = today.replace(day=1)
+        last_day_of_prev_month = first_of_current_month - datetime.timedelta(days=1)
+        month = f"{last_day_of_prev_month.month}".zfill(2)
+        year = last_day_of_prev_month.year
+        completion_item = CompletionItem(
+            f"{year}-{month}-",
+            kind=CompletionItemKind.Reference,
+            detail="Previous Month"
+        )
+        completion_items.append(completion_item)
+
+        # Next Month
+        month = today.month - 1 + 1
+        year = today.year + month // 12
+        month = f"{month % 12 + 1}".zfill(2)
+        completion_item = CompletionItem(
+            f"{year}-{month}",
+            kind=CompletionItemKind.Reference,
+            detail="Next Month"
+        )
+        completion_items.append(completion_item)
+
+    elif trigger_char == '"':
+        for payee in server.payees:
+            if word in payee:
+                completion_item = CompletionItem(
+                    payee,
+                    kind=CompletionItemKind.Text,
+                    detail="Beancount Payee",
+                )
+                completion_items.append(completion_item)
+
+    else:
+        for account in server.accounts:
+            if word in account:
+                completion_item = CompletionItem(
+                    account,
+                    kind=CompletionItemKind.Text,
+                    detail="Beancount Account",
+                )
+                completion_items.append(completion_item)
+
+    return CompletionList(
+        is_incomplete=True,
+        items=completion_items
+    )
