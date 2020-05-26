@@ -1,6 +1,7 @@
 import datetime
 import itertools
 import logging
+import re
 from typing import Dict, List, Optional, Union
 
 from pygls.features import (
@@ -8,6 +9,7 @@ from pygls.features import (
     DEFINITION,
     DOCUMENT_HIGHLIGHT,
     DOCUMENT_SYMBOL,
+    FORMATTING,
     HOVER,
     INITIALIZE,
     REFERENCES,
@@ -27,10 +29,12 @@ from pygls.types import (
     CompletionItemKind,
     CompletionList,
     CompletionParams,
+    CompletionTriggerKind,
     Diagnostic,
     DidChangeTextDocumentParams,
     DidOpenTextDocumentParams,
     DidSaveTextDocumentParams,
+    DocumentFormattingParams,
     DocumentHighlight,
     DocumentSymbol,
     DocumentSymbolParams,
@@ -58,6 +62,7 @@ from pygls.types import (
 
 from beancount import loader
 from beancount.core.getters import get_accounts, get_all_payees, get_all_tags
+from beancount.scripts.format import align_beancount
 
 class BeancountLanguageServerProtocol(LanguageServerProtocol):
 
@@ -153,7 +158,11 @@ def completion(server: BeancountLanguageServer, params: CompletionParams) -> Com
     position = params.position
     document = server.workspace.get_document(params.textDocument.uri)
     word = document.word_at_position(position)
-    trigger_char = document.lines[position.line][position.character]
+
+    if (hasattr(params, 'context') and params.context.triggerKind == CompletionTriggerKind.TriggerCharacter):
+        trigger_char = params.context.triggerCharacter
+    else:
+        trigger_char = document.lines[position.line][position.character]
 
     completion_items = []
 
@@ -231,3 +240,18 @@ def completion(server: BeancountLanguageServer, params: CompletionParams) -> Com
         is_incomplete=True,
         items=completion_items
     )
+
+@SERVER.feature(FORMATTING)
+def formatting(server: BeancountLanguageServer, params: DocumentFormattingParams):
+    document = server.workspace.get_document(params.textDocument.uri)
+
+    content = document.source
+
+    result = align_beancount(content) # format_beancount(content)
+
+    lines = content.count('\n')
+    return [
+        TextEdit(Range(Position(0, 0), Position(lines + 1, 0)),
+        result)
+    ]
+
