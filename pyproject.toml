@@ -41,7 +41,7 @@ pygls = ">=0.8.1"
 pylint = "^2.3"
 black = {version = "^19.10b0", allow-prereleases = true}
 pytest = "^5.0"
-jedi-language-server = "^0.15.1"
+python-language-server = "^0.33.3"
 
 [tool.poetry.scripts]
 beancount-language-server = 'beancount_language_server.cli:cli'
