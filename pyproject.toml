@@ -36,6 +36,7 @@ python = "^3.7"
 click = ">=7.0"
 beancount = ">=2.2.3"
 pygls = ">=0.8.1"
+tree_sitter = "^0.1.1"
 
 [tool.poetry.dev-dependencies]
 pylint = "^2.3"

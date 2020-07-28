@@ -614,6 +614,14 @@ python-versions = "*"
 version = "0.10.1"
 
 [[package]]
+category = "main"
+description = "Python bindings to the Tree-sitter parsing library"
+name = "tree-sitter"
+optional = false
+python-versions = ">=3.3"
+version = "0.1.1"
+
+[[package]]
 category = "dev"
 description = "a fork of Python 2 and 3 ast modules with type comment support"
 name = "typed-ast"
@@ -681,7 +689,8 @@ docs = ["sphinx", "jaraco.packaging (>=3.2)", "rst.linker (>=1.9)"]
 testing = ["jaraco.itertools", "func-timeout"]
 
 [metadata]
-content-hash = "5284b487de68457d64ecb51cfeefb9631cffdc1d68bde88773fa7fb61b3eda94"
+content-hash = "7bf9b4f1bc8e3224a47410fd119b0af95094c1dd8165d3c5d646f0a2130e8cc7"
+lock-version = "1.0"
 python-versions = "^3.7"
 
 [metadata.files]
@@ -986,6 +995,10 @@ soupsieve = [
 toml = [
     {file = "toml-0.10.1-py2.py3-none-any.whl", hash = "sha256:bda89d5935c2eac546d648028b9901107a595863cb36bae0c73ac804a9b4ce88"},
     {file = "toml-0.10.1.tar.gz", hash = "sha256:926b612be1e5ce0634a2ca03470f95169cf16f939018233a670519cb4ac58b0f"},
+]
+tree-sitter = [
+    {file = "tree_sitter-0.1.1-cp37-cp37m-macosx_10_14_x86_64.whl", hash = "sha256:14e556f9369445d27ae0e6d678299a3f0f5a54dc0b75c365d7beb43c183d95bc"},
+    {file = "tree_sitter-0.1.1.tar.gz", hash = "sha256:704edf00b83522fecbcf7957e84c452848aaa0bc5f6575ca9721f43ce835e834"},
 ]
 typed-ast = [
     {file = "typed_ast-1.4.1-cp35-cp35m-manylinux1_i686.whl", hash = "sha256:73d785a950fc82dd2a25897d525d003f6378d1cb23ab305578394694202a58c3"},
