@@ -22,8 +22,6 @@ from beancount.parser.options import OPTIONS_DEFAULTS  # type: ignore
 from beancount.parser.options import READ_ONLY_OPTIONS  # type: ignore
 from tree_sitter import Node
 
-from fava.helpers import BeancountError
-
 
 def valid_base_account_regexp(options) -> Pattern[str]:
     """Build a regexp to match the base accounts."""

@@ -90,7 +90,7 @@ class BeancountLanguageServer(LanguageServer):
         self.tags = []
 
         self.use_tree_sitter = False
-        self.parser = Parser(self.use_tree_sitter)
+        self.parser = None
 
     def _publish_beancount_diagnostics(self, params, errors):
 
@@ -127,9 +127,9 @@ class BeancountLanguageServer(LanguageServer):
         for filename in self.diagnostics:
             self.publish_diagnostics(f"file://{filename}", self.diagnostics[filename])
 
-        self.accounts = get_accounts(entries)
-        self.payees = get_all_payees(entries)
-        self.tags = get_all_tags(entries)
+        #self.accounts = get_accounts(entries)
+        #self.payees = get_all_payees(entries)
+        #self.tags = get_all_tags(entries)
 
 
 SERVER = BeancountLanguageServer(protocol_cls=BeancountLanguageServerProtocol)
@@ -140,7 +140,8 @@ def initialize(server:BeancountLanguageServer, params: InitializeParams):
     opts = params.initializationOptions
     server.logger.info(opts)
     server._journal = os.path.expanduser(opts.journal)
-    server.parser.set_root_file(server._journal)
+    server.use_tree_sitter = opts.use_tree_sitter
+    server.parser = Parser(server._journal, server.use_tree_sitter)
 
 @SERVER.feature(TEXT_DOCUMENT_DID_SAVE)
 def did_save(server: BeancountLanguageServer, params: DidSaveTextDocumentParams):

@@ -1,11 +1,12 @@
 import logging
 import os
 from pathlib import Path
-from typing import Set
+from typing import Any, List, Optional, Set
 
-from tree_sitter import Language, Parser
+from beancount.core.data import Entries
+from tree_sitter import Language, Parser, Node
 
-from beancount_language_server.parser.sttae import BaseState
+from beancount_language_server.parser.state import BaseState
 
 logger = logging.getLogger()
 
@@ -14,14 +15,14 @@ logger.info("Setting up Beancoun Tree Sitter")
 module_path = os.path.dirname(__file__)
 Language.build_library(
     # Store the library in the 'build' dir
-    f'{module_path}/../build/tree-sitter-beancount.so',
+    f'{module_path}/../../build/tree-sitter-beancount.so',
 
     [
-        f'{module_path}/../vendor/tree-sitter-beancount'
+        f'{module_path}/../../vendor/tree-sitter-beancount'
     ]
 )
 
-BEANCOUNT_LANGUAGE = Language(f'{module_path}/../build/tree-sitter-beancount.so', 'beancount')
+BEANCOUNT_LANGUAGE = Language(f'{module_path}/../../build/tree-sitter-beancount.so', 'beancount')
 
 logger.info("Setting up Beancount Parser")
 parser = Parser()
@@ -49,9 +50,9 @@ def parse_bytes(contents:bytes, filename:str = None):
     # with log_time(f"Parsing {filename}", LOG):
     tree = parser.parse(contents)
 
-    entries = _recursive_parse(tree.root_node.children, filename, seen_files)
-
-    return entries, state
+    #entries = _recursive_parse(tree.root_node.children, filename, seen_files)
+    #return entries, state
+    return contents, tree
 
 class ParserState(BaseState):
     """The state of the parser.
