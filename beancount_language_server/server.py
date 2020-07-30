@@ -108,7 +108,6 @@ class BeancountLanguageServer(LanguageServer):
             del self.diagnostics[key]
 
         for e in errors:
-            self.logger.info(e)
             line = e.source['lineno']
             msg = e.message
             filename = e.source['filename']
@@ -138,7 +137,7 @@ SERVER = BeancountLanguageServer(protocol_cls=BeancountLanguageServerProtocol)
 @SERVER.feature(INITIALIZE)
 def initialize(server:BeancountLanguageServer, params: InitializeParams):
     opts = params.initializationOptions
-    server.logger.info(opts)
+    server.logger.info("INITIALIZE")
     server._journal = os.path.expanduser(opts.journal)
     server.use_tree_sitter = opts.use_tree_sitter
     server.parser = Parser(server._journal, server.use_tree_sitter)
@@ -146,12 +145,14 @@ def initialize(server:BeancountLanguageServer, params: InitializeParams):
 @SERVER.feature(TEXT_DOCUMENT_DID_SAVE)
 def did_save(server: BeancountLanguageServer, params: DidSaveTextDocumentParams):
     """Actions run on textDocument/didSave"""
+    server.logger.info("didSave")
     entries, errors, options = server.parser.save()
     server._publish_beancount_diagnostics(params, errors)
 
 @SERVER.feature(TEXT_DOCUMENT_DID_OPEN)
 def did_open(server: BeancountLanguageServer, params: DidOpenTextDocumentParams):
     """Actions run on textDocument/didOpen"""
+    server.logger.info("didSave")
     entries, errors, options = server.parser.open()
     server._publish_beancount_diagnostics(params, errors)
 

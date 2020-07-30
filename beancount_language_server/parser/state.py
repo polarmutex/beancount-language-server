@@ -20,6 +20,7 @@ from beancount.parser.grammar import ParserError
 from beancount.parser.options import OPTIONS  # type: ignore
 from beancount.parser.options import OPTIONS_DEFAULTS  # type: ignore
 from beancount.parser.options import READ_ONLY_OPTIONS  # type: ignore
+from beancount_language_server.parser import nodes as handlers
 from tree_sitter import Node
 
 
@@ -197,3 +198,47 @@ class BaseState:
     def get(self, node: Node, field: str) -> Any:
         """Get the named node field."""
         raise NotImplementedError
+
+class ParserState(BaseState):
+    """The state of the parser.
+    This is where data that needs to be kept in the state lives.
+    """
+
+    def finalize(self) -> None:
+        """Check for unbalanced tags and metadata."""
+        for tag in self.tags:
+            self.error(None, f"Unbalanced pushed tag: '{tag}'")
+
+        for key, value_list in self.meta.items():
+            self.error(
+                None,
+                f"Unbalanced metadata key '{key}'; "
+                f"leftover metadata '{str(value_list)}'",
+            )
+
+    def dcupdate(self, number, currency) -> None:
+        """Update the display context.
+        One or both of the arguments might be `MISSING`, in which case we do
+        nothing.
+        Args:
+            number: The number.
+            currency: The currency.
+        """
+        if number is not MISSING and currency is not MISSING:
+            self._dcupdate(number, currency)
+
+    def handle_node(self, node: Node):
+        """Obtain the parsed value of a node in the syntax tree.
+        For named nodes in the grammar, try to handle them using a function
+        from `.handlers`."""
+        if node.is_named:
+            handler = getattr(handlers, node.type)
+            return handler(self, node)
+        return node
+
+    def get(self, node: Node, field: str) -> Optional[Any]:
+        """Get the named node field."""
+        child = node.child_by_field_name(field)
+        if child is None:
+            return None
+        return self.handle_node(child)

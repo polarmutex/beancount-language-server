@@ -56,7 +56,6 @@ class IncludeFound(Exception):
         super().__init__()
         self.filename = filename
 
-
 def include(state: BaseState, node: Node) -> None:
     """Handle a include directive node."""
     filename = state.handle_node(node.children[1])
@@ -360,8 +359,8 @@ def compound_amount(
     state: BaseState, node: Node
 ) -> Tuple[Decimal, Decimal, str]:
     """Handle a compound amount."""
-    number_per = state.get(node, "number_per")
-    number_total = state.get(node, "number_total")
+    number_per = state.get(node, "per")
+    number_total = state.get(node, "total")
     currency_ = state.get(node, "currency")
     if currency_ is not None:
         state.dcupdate(number_per, currency_)
@@ -444,7 +443,7 @@ def tags_and_links(state: BaseState, node: Node) -> Tuple[Set, Set]:
     return tags, links
 
 
-def unary_num_expr(state: BaseState, node: Node) -> Decimal:
+def unary_number_expr(state: BaseState, node: Node) -> Decimal:
     """Handle a unary numerical expression."""
     operator = node.children[0].type
     num = state.handle_node(node.children[1])
@@ -453,7 +452,7 @@ def unary_num_expr(state: BaseState, node: Node) -> Decimal:
     return num
 
 
-def binary_num_expr(state: BaseState, node: Node) -> Decimal:
+def binary_number_expr(state: BaseState, node: Node) -> Decimal:
     """Handle a binary numerical expression."""
     operator = node.children[1].type
     left = state.handle_node(node.children[0])
@@ -489,7 +488,7 @@ def date(state: BaseState, node: Node) -> datetime.date:
     contents = state.contents
     year = contents[node.start_byte : node.start_byte + 4]
     month = contents[node.start_byte + 5 : node.start_byte + 7]
-    day = contents[node.start_byte + 8 : node.start_byte + 11]
+    day = contents[node.start_byte + 8 : node.start_byte + 10]
     return datetime.date(int(year), int(month), int(day))
 
 
@@ -510,7 +509,8 @@ def tag(state: BaseState, node: Node) -> str:
 
 def number(state: BaseState, node: Node) -> Decimal:
     """Handle a number token."""
-    return Decimal(state.contents[node.start_byte : node.end_byte].decode())
+    number_str = state.contents[node.start_byte : node.end_byte].decode().replace(",","")
+    return Decimal(number_str)
 
 
 def string(state: BaseState, node: Node) -> str:
