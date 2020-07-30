@@ -43,6 +43,7 @@ pylint = "^2.3"
 black = {version = "^19.10b0", allow-prereleases = true}
 pytest = "^5.0"
 python-language-server = "^0.33.3"
+flake8 = "^3.8.3"
 
 [tool.poetry.scripts]
 beancount-language-server = 'beancount_language_server.cli:cli'
