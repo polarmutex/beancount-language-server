@@ -36,12 +36,14 @@ python = "^3.7"
 click = ">=7.0"
 beancount = ">=2.2.3"
 pygls = ">=0.8.1"
+tree_sitter = "^0.1.1"
 
 [tool.poetry.dev-dependencies]
 pylint = "^2.3"
 black = {version = "^19.10b0", allow-prereleases = true}
 pytest = "^5.0"
 python-language-server = "^0.33.3"
+flake8 = "^3.8.3"
 
 [tool.poetry.scripts]
 beancount-language-server = 'beancount_language_server.cli:cli'

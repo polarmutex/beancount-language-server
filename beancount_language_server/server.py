@@ -2,6 +2,7 @@ import datetime
 import itertools
 import logging
 import re
+import os
 from typing import Dict, List, Optional, Union
 
 from pygls.features import (
@@ -64,6 +65,8 @@ from beancount import loader
 from beancount.core.getters import get_accounts, get_all_payees, get_all_tags
 from beancount.scripts.format import align_beancount
 
+from beancount_language_server.parser.parser import Parser
+
 class BeancountLanguageServerProtocol(LanguageServerProtocol):
 
     def bf_initialize(self, params: InitializeParams) -> InitializeResult:
@@ -86,70 +89,72 @@ class BeancountLanguageServer(LanguageServer):
         self.payees = []
         self.tags = []
 
+        self.use_tree_sitter = False
+        self.parser = None
+
+    def _publish_beancount_diagnostics(self, params, errors):
+
+        text_doc = self.workspace.get_document(params.textDocument.uri)
+        source = text_doc.source
+
+        keys_to_remove = []
+        for filename in self.diagnostics:
+            if len(self.diagnostics[filename]) == 0:
+                keys_to_remove.append(filename)
+            else:
+                self.diagnostics[filename] = []
+
+        for key in keys_to_remove:
+            del self.diagnostics[key]
+
+        for e in errors:
+            line = e.source['lineno']
+            msg = e.message
+            filename = e.source['filename']
+            d = Diagnostic(
+                Range(
+                    Position(line-1,0),
+                    Position(line-1,1)
+                ),
+                msg,
+                source=filename
+            )
+            if filename not in self.diagnostics:
+                self.diagnostics[filename] = []
+            self.diagnostics[filename].append(d)
+
+        for filename in self.diagnostics:
+            self.publish_diagnostics(f"file://{filename}", self.diagnostics[filename])
+
+        #self.accounts = get_accounts(entries)
+        #self.payees = get_all_payees(entries)
+        #self.tags = get_all_tags(entries)
+
+
 SERVER = BeancountLanguageServer(protocol_cls=BeancountLanguageServerProtocol)
-
-def _validate(server: BeancountLanguageServer, params):
-
-    server.show_message_log('Validating beancount ...')
-
-    text_doc = server.workspace.get_document(params.textDocument.uri)
-
-    source = text_doc.source
-
-    keys_to_remove = []
-    for filename in server.diagnostics:
-        if len(server.diagnostics[filename]) == 0:
-            keys_to_remove.append(filename)
-        else:
-            server.diagnostics[filename] = []
-
-    for key in keys_to_remove:
-        del server.diagnostics[key]
-
-    entries, errors, options = loader.load_file(server._journal)
-    for e in errors:
-        server.logger.info(e)
-        line = e.source['lineno']
-        msg = e.message
-        filename = e.source['filename']
-        d = Diagnostic(
-            Range(
-                Position(line-1,0),
-                Position(line-1,1)
-            ),
-            msg,
-            source=filename
-        )
-        if filename not in server.diagnostics:
-            server.diagnostics[filename] = []
-        server.diagnostics[filename].append(d)
-
-
-    for filename in server.diagnostics:
-        server.publish_diagnostics(f"file://{filename}", server.diagnostics[filename])
-
-    server.show_message_log('Done Validating')
-
-    server.accounts = get_accounts(entries)
-    server.payees = get_all_payees(entries)
-    server.tags = get_all_tags(entries)
 
 
 @SERVER.feature(INITIALIZE)
 def initialize(server:BeancountLanguageServer, params: InitializeParams):
     opts = params.initializationOptions
-    server.logger.info(opts)
-    server._journal = opts.journal
+    server.logger.info("INITIALIZE")
+    server._journal = os.path.expanduser(opts.journal)
+    server.use_tree_sitter = opts.use_tree_sitter
+    server.parser = Parser(server._journal, server.use_tree_sitter)
 
 @SERVER.feature(TEXT_DOCUMENT_DID_SAVE)
 def did_save(server: BeancountLanguageServer, params: DidSaveTextDocumentParams):
     """Actions run on textDocument/didSave"""
-    _validate(server, params)
+    server.logger.info("didSave")
+    entries, errors, options = server.parser.save()
+    server._publish_beancount_diagnostics(params, errors)
 
 @SERVER.feature(TEXT_DOCUMENT_DID_OPEN)
 def did_open(server: BeancountLanguageServer, params: DidOpenTextDocumentParams):
     """Actions run on textDocument/didOpen"""
-    _validate(server, params)
+    server.logger.info("didSave")
+    entries, errors, options = server.parser.open()
+    server._publish_beancount_diagnostics(params, errors)
 
 @SERVER.feature(COMPLETION, trigger_characters=["^",'"'])
 def completion(server: BeancountLanguageServer, params: CompletionParams) -> CompletionList:
