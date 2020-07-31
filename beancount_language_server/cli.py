@@ -1,16 +1,17 @@
-import argparse
 import click
 import logging
 import logging.config
-import sys
 
 from beancount_language_server.server import SERVER
-from beancount_language_server.util import setup_logging
+
 
 @click.command()
 @click.option("--debug", is_flag=True)
+@click.option("--tcp", is_flag=True)
+@click.option("--host", default="127.0.0.1")
+@click.option("--port", type=int, default=2087)
 @click.option("--log-file", type=click.Path())
-def cli(debug, log_file) -> None:
+def cli(debug, tcp, host, port, log_file) -> None:
 
     root_logger = logging.root
 
@@ -35,7 +36,11 @@ def cli(debug, log_file) -> None:
     """
     Beancount Language Server
     """
-    SERVER.start_io()
+    if tcp:
+        SERVER.start_tcp(host, port)
+    else:
+        SERVER.start_io()
+
 
 if __name__ == '__main__':
     cli()

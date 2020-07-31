@@ -199,6 +199,7 @@ class BaseState:
         """Get the named node field."""
         raise NotImplementedError
 
+
 class ParserState(BaseState):
     """The state of the parser.
     This is where data that needs to be kept in the state lives.
