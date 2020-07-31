@@ -1,0 +1,19 @@
+  
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "compile:client",
+            "type": "shell",
+            "command": "tsc",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "panel": "shared",
+                "reveal": "silent",
+            },
+        },
+    ]
+}
