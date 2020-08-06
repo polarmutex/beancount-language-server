@@ -1,9 +1,6 @@
 import datetime
-import itertools
 import logging
-import re
 import os
-from typing import Dict, List, Optional, Union
 
 from pygls.features import (
     COMPLETION,
@@ -67,15 +64,20 @@ from beancount.scripts.format import align_beancount
 
 from beancount_language_server.parser.parser import Parser
 
+
 class BeancountLanguageServerProtocol(LanguageServerProtocol):
 
     def bf_initialize(self, params: InitializeParams) -> InitializeResult:
-        result :InitializeResult = super().bf_initialize(params)
+        result: InitializeResult = super().bf_initialize(params)
 
-        # pygls does not support TextDocumentSyncOptions that neovim lsp needs, hack it in
-        result.capabilities.textDocumentSync = TextDocumentSyncOptions(True,TextDocumentSyncKind.INCREMENTAL,False,False,SaveOptions(include_text=False))
+        # pygls does not support TextDocumentSyncOptions that neovim lsp needs,
+        # hack it in
+        result.capabilities.textDocumentSync = TextDocumentSyncOptions(
+            True, TextDocumentSyncKind.INCREMENTAL, False, False,
+            SaveOptions(include_text=False))
 
         return result
+
 
 class BeancountLanguageServer(LanguageServer):
     """
@@ -94,9 +96,6 @@ class BeancountLanguageServer(LanguageServer):
 
     def _publish_beancount_diagnostics(self, params, errors):
 
-        text_doc = self.workspace.get_document(params.textDocument.uri)
-        source = text_doc.source
-
         keys_to_remove = []
         for filename in self.diagnostics:
             if len(self.diagnostics[filename]) == 0:
@@ -114,7 +113,7 @@ class BeancountLanguageServer(LanguageServer):
             d = Diagnostic(
                 Range(
                     Position(line-1,0),
-                    Position(line-1,1)
+                    Position(line-1,80)
                 ),
                 msg,
                 source=filename
@@ -124,18 +123,16 @@ class BeancountLanguageServer(LanguageServer):
             self.diagnostics[filename].append(d)
 
         for filename in self.diagnostics:
-            self.publish_diagnostics(f"file://{filename}", self.diagnostics[filename])
+            self.publish_diagnostics(
+                f"file://{filename}", self.diagnostics[filename])
 
-        #self.accounts = get_accounts(entries)
-        #self.payees = get_all_payees(entries)
-        #self.tags = get_all_tags(entries)
 
 
 SERVER = BeancountLanguageServer(protocol_cls=BeancountLanguageServerProtocol)
 
 
 @SERVER.feature(INITIALIZE)
-def initialize(server:BeancountLanguageServer, params: InitializeParams):
+def initialize(server: BeancountLanguageServer, params: InitializeParams):
     opts = params.initializationOptions
     server.logger.info("INITIALIZE")
     server._journal = os.path.expanduser(opts.journal)
@@ -147,13 +144,19 @@ def did_save(server: BeancountLanguageServer, params: DidSaveTextDocumentParams)
     """Actions run on textDocument/didSave"""
     server.logger.info("didSave")
     entries, errors, options = server.parser.save()
-    server._publish_beancount_diagnostics(params, errors)
+    if errors is not None:
+        server._publish_beancount_diagnostics(params, errors)
 
+
+@SERVER.thread()
 @SERVER.feature(TEXT_DOCUMENT_DID_OPEN)
 def did_open(server: BeancountLanguageServer, params: DidOpenTextDocumentParams):
     """Actions run on textDocument/didOpen"""
     server.logger.info("didSave")
     entries, errors, options = server.parser.open()
+    server.accounts = get_accounts(entries)
+    server.payees = get_all_payees(entries)
+    server.tags = get_all_tags(entries)
     server._publish_beancount_diagnostics(params, errors)
 
 @SERVER.feature(COMPLETION, trigger_characters=["^",'"'])
@@ -252,11 +255,10 @@ def formatting(server: BeancountLanguageServer, params: DocumentFormattingParams
 
     content = document.source
 
-    result = align_beancount(content) # format_beancount(content)
+    result = align_beancount(content)
 
     lines = content.count('\n')
     return [
-        TextEdit(Range(Position(0, 0), Position(lines + 1, 0)),
-        result)
+        TextEdit(Range(Position(0, 0), Position(lines + 1, 0)), result)
     ]
 
