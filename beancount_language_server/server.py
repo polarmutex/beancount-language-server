@@ -61,7 +61,7 @@ from pygls.types import (
 from beancount import loader
 from beancount.core.getters import get_accounts, get_all_payees, get_all_tags
 from beancount.scripts.format import align_beancount
-
+from beancount.core.data import Transaction
 from beancount_language_server.parser.parser import Parser
 
 
@@ -94,7 +94,32 @@ class BeancountLanguageServer(LanguageServer):
         self.use_tree_sitter = False
         self.parser = None
 
-    def _publish_beancount_diagnostics(self, params, errors):
+    def _update(self, entries, errors):
+        self.accounts = get_accounts(entries)
+        self.payees = get_all_payees(entries)
+        self.tags = get_all_tags(entries)
+        self.errors = errors
+
+        flagged = {}
+        #for entry in entries:
+        #    if hasattr(entry, 'flag') and entry.flag == "!":
+        #        flagged.append({
+        #            "file": entry.meta['filename'],
+        #            "line": entry.meta['lineno'],
+        #            "message": "Entry is flagged"
+        #        })
+        #    if isinstance(entry, Transaction):
+        #        for posting in entry.postings:
+        #            if hasattr(posting, 'flag') and posting.flag == "!":
+        #                flagged.append({
+        #                    "file": posting.meta['filename'],
+        #                    "line": posting.meta['lineno'],
+        #                    "message": "Posting is flagged"
+        #                })
+
+        self.flagged = flagged
+
+    def _publish_beancount_diagnostics(self, params):
 
         keys_to_remove = []
         for filename in self.diagnostics:
@@ -106,7 +131,7 @@ class BeancountLanguageServer(LanguageServer):
         for key in keys_to_remove:
             del self.diagnostics[key]
 
-        for e in errors:
+        for e in self.errors:
             line = e.source['lineno']
             msg = e.message
             filename = e.source['filename']
@@ -116,7 +141,7 @@ class BeancountLanguageServer(LanguageServer):
                     Position(line-1,80)
                 ),
                 msg,
-                source=filename
+                source=filename,
             )
             if filename not in self.diagnostics:
                 self.diagnostics[filename] = []
@@ -144,24 +169,32 @@ def did_save(server: BeancountLanguageServer, params: DidSaveTextDocumentParams)
     """Actions run on textDocument/didSave"""
     server.logger.info("didSave")
     entries, errors, options = server.parser.save()
+    server._update(entries, errors)
     if errors is not None:
-        server._publish_beancount_diagnostics(params, errors)
+        server._publish_beancount_diagnostics(params)
+
+@SERVER.feature(TEXT_DOCUMENT_DID_CHANGE)
+def did_change(server: BeancountLanguageServer, params: DidChangeTextDocumentParams):
+    i = 5
 
 
 @SERVER.thread()
 @SERVER.feature(TEXT_DOCUMENT_DID_OPEN)
 def did_open(server: BeancountLanguageServer, params: DidOpenTextDocumentParams):
     """Actions run on textDocument/didOpen"""
-    server.logger.info("didSave")
-    entries, errors, options = server.parser.open()
-    server.accounts = get_accounts(entries)
-    server.payees = get_all_payees(entries)
-    server.tags = get_all_tags(entries)
-    server._publish_beancount_diagnostics(params, errors)
+    server.logger.info("didOpen")
+    if len(server.workspace.documents) == 1:
+        entries, errors, options = server.parser.open()
+        server._update(entries, errors)
+    server._publish_beancount_diagnostics(params)
 
+"""
+Not working to well without context with neovim does not provide
+"""
+"""
 @SERVER.feature(COMPLETION, trigger_characters=["^",'"'])
 def completion(server: BeancountLanguageServer, params: CompletionParams) -> CompletionList:
-    """Returns completion items."""
+    # Returns completion items.
 
     position = params.position
     document = server.workspace.get_document(params.textDocument.uri)
@@ -170,7 +203,7 @@ def completion(server: BeancountLanguageServer, params: CompletionParams) -> Com
     if (hasattr(params, 'context') and params.context.triggerKind == CompletionTriggerKind.TriggerCharacter):
         trigger_char = params.context.triggerCharacter
     else:
-        trigger_char = document.lines[position.line][position.character]
+        trigger_char = document.lines[position.line][position.character-1]
 
     completion_items = []
 
@@ -248,6 +281,7 @@ def completion(server: BeancountLanguageServer, params: CompletionParams) -> Com
         is_incomplete=True,
         items=completion_items
     )
+"""
 
 @SERVER.feature(FORMATTING)
 def formatting(server: BeancountLanguageServer, params: DocumentFormattingParams):
