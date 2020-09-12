@@ -141,7 +141,7 @@ def event(state: BaseState, node: Node) -> Event:
         state.metadata(node),
         state.get(node, "date"),
         state.get(node, "type"),
-        state.get(node, "description"),
+        state.get(node, "desc"),
     )
 
 
