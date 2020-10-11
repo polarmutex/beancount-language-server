@@ -188,10 +188,7 @@ def did_open(server: BeancountLanguageServer, params: DidOpenTextDocumentParams)
         server._update(entries, errors)
     server._publish_beancount_diagnostics(params)
 
-"""
-Not working to well without context with neovim does not provide
-"""
-"""
+
 @SERVER.feature(COMPLETION, trigger_characters=["^",'"'])
 def completion(server: BeancountLanguageServer, params: CompletionParams) -> CompletionList:
     # Returns completion items.
@@ -257,7 +254,7 @@ def completion(server: BeancountLanguageServer, params: CompletionParams) -> Com
         )
         completion_items.append(completion_item)
 
-    elif trigger_char == '"':
+    else:
         for payee in server.payees:
             if word in payee:
                 completion_item = CompletionItem(
@@ -267,7 +264,6 @@ def completion(server: BeancountLanguageServer, params: CompletionParams) -> Com
                 )
                 completion_items.append(completion_item)
 
-    else:
         for account in server.accounts:
             if word in account:
                 completion_item = CompletionItem(
@@ -281,7 +277,6 @@ def completion(server: BeancountLanguageServer, params: CompletionParams) -> Com
         is_incomplete=True,
         items=completion_items
     )
-"""
 
 @SERVER.feature(FORMATTING)
 def formatting(server: BeancountLanguageServer, params: DocumentFormattingParams):
