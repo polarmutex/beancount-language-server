@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import textwrap
 from typing import Any, List, Optional, Set
+from pkg_resources import resource_filename
+from importlib.machinery import EXTENSION_SUFFIXES
 
 from beancount.core import data
 from beancount.core.number import MISSING
@@ -33,7 +35,9 @@ print(f"{module_path}")
 #    ]
 #)
 
-BEANCOUNT_LANGUAGE = Language(f'{module_path}/../../tree-sitter-beancount.so', 'beancount')
+EXT = EXTENSION_SUFFIXES[-1]
+BEANCOUNT_LANGUAGE = Language(
+        resource_filename("beancount_language_server", "tree_sitter_beancount" + EXT), 'beancount')
 
 beancount_parser = Parser()
 beancount_parser.set_language(BEANCOUNT_LANGUAGE)
