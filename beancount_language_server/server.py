@@ -29,6 +29,7 @@ from pygls.types import (
     CompletionParams,
     CompletionTriggerKind,
     Diagnostic,
+    DiagnosticSeverity,
     DidChangeTextDocumentParams,
     DidOpenTextDocumentParams,
     DidSaveTextDocumentParams,
@@ -102,22 +103,21 @@ class BeancountLanguageServer(LanguageServer):
         self.tags = get_all_tags(entries)
         self.errors = errors
 
-        flagged = {}
-        #for entry in entries:
-        #    if hasattr(entry, 'flag') and entry.flag == "!":
-        #        flagged.append({
-        #            "file": entry.meta['filename'],
-        #            "line": entry.meta['lineno'],
-        #            "message": "Entry is flagged"
-        #        })
-        #    if isinstance(entry, Transaction):
-        #        for posting in entry.postings:
-        #            if hasattr(posting, 'flag') and posting.flag == "!":
-        #                flagged.append({
-        #                    "file": posting.meta['filename'],
-        #                    "line": posting.meta['lineno'],
-        #                    "message": "Posting is flagged"
-        #                })
+        self.logger.info("checking flagged")
+        flagged = []
+        for entry in entries:
+            if hasattr(entry, 'flag') and entry.flag == "!":
+                flagged.append({
+                    "file": entry.meta['filename'],
+                    "line": entry.meta['lineno'],
+                })
+            if isinstance(entry, Transaction):
+                for posting in entry.postings:
+                    if hasattr(posting, 'flag') and posting.flag == "!":
+                        flagged.append({
+                            "file": posting.meta['filename'],
+                            "line": posting.meta['lineno'],
+                        })
 
         self.flagged = flagged
 
@@ -148,6 +148,23 @@ class BeancountLanguageServer(LanguageServer):
             if filename not in self.diagnostics:
                 self.diagnostics[filename] = []
             self.diagnostics[filename].append(d)
+
+        for e in self.flagged:
+            line = e['line']
+            filename = e['file'].replace(self._basePath,"")
+            d = Diagnostic(
+                Range(
+                    Position(line-1,0),
+                    Position(line-1,80)
+                ),
+                "Entry is flagged",
+                source=filename,
+                severity=DiagnosticSeverity.Warning
+            )
+            if filename not in self.diagnostics:
+                self.diagnostics[filename] = []
+            self.diagnostics[filename].append(d)
+
 
         for filename in self.diagnostics:
             self.logger.info("inini")
