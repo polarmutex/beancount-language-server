@@ -1,0 +1,49 @@
+[tool.poetry]
+name = "beancount-language-server"
+version = "0.1.0"
+description = "A LSP server for beancount"
+authors = ["Brian Ryall <bryall@users.noreply.github.com>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/bryall/beancount-language-server"
+repository = "https://github.com/bryall/beancount-language-server"
+keywords = [
+  "python",
+  "completion",
+  "refactoring",
+  "vim",
+  "neovim",
+  "lsp",
+  "language-server-protocol",
+  "beancount"
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Topic :: Software Development :: Code Generators",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Text Editors :: Integrated Development Environments (IDE)",
+  "Topic :: Utilities",
+  "Topic :: Utilities",
+  "Topic :: Office/Business :: Financial :: Accounting",
+  "Typing :: Typed",
+]
+include = ["README.md"]
+build = "build.py"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+beancount = "^2.3.3"
+click = "^7.1.2"
+tree-sitter = "^0.2.0"
+pygls = "^0.9.1"
+
+[tool.poetry.dev-dependencies]
+
+[tool.poetry.scripts]
+beancount-language-server = 'beancount_language_server.cli:cli'
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
