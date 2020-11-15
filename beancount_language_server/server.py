@@ -90,6 +90,8 @@ class BeancountLanguageServer(LanguageServer):
         self.accounts = []
         self.payees = []
         self.tags = []
+        self._journal = None
+        self._basePath = None
 
         self.use_tree_sitter = False
         self.parser = None
@@ -134,7 +136,7 @@ class BeancountLanguageServer(LanguageServer):
         for e in self.errors:
             line = e.source['lineno']
             msg = e.message
-            filename = e.source['filename']
+            filename = e.source['filename'].replace(self._basePath,"")
             d = Diagnostic(
                 Range(
                     Position(line-1,0),
@@ -148,6 +150,7 @@ class BeancountLanguageServer(LanguageServer):
             self.diagnostics[filename].append(d)
 
         for filename in self.diagnostics:
+            self.logger.info("inini")
             self.publish_diagnostics(
                 f"file://{filename}", self.diagnostics[filename])
 
@@ -161,6 +164,7 @@ def initialize(server: BeancountLanguageServer, params: InitializeParams):
     opts = params.initializationOptions
     server.logger.info("INITIALIZE")
     server._journal = os.path.expanduser(opts.journal)
+    server._basePath = os.path.dirname(server._journal) + '/'
     server.use_tree_sitter = opts.use_tree_sitter
     server.parser = Parser(server._journal, server.use_tree_sitter)
 
@@ -182,7 +186,7 @@ def did_change(server: BeancountLanguageServer, params: DidChangeTextDocumentPar
 @SERVER.feature(TEXT_DOCUMENT_DID_OPEN)
 def did_open(server: BeancountLanguageServer, params: DidOpenTextDocumentParams):
     """Actions run on textDocument/didOpen"""
-    server.logger.info("didOpen")
+    server.logger.info("didOpen   -:w")
     if len(server.workspace.documents) == 1:
         entries, errors, options = server.parser.open()
         server._update(entries, errors)
