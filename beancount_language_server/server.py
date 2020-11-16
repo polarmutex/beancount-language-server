@@ -1,9 +1,6 @@
 import datetime
-import itertools
 import logging
-import re
 import os
-from typing import Dict, List, Optional, Union
 
 from pygls.features import (
     COMPLETION,
@@ -32,6 +29,7 @@ from pygls.types import (
     CompletionParams,
     CompletionTriggerKind,
     Diagnostic,
+    DiagnosticSeverity,
     DidChangeTextDocumentParams,
     DidOpenTextDocumentParams,
     DidSaveTextDocumentParams,
@@ -64,18 +62,23 @@ from pygls.types import (
 from beancount import loader
 from beancount.core.getters import get_accounts, get_all_payees, get_all_tags
 from beancount.scripts.format import align_beancount
-
+from beancount.core.data import Transaction
 from beancount_language_server.parser.parser import Parser
+
 
 class BeancountLanguageServerProtocol(LanguageServerProtocol):
 
     def bf_initialize(self, params: InitializeParams) -> InitializeResult:
-        result :InitializeResult = super().bf_initialize(params)
+        result: InitializeResult = super().bf_initialize(params)
 
-        # pygls does not support TextDocumentSyncOptions that neovim lsp needs, hack it in
-        result.capabilities.textDocumentSync = TextDocumentSyncOptions(True,TextDocumentSyncKind.INCREMENTAL,False,False,SaveOptions(include_text=False))
+        # pygls does not support TextDocumentSyncOptions that neovim lsp needs,
+        # hack it in
+        result.capabilities.textDocumentSync = TextDocumentSyncOptions(
+            True, TextDocumentSyncKind.INCREMENTAL, False, False,
+            SaveOptions(include_text=False))
 
         return result
+
 
 class BeancountLanguageServer(LanguageServer):
     """
@@ -88,14 +91,37 @@ class BeancountLanguageServer(LanguageServer):
         self.accounts = []
         self.payees = []
         self.tags = []
+        self._journal = None
+        self._basePath = None
 
         self.use_tree_sitter = False
         self.parser = None
 
-    def _publish_beancount_diagnostics(self, params, errors):
+    def _update(self, entries, errors):
+        self.accounts = get_accounts(entries)
+        self.payees = get_all_payees(entries)
+        self.tags = get_all_tags(entries)
+        self.errors = errors
 
-        text_doc = self.workspace.get_document(params.textDocument.uri)
-        source = text_doc.source
+        self.logger.info("checking flagged")
+        flagged = []
+        for entry in entries:
+            if hasattr(entry, 'flag') and entry.flag == "!":
+                flagged.append({
+                    "file": entry.meta['filename'],
+                    "line": entry.meta['lineno'],
+                })
+            if isinstance(entry, Transaction):
+                for posting in entry.postings:
+                    if hasattr(posting, 'flag') and posting.flag == "!":
+                        flagged.append({
+                            "file": posting.meta['filename'],
+                            "line": posting.meta['lineno'],
+                        })
+
+        self.flagged = flagged
+
+    def _publish_beancount_diagnostics(self, params):
 
         keys_to_remove = []
         for filename in self.diagnostics:
@@ -107,38 +133,55 @@ class BeancountLanguageServer(LanguageServer):
         for key in keys_to_remove:
             del self.diagnostics[key]
 
-        for e in errors:
+        for e in self.errors:
             line = e.source['lineno']
             msg = e.message
-            filename = e.source['filename']
+            filename = e.source['filename'].replace(self._basePath,"")
             d = Diagnostic(
                 Range(
                     Position(line-1,0),
-                    Position(line-1,1)
+                    Position(line-1,80)
                 ),
                 msg,
-                source=filename
+                source=filename,
             )
             if filename not in self.diagnostics:
                 self.diagnostics[filename] = []
             self.diagnostics[filename].append(d)
 
-        for filename in self.diagnostics:
-            self.publish_diagnostics(f"file://{filename}", self.diagnostics[filename])
+        for e in self.flagged:
+            line = e['line']
+            filename = e['file'].replace(self._basePath,"")
+            d = Diagnostic(
+                Range(
+                    Position(line-1,0),
+                    Position(line-1,80)
+                ),
+                "Entry is flagged",
+                source=filename,
+                severity=DiagnosticSeverity.Warning
+            )
+            if filename not in self.diagnostics:
+                self.diagnostics[filename] = []
+            self.diagnostics[filename].append(d)
 
-        #self.accounts = get_accounts(entries)
-        #self.payees = get_all_payees(entries)
-        #self.tags = get_all_tags(entries)
+
+        for filename in self.diagnostics:
+            self.logger.info("inini")
+            self.publish_diagnostics(
+                f"file://{filename}", self.diagnostics[filename])
+
 
 
 SERVER = BeancountLanguageServer(protocol_cls=BeancountLanguageServerProtocol)
 
 
 @SERVER.feature(INITIALIZE)
-def initialize(server:BeancountLanguageServer, params: InitializeParams):
+def initialize(server: BeancountLanguageServer, params: InitializeParams):
     opts = params.initializationOptions
     server.logger.info("INITIALIZE")
     server._journal = os.path.expanduser(opts.journal)
+    server._basePath = os.path.dirname(server._journal) + '/'
     server.use_tree_sitter = opts.use_tree_sitter
     server.parser = Parser(server._journal, server.use_tree_sitter)
 
@@ -147,18 +190,29 @@ def did_save(server: BeancountLanguageServer, params: DidSaveTextDocumentParams)
     """Actions run on textDocument/didSave"""
     server.logger.info("didSave")
     entries, errors, options = server.parser.save()
-    server._publish_beancount_diagnostics(params, errors)
+    server._update(entries, errors)
+    if errors is not None:
+        server._publish_beancount_diagnostics(params)
 
+@SERVER.feature(TEXT_DOCUMENT_DID_CHANGE)
+def did_change(server: BeancountLanguageServer, params: DidChangeTextDocumentParams):
+    i = 5
+
+
+@SERVER.thread()
 @SERVER.feature(TEXT_DOCUMENT_DID_OPEN)
 def did_open(server: BeancountLanguageServer, params: DidOpenTextDocumentParams):
     """Actions run on textDocument/didOpen"""
-    server.logger.info("didSave")
-    entries, errors, options = server.parser.open()
-    server._publish_beancount_diagnostics(params, errors)
+    server.logger.info("didOpen   -:w")
+    if len(server.workspace.documents) == 1:
+        entries, errors, options = server.parser.open()
+        server._update(entries, errors)
+    server._publish_beancount_diagnostics(params)
+
 
 @SERVER.feature(COMPLETION, trigger_characters=["^",'"'])
 def completion(server: BeancountLanguageServer, params: CompletionParams) -> CompletionList:
-    """Returns completion items."""
+    # Returns completion items.
 
     position = params.position
     document = server.workspace.get_document(params.textDocument.uri)
@@ -167,7 +221,7 @@ def completion(server: BeancountLanguageServer, params: CompletionParams) -> Com
     if (hasattr(params, 'context') and params.context.triggerKind == CompletionTriggerKind.TriggerCharacter):
         trigger_char = params.context.triggerCharacter
     else:
-        trigger_char = document.lines[position.line][position.character]
+        trigger_char = document.lines[position.line][position.character-1]
 
     completion_items = []
 
@@ -221,7 +275,7 @@ def completion(server: BeancountLanguageServer, params: CompletionParams) -> Com
         )
         completion_items.append(completion_item)
 
-    elif trigger_char == '"':
+    else:
         for payee in server.payees:
             if word in payee:
                 completion_item = CompletionItem(
@@ -231,7 +285,6 @@ def completion(server: BeancountLanguageServer, params: CompletionParams) -> Com
                 )
                 completion_items.append(completion_item)
 
-    else:
         for account in server.accounts:
             if word in account:
                 completion_item = CompletionItem(
@@ -252,11 +305,10 @@ def formatting(server: BeancountLanguageServer, params: DocumentFormattingParams
 
     content = document.source
 
-    result = align_beancount(content) # format_beancount(content)
+    result = align_beancount(content)
 
     lines = content.count('\n')
     return [
-        TextEdit(Range(Position(0, 0), Position(lines + 1, 0)),
-        result)
+        TextEdit(Range(Position(0, 0), Position(lines + 1, 0)), result)
     ]
 

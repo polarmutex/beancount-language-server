@@ -141,7 +141,7 @@ def event(state: BaseState, node: Node) -> Event:
         state.metadata(node),
         state.get(node, "date"),
         state.get(node, "type"),
-        state.get(node, "description"),
+        state.get(node, "desc"),
     )
 
 
@@ -447,7 +447,7 @@ def unary_number_expr(state: BaseState, node: Node) -> Decimal:
     """Handle a unary numerical expression."""
     operator = node.children[0].type
     num = state.handle_node(node.children[1])
-    if operator == "-":
+    if operator == "minus":
         return -num
     return num
 
@@ -457,13 +457,13 @@ def binary_number_expr(state: BaseState, node: Node) -> Decimal:
     operator = node.children[1].type
     left = state.handle_node(node.children[0])
     right = state.handle_node(node.children[2])
-    if operator == "+":
+    if operator == "plus":
         return left + right
-    if operator == "-":
+    if operator == "minus":
         return left - right
-    if operator == "*":
+    if operator == "asterisk":
         return left * right
-    assert operator == "/"
+    assert operator == "slash"
     return left / right
 
 
@@ -527,7 +527,13 @@ def currency(state: BaseState, node: Node) -> str:
 
 def flag(state: BaseState, node: Node) -> str:
     """Handle a flag token."""
-    return state.contents[node.start_byte : node.end_byte].decode()
+    flag_str = state.contents[node.start_byte : node.end_byte].decode()
+
+    # beancoint seems to make all txn flags to *
+    if flag_str == "txn":
+        return "*"
+    else:
+        return flag_str
 
 
 ALL_ACCOUNTS: Dict[bytes, str] = {}
