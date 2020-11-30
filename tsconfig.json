@@ -19,13 +19,11 @@
     "exclude": [
         "node_modules",
         "**/__tests__/*",
-        "vscode-client/out",
         "server/out",
         "server/setupJest.ts",
         "testing"
     ],
     "references": [
-        { "path": "./vscode-client" },
         { "path": "./server" }
     ]
 }

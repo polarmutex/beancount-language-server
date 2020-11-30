@@ -2,6 +2,7 @@ import * as path from 'path'
 import * as LSP from 'vscode-languageserver'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 
+import { runExternalCommand } from './utils'
 /**
  * The BashServer glues together the separate components to implement
  * the various parts of the Language Server Protocol.
@@ -15,6 +16,11 @@ export default class BeancountServer {
         connection: LSP.Connection,
         params: LSP.InitializeParams,
     ): Promise<BeancountServer> {
+        const opts = params.initializationOptions;
+        const rootBeancountFile = opts['rootBeancountFile']
+        if (rootBeancountFile == undefined) {
+            throw new Error('Must include rootBeancountFile in Initiaize parameters')
+        }
         return new BeancountServer(connection, params);
     }
 
@@ -22,10 +28,16 @@ export default class BeancountServer {
     private documents: LSP.TextDocuments<TextDocument> = new LSP.TextDocuments(TextDocument)
     private connection: LSP.Connection
 
+    private rootBeancountFile: string;
+
     private constructor(
         connection: LSP.Connection,
         params: LSP.InitializeParams
     ) {
+        connection.console.log(`Initialize: ${params.initializationOptions}`)
+        const opts = params.initializationOptions;
+
+        this.rootBeancountFile = opts['rootBeancountFile']
         this.connection = connection
     }
 
@@ -39,7 +51,7 @@ export default class BeancountServer {
         this.documents.listen(this.connection)
 
         // Register all the handlers for the LSP events.
-        this.connection.onDidSaveTextDocument(this.onDidSaveTextDocument.bind(this))
+        this.connection.onDidSaveTextDocument(this.onDidSaveTextDocument.bind(this));
     }
 
     /**
@@ -77,8 +89,20 @@ export default class BeancountServer {
     }
 
     private onDidSaveTextDocument(
-        params: DidSaveTextDocumentParams
-    ): void {
+        params: LSP.DidSaveTextDocumentParams
+    ) {
+        const beanCheckPy = path.resolve('python/bean_check.py')
+        const pyArgs = [beanCheckPy, this.rootBeancountFile]
+        runExternalCommand(
+            'python',
+            pyArgs,
+            (text: string) => {
+            },
+            undefined,
+            (str: string) => {
+                console.log(str)
+            }
+        );
     }
 
 }
