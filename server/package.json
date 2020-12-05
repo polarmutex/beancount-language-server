@@ -5,14 +5,15 @@
   "main": "./out/server.js",
   "typings": "./out/server.d.ts",
   "bin": {
-    "beancount-language-server": "./bin/main.js"
+    "beancountls": "./bin/main.js"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/bash-lsp/bash-language-server"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "compile": "cd ../ && yarn run compile"
   },
   "keywords": [
     "beancount",

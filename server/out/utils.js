@@ -7,10 +7,13 @@ function runExternalCommand(cmd, args, callBack, opts, logger) {
     const child = child_process_1.spawn(cmd, args, options);
     if (logger) {
         child.on('error', (e) => logger('error: ' + e));
-        child.stderr.on('date', e => logger('stderr: ' + e));
+        child.stderr.on('data', e => logger('stderr: ' + e));
     }
-    let response = '';
+    let response = undefined;
     child.stdout.on('data', buffer => {
+        if (response === undefined) {
+            response = "";
+        }
         response += buffer.toString();
     });
     child.stdout.on('end', () => {
