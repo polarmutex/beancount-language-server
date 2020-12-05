@@ -1,5 +1,6 @@
 import * as os from 'os'
 import * as path from 'path'
+import * as util from 'util'
 import * as LSP from 'vscode-languageserver'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 
@@ -54,6 +55,7 @@ export default class BeancountServer {
 
         // Register all the handlers for the LSP events.
         connection.onDidSaveTextDocument(this.onDidSaveTextDocument.bind(this));
+        connection.onDocumentFormatting(this.onDocumentFormatting.bind(this));
     }
 
     /**
@@ -70,6 +72,7 @@ export default class BeancountServer {
                     includeText: false
                 }
             },
+            documentFormattingProvider: true,
             completionProvider: {
                 resolveProvider: false,
                 triggerCharacters: [':'],
@@ -134,6 +137,33 @@ export default class BeancountServer {
                 this.connection.console.error(str)
             }
         );
+    }
+
+    private async onDocumentFormatting(
+        params: LSP.DocumentFormattingParams
+    ): Promise<LSP.TextEdit[]> {
+
+        this.connection.console.log(params.textDocument.uri)
+        const file = this.documents.get(params.textDocument.uri)
+
+        if (!file) {
+            return [];
+        }
+        else {
+            this.connection.console.log(file.uri)
+        }
+
+        let opts = params.options
+
+        // translate
+        if (opts.convertTabsToSpaces === undefined) {
+            opts.convertTabsToSpaces = params.options.insertSpaces
+        }
+        if (opts.indentSize === undefined) {
+            opts.indentSize = params.options.tabSize
+        }
+
+        return [];
     }
 
 }

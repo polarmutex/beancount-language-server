@@ -24,4 +24,5 @@ export default class BeancountServer {
     capabilities(): LSP.ServerCapabilities;
     private logRequest;
     private onDidSaveTextDocument;
+    private onDocumentFormatting;
 }

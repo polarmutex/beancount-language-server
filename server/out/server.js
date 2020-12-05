@@ -52,6 +52,7 @@ class BeancountServer {
         this.documents.listen(this.connection);
         // Register all the handlers for the LSP events.
         connection.onDidSaveTextDocument(this.onDidSaveTextDocument.bind(this));
+        connection.onDocumentFormatting(this.onDocumentFormatting.bind(this));
     }
     /**
      * The parts of the Language Server Protocol that we are currently supporting.
@@ -67,6 +68,7 @@ class BeancountServer {
                     includeText: false
                 }
             },
+            documentFormattingProvider: true,
             completionProvider: {
                 resolveProvider: false,
                 triggerCharacters: [':'],
@@ -106,6 +108,27 @@ class BeancountServer {
             }
         }, undefined, (str) => {
             this.connection.console.error(str);
+        });
+    }
+    onDocumentFormatting(params) {
+        return __awaiter(this, void 0, void 0, function* () {
+            this.connection.console.log(params.textDocument.uri);
+            const file = this.documents.get(params.textDocument.uri);
+            if (!file) {
+                return [];
+            }
+            else {
+                this.connection.console.log(file.uri);
+            }
+            let opts = params.options;
+            // translate
+            if (opts.convertTabsToSpaces === undefined) {
+                opts.convertTabsToSpaces = params.options.insertSpaces;
+            }
+            if (opts.indentSize === undefined) {
+                opts.indentSize = params.options.tabSize;
+            }
+            return [];
         });
     }
 }
