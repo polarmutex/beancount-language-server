@@ -1,0 +1,30 @@
+{
+  "name": "beancount-language-server",
+  "version": "1.0.0",
+  "description": "a Language Server Protocol (LSP) for beancount files",
+  "main": "./out/server.js",
+  "typings": "./out/server.d.ts",
+  "bin": {
+    "beancountls": "./bin/main.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bash-lsp/bash-language-server"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "compile": "cd ../ && yarn run compile"
+  },
+  "keywords": [
+    "beancount",
+    "lsp"
+  ],
+  "author": "Brian Ryall",
+  "license": "MIT",
+  "dependencies": {
+    "tree-sitter": "^0.17.1",
+    "tree-sitter-beancount": "^1.0.0",
+    "vscode-languageserver": "^6.1.1",
+    "vscode-languageserver-textdocument": "^1.0.1"
+  }
+}

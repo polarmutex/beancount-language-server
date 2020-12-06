@@ -132,3 +132,4 @@ node_modules
 client/out
 settings.json
 .DS_Store
+package-lock.json
