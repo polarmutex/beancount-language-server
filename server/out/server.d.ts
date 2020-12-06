@@ -12,6 +12,7 @@ export default class BeancountServer {
     private documents;
     private connection;
     private rootBeancountFile;
+    private analyzer;
     private constructor();
     /**
      * Register handlers for the events from the Language Server Protocol that we

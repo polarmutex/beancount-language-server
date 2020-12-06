@@ -3,7 +3,10 @@ import * as path from 'path'
 import * as util from 'util'
 import * as LSP from 'vscode-languageserver'
 import { TextDocument } from 'vscode-languageserver-textdocument'
+import * as Parser from 'tree-sitter'
+import TreeSitterAnalyzer from './tree-sitter'
 
+import { initializeParser } from './parser'
 import { runExternalCommand } from './utils'
 import { provideDiagnostics } from './diagnostics'
 /**
@@ -19,28 +22,36 @@ export default class BeancountServer {
         connection: LSP.Connection,
         params: LSP.InitializeParams,
     ): Promise<BeancountServer> {
+
+        const parser = initializeParser();
+
         const opts = params.initializationOptions;
         const rootBeancountFile = opts['rootBeancountFile']
         if (rootBeancountFile == undefined) {
             throw new Error('Must include rootBeancountFile in Initiaize parameters')
         }
-        return new BeancountServer(connection, params);
+
+        const analyzer = TreeSitterAnalyzer.fromBeancountFile(connection, rootBeancountFile, parser);
+
+        return new BeancountServer(connection, params, analyzer);
     }
 
 
     private documents: LSP.TextDocuments<TextDocument> = new LSP.TextDocuments(TextDocument)
     private connection: LSP.Connection
     private rootBeancountFile: string;
+    private analyzer: TreeSitterAnalyzer;
 
     private constructor(
         connection: LSP.Connection,
-        params: LSP.InitializeParams
+        params: LSP.InitializeParams,
+        analyzer: TreeSitterAnalyzer,
     ) {
-        connection.console.log(`Initialize: ${params.initializationOptions}`)
         const opts = params.initializationOptions;
 
         this.rootBeancountFile = opts['rootBeancountFile'].replace("~", os.homedir)
         this.connection = connection
+        this.analyzer = analyzer;
     }
 
     /**
@@ -48,10 +59,12 @@ export default class BeancountServer {
      * care about.
      */
     public register(connection: LSP.Connection): void {
-        this.connection.console.log('******************************  registering')
         // The content of a text document has changed. This event is emitted
         // when the text document first opened or when its content has changed.
         this.documents.listen(this.connection)
+        this.documents.onDidChangeContent(change => {
+            this.analyzer.parse(change.document)
+        });
 
         // Register all the handlers for the LSP events.
         connection.onDidSaveTextDocument(this.onDidSaveTextDocument.bind(this));
@@ -143,14 +156,10 @@ export default class BeancountServer {
         params: LSP.DocumentFormattingParams
     ): Promise<LSP.TextEdit[]> {
 
-        this.connection.console.log(params.textDocument.uri)
         const file = this.documents.get(params.textDocument.uri)
 
         if (!file) {
             return [];
-        }
-        else {
-            this.connection.console.log(file.uri)
         }
 
         let opts = params.options
