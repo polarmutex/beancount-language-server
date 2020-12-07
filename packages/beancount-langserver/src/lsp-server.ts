@@ -13,7 +13,7 @@ import { provideDiagnostics } from './diagnostics'
  * The BashServer glues together the separate components to implement
  * the various parts of the Language Server Protocol.
  */
-export default class BeancountServer {
+export default class BeancountLspServer {
     /**
      * Initialize the server based on a connection to the client and the protocols
      * initialization parameters.
@@ -21,7 +21,7 @@ export default class BeancountServer {
     public static async initialize(
         connection: LSP.Connection,
         params: LSP.InitializeParams,
-    ): Promise<BeancountServer> {
+    ): Promise<BeancountLspServer> {
 
         const parser = initializeParser();
 
@@ -33,7 +33,7 @@ export default class BeancountServer {
 
         const analyzer = TreeSitterAnalyzer.fromBeancountFile(connection, rootBeancountFile, parser);
 
-        return new BeancountServer(connection, params, analyzer);
+        return new BeancountLspServer(connection, params, analyzer);
     }
 
 

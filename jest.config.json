@@ -1,0 +1,22 @@
+{
+    "verbose": true,
+    "collectCoverage": true,
+    "coverageReporters": ["lcov", "json"],
+    "collectCoverageFrom": [
+        "**/src/**"
+    ],
+    "transform": {
+        "^.+\\.tsx?$": "ts-jest"
+    },
+    "testMatch": [
+        "<rootDir>/tests/**/*.test.ts"
+    ],
+    "moduleFileExtensions": [
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "json",
+        "node"
+    ]
+}

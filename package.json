@@ -1,19 +1,16 @@
 {
   "private": true,
   "scripts": {
-    "clean": "rm -rf *.log */*.log */out node_modules vscode-client/node_modules server/node_modules",
-    "postinstall": "cd server && npm install && cd ../vscode-client && npm install && cd ..",
-    "compile": "tsc -b",
-    "watch": "tsc -b -w",
-    "lint": "yarn lint:bail --fix",
-    "lint:bail": "eslint . --ext js,ts,tsx --cache",
-    "test": "jest --runInBand",
-    "test:coverage": "yarn run test --coverage",
-    "test:watch": "yarn run test --watch",
-    "verify": "yarn run lint && yarn run compile && yarn run test",
-    "verify:bail": "yarn run lint:bail && yarn run compile && yarn run test:coverage",
-    "reinstall-server": "npm uninstall -g bash-language-server && yarn compile && npm i -g ./server",
-    "link-server": "npm uninstall -g bash-language-server && yarn compile && yarn unlink bash-language-server && cd server && yarn link && cd ../vscode-client && yarn link bash-language-server"
+    "bootstrap": "npm install lerna && lerna bootstrap && npm install",
+    "reset": "npm run cleanup && rimraf -rf node_modules && npm run bootstrap",
+    "test": "lerna run test",
+    "build": "npm run cleanup && lerna run compile",
+    "build:watch": "npm run cleanup && lerna run compile:watch --stream --no-sort",
+    "cleanup": "lerna run cleanup --stream --parallel",
+    "demo": "npm run build && (cd packages/demo-app && npm run start)",
+    "lint": "lerna run lint",
+    "publish": "lerna publish --force-publish=* --skip-npm --skip-git",
+    "prepublish": "npm run build"
   },
   "devDependencies": {
     "@types/jest": "^26.0.15",
@@ -26,48 +23,9 @@
     "eslint-plugin-prettier": "^3.1.4",
     "eslint-plugin-simple-import-sort": "^6.0.1",
     "jest": "^26.6.3",
+    "lerna": "^3.22.1",
     "prettier": "^2.2.1",
     "ts-jest": "^26.4.4",
-    "typescript": "^4.1.2",
-    "vscode-languageserver": "^6.1.1"
-  },
-  "jest": {
-    "testEnvironment": "node",
-    "timers": "fake",
-    "clearMocks": true,
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "node",
-      "ts"
-    ],
-    "modulePathIgnorePatterns": [
-      "<rootDir>/server/out",
-      "<rootDir>/vscode-client/out"
-    ],
-    "transform": {
-      "\\.ts$": "ts-jest"
-    },
-    "globals": {
-      "ts-jest": {
-        "tsConfig": "./server/tsconfig.json"
-      }
-    },
-    "testMatch": [
-      "<rootDir>/**/__tests__/*.ts"
-    ],
-    "setupFiles": [
-      "./setupJest.ts"
-    ],
-    "collectCoverageFrom": [
-      "**/*.ts",
-      "!**/__test__/*",
-      "!testing/*"
-    ],
-    "coverageReporters": [
-      "text-summary",
-      "lcov",
-      "html"
-    ]
+    "typescript": "^4.1.2"
   }
 }

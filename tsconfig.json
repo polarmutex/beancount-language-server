@@ -1,29 +1,7 @@
 {
-    "compilerOptions": {
-        "noImplicitAny": true,
-        "noImplicitReturns": true,
-        "strict": true,
-        "target": "es6",
-        "module": "commonjs",
-        "moduleResolution": "node",
-        "declaration": true,
-        "lib": [
-            "es2016"
-        ],
-        "rootDir": ".",
-        "sourceMap": true
-    },
-    "include": [
-        "testing"
-    ],
     "exclude": [
+        "server",
         "node_modules",
-        "**/__tests__/*",
-        "server/out",
-        "server/setupJest.ts",
-        "testing"
-    ],
-    "references": [
-        { "path": "./server" }
+        "**/__tests__/*"
     ]
 }
