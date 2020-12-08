@@ -1,6 +1,6 @@
 import * as lsp from 'vscode-languageserver'
 import { FixtureFolder } from './fixtures'
-import BeancountLspServer from '../src/lsp-server'
+import BeancountLspServer from '../lsp-server'
 
 export async function initializeLspServer() {
 
@@ -11,8 +11,10 @@ export async function initializeLspServer() {
         rootUri: null,
         processId: 42,
         capabilities: {},
-        workspaceFolders: null
-
+        workspaceFolders: null,
+        initializationOptions: {
+            rootBeancountFile: "test.beancount"
+        }
     })
 
     return {
