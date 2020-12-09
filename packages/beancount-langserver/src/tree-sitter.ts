@@ -1,4 +1,4 @@
-import * as Parser from 'tree-sitter';
+import * as Parser from 'web-tree-sitter';
 import * as LSP from 'vscode-languageserver'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 

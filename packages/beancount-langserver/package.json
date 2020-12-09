@@ -9,7 +9,8 @@
     "clean": "rimraf -rf out",
     "compile": "tsc -b",
     "compile:watch": "tsc -b -w",
-    "test": "jest --config ../../jest.config.json --rootDir ."
+    "test": "jest --config ../../jest.config.json --rootDir .",
+    "test:watch": "jest --config ../../jest.config.json --rootDir . --watch"
   },
   "repository": {
     "type": "git",
@@ -29,7 +30,8 @@
     "tree-sitter": "^0.17.1",
     "tree-sitter-beancount": "^1.0.0",
     "vscode-languageserver": "^6.1.1",
-    "vscode-languageserver-textdocument": "^1.0.1"
+    "vscode-languageserver-textdocument": "^1.0.1",
+    "web-tree-sitter": "^0.17.1"
   },
   "devDependencies": {
     "jest": "^26.6.3"

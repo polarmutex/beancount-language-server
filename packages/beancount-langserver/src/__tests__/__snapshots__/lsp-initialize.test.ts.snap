@@ -1,6 +1,6 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`lsp server - initializes initializes and responds to capabilities 1`] = `
+exports[`lsp server - initialize initializes and responds to capabilities 1`] = `
 Object {
   "completionProvider": Object {
     "resolveProvider": false,

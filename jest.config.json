@@ -1,5 +1,7 @@
 {
-    "verbose": true,
+    "verbose": false,
+    "clearMocks": true,
+    "timers": "fake",
     "collectCoverage": true,
     "coverageReporters": ["lcov", "json"],
     "collectCoverageFrom": [

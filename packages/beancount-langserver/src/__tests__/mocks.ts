@@ -1,8 +1,9 @@
 import * as lsp from 'vscode-languageserver'
 import { FixtureFolder } from './fixtures'
 import BeancountLspServer from '../lsp-server'
+import { TextDocument } from 'vscode-languageserver-textdocument'
 
-export async function initializeLspServer() {
+export async function initializeLspServer(rootBeanFile: string) {
 
     const connection = getMockConnection()
 
@@ -13,12 +14,13 @@ export async function initializeLspServer() {
         capabilities: {},
         workspaceFolders: null,
         initializationOptions: {
-            rootBeancountFile: "test.beancount"
+            rootBeancountFile: rootBeanFile.replace("file://", "")
         }
     })
 
     return {
         connection,
+        console,
         server,
     }
 }

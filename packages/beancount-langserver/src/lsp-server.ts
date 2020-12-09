@@ -3,7 +3,7 @@ import * as path from 'path'
 import * as util from 'util'
 import * as LSP from 'vscode-languageserver'
 import { TextDocument } from 'vscode-languageserver-textdocument'
-import * as Parser from 'tree-sitter'
+import * as Parser from 'web-tree-sitter'
 import TreeSitterAnalyzer from './tree-sitter'
 
 import { initializeParser } from './parser'
@@ -23,7 +23,7 @@ export default class BeancountLspServer {
         params: LSP.InitializeParams,
     ): Promise<BeancountLspServer> {
 
-        const parser = initializeParser();
+        const parser = await initializeParser();
 
         const opts = params.initializationOptions;
         const rootBeancountFile = opts['rootBeancountFile']
@@ -31,9 +31,12 @@ export default class BeancountLspServer {
             throw new Error('Must include rootBeancountFile in Initiaize parameters')
         }
 
-        const analyzer = TreeSitterAnalyzer.fromBeancountFile(connection, rootBeancountFile, parser);
-
-        return new BeancountLspServer(connection, params, analyzer);
+        return Promise.all([
+            TreeSitterAnalyzer.fromBeancountFile(connection, rootBeancountFile, parser)
+        ]).then(xs => {
+            const analyzer = xs[0];
+            return new BeancountLspServer(connection, params, analyzer);
+        })
     }
 
 
@@ -67,6 +70,7 @@ export default class BeancountLspServer {
         });
 
         // Register all the handlers for the LSP events.
+        connection.onDidOpenTextDocument(this.onDidOpenTextDocument.bind(this));
         connection.onDidSaveTextDocument(this.onDidSaveTextDocument.bind(this));
         connection.onDocumentFormatting(this.onDocumentFormatting.bind(this));
     }
@@ -114,42 +118,47 @@ export default class BeancountLspServer {
         )
     }
 
-    private onDidSaveTextDocument(
-        params: LSP.DidSaveTextDocumentParams
-    ) {
+    async requestDiagnostics(): Promise<null> {
         const beanCheckPy = path.join(__dirname, '../python/bean_check.py');
         const pyArgs = [beanCheckPy, this.rootBeancountFile]
         // TODO: Allow option to specify python path
-        runExternalCommand(
+        const text = await runExternalCommand(
             'python',
             pyArgs,
-            (text?: string) => {
-                if (text) {
-                    const output = text.split('\n', 3);
-                    const errors = output[0]
-                    const flagged = output[1]
-                    //this.connection.console.log(errors)
-                    //this.connection.console.log("\n\n")
-                    //this.connection.console.log(flagged)
-                    const diagnostics = provideDiagnostics(errors, flagged);
-
-                    for (const file of Object.keys(diagnostics)) {
-                        const relative_folder = path.relative(
-                            path.dirname(this.rootBeancountFile),
-                            path.dirname(file)
-                        );
-                        this.connection.sendDiagnostics({
-                            uri: 'file://' + relative_folder + path.sep + path.basename(file),
-                            diagnostics: diagnostics[file]
-                        });
-                    }
-                }
-            },
             undefined,
             (str: string) => {
                 this.connection.console.error(str)
+                console.log(str)
             }
         );
+        const output = text.split('\n', 3);
+        const errors = output[0]
+        const flagged = output[1]
+        const diagnostics = provideDiagnostics(errors, flagged);
+
+        for (const file of Object.keys(diagnostics)) {
+            const relative_folder = path.relative(
+                path.dirname(this.rootBeancountFile),
+                path.dirname(file)
+            );
+            this.connection.sendDiagnostics({
+                uri: 'file://' + relative_folder + path.sep + path.basename(file),
+                diagnostics: diagnostics[file]
+            });
+        }
+        return null;
+    }
+
+    async onDidOpenTextDocument(
+        params: LSP.DidOpenTextDocumentParams
+    ): Promise<null> {
+        return this.requestDiagnostics()
+    }
+
+    async onDidSaveTextDocument(
+        params: LSP.DidSaveTextDocumentParams
+    ): Promise<null> {
+        return this.requestDiagnostics()
     }
 
     private async onDocumentFormatting(

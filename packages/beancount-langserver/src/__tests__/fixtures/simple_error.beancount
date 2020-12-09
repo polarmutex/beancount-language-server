@@ -1,0 +1,12 @@
+2013-01-01 open Assets:US:BofA
+  address: "123 America Street, LargeTown, USA"
+  institution: "Bank of America"
+  phone: "+1.012.345.6789"
+2013-01-01 open Assets:US:BofA:Checking                        USD
+  account: "00234-48574897"
+
+2013-01-01 * "Opening Balance for checking account"
+  Assets:US:BofA:Checking                         3219.17 USD
+  Equity:Opening-Balances                        -3219.17 USD
+
+2013-01-02 balance Assets:US:BofA:Checking        4219.17 USD
