@@ -14,6 +14,7 @@ import {
 import { createConnection } from 'vscode-languageserver/node'
 import { Parser, Language } from 'web-tree-sitter'
 import BeancountLspServer from './server'
+import { Settings } from './utils/settings'
 
 const pkg = require('../package')
 
@@ -49,6 +50,10 @@ connection.onInitialize(
         );
         const language = await Language.load(pathToWasm)
         container.resolve<Parser>("Parser").setLanguage(language);
+
+        container.register("Settings", {
+            useValue: new Settings(params.initializationOptions)
+        });
 
         const server = new BeancountLspServer(params, progress);
         await server.init()

@@ -4,5 +4,6 @@ module.exports = {
     testMatch: ["**/?(*.)+(spec|test).[tj]s?(x)"],
     collectCoverage: true,
     coverageReporters: ["lcov"],
-    verbose: false
+    verbose: false,
+    setupFilesAfterEnv: ["<rootDir>/tests/jest.setup.ts"]
 };
