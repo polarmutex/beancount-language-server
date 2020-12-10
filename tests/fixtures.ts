@@ -17,10 +17,12 @@ export const FixtureUri = {
     EXAMPLE: `file://${path.join(FixtureFolder, 'example.beancount')}`,
     SIMPLE_ERROR: `file://${path.join(FixtureFolder, 'simple_error.beancount')}`,
     SIMPLE_FLAG: `file://${path.join(FixtureFolder, 'simple_flag.beancount')}`,
+    SIMPLE_INCLUDE: `file://${path.join(FixtureFolder, 'simple_include.beancount')}`,
 }
 
 export const FixtureTextDocumentItem = {
     EXAMPLE: getTextDocumentItem(FixtureUri.EXAMPLE),
     SIMPLE_ERROR: getTextDocumentItem(FixtureUri.SIMPLE_ERROR),
     SIMPLE_FLAG: getTextDocumentItem(FixtureUri.SIMPLE_FLAG),
+    SIMPLE_INCLUDE: getTextDocumentItem(FixtureUri.SIMPLE_INCLUDE),
 }

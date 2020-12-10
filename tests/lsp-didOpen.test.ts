@@ -12,5 +12,17 @@ describe('lsp server - didOpen', () => {
         expect(connection.onDidOpenTextDocument).toHaveBeenCalled();
         expect(connection.sendDiagnostics).toHaveBeenCalledTimes(0);
     });
+
+    it('calls didOpen and handles multiple imports', async () => {
+        const { connection, server } = await initializeLspServer(FixtureUri.SIMPLE_INCLUDE);
+        server.register(connection);
+
+        await server.onDidOpenTextDocument({
+            textDocument: FixtureTextDocumentItem.SIMPLE_INCLUDE
+        });
+
+        expect(connection.onDidOpenTextDocument).toHaveBeenCalled();
+        expect(connection.sendDiagnostics).toHaveBeenCalledTimes(0);
+    });
 })
 

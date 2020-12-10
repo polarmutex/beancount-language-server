@@ -26,7 +26,7 @@ export default class BeancountLspServer {
         const parser = await initializeParser();
 
         const opts = params.initializationOptions;
-        const rootBeancountFile = opts['rootBeancountFile']
+        const rootBeancountFile = opts['rootBeancountFile'].replace("~", os.homedir)
         if (rootBeancountFile == undefined) {
             throw new Error('Must include rootBeancountFile in Initiaize parameters')
         }
@@ -57,6 +57,13 @@ export default class BeancountLspServer {
         this.analyzer = analyzer;
     }
 
+    async onInitialize(params: LSP.InitializeParams): Promise<LSP.InitializeResult> {
+        //this.connection.console.log(`initialized server v. ${pkg.version}`);
+        return {
+            capabilities: this.capabilities()
+        }
+    }
+
     /**
      * Register handlers for the events from the Language Server Protocol that we
      * care about.
@@ -66,7 +73,7 @@ export default class BeancountLspServer {
         // when the text document first opened or when its content has changed.
         this.documents.listen(this.connection)
         this.documents.onDidChangeContent(change => {
-            this.analyzer.parse(change.document)
+            this.analyzer.analyze(change.document.uri, change.document)
         });
 
         // Register all the handlers for the LSP events.
@@ -118,7 +125,7 @@ export default class BeancountLspServer {
         )
     }
 
-    async requestDiagnostics(): Promise<null> {
+    async requestDiagnostics(): Promise<void> {
         const beanCheckPy = path.join(__dirname, '../python/bean_check.py');
         const pyArgs = [beanCheckPy, this.rootBeancountFile]
         // TODO: Allow option to specify python path
@@ -146,18 +153,18 @@ export default class BeancountLspServer {
                 diagnostics: diagnostics[file]
             });
         }
-        return null;
+        return
     }
 
     async onDidOpenTextDocument(
         params: LSP.DidOpenTextDocumentParams
-    ): Promise<null> {
+    ): Promise<void> {
         return this.requestDiagnostics()
     }
 
     async onDidSaveTextDocument(
         params: LSP.DidSaveTextDocumentParams
-    ): Promise<null> {
+    ): Promise<void> {
         return this.requestDiagnostics()
     }
 

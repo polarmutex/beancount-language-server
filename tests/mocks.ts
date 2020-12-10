@@ -1,6 +1,6 @@
 import * as lsp from 'vscode-languageserver'
 import { FixtureFolder } from './fixtures'
-import BeancountLspServer from '../lsp-server'
+import BeancountLspServer from '../src/lsp-server'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 
 export async function initializeLspServer(rootBeanFile: string) {

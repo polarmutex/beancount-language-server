@@ -4,7 +4,10 @@ import BeancountLspServer from './lsp-server'
 const pkg = require('../package')
 
 export function createLspConnection(): lsp.IConnection {
-    const connection = lsp.createConnection();
+    const connection = lsp.createConnection(
+        new lsp.StreamMessageReader(process.stdin),
+        new lsp.StreamMessageWriter(process.stdout),
+    );
 
     connection.onInitialize(
         async (params: lsp.InitializeParams): Promise<lsp.InitializeResult> => {
