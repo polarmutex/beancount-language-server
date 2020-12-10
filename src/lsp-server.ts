@@ -149,7 +149,8 @@ export default class BeancountLspServer {
                 path.dirname(file)
             );
             this.connection.sendDiagnostics({
-                uri: 'file://' + relative_folder + path.sep + path.basename(file),
+                //uri: 'file://' + relative_folder + path.sep + path.basename(file),
+                uri: `file://${file}`,
                 diagnostics: diagnostics[file]
             });
         }
