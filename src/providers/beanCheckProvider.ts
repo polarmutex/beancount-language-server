@@ -42,9 +42,10 @@ export class BeanCheckProvider {
 
     protected async runBeanCheck(): Promise<void> {
         const journalFile = this.settings.getClientSettings().journalFile
-        const beanCheckPy = path.join(__dirname, '../python/bean_check.py');
+        const beanCheckPy = path.join(__dirname, '../../python/bean_check.py');
         const pyArgs = [beanCheckPy, journalFile]
         // TODO: Allow option to specify python path
+        this.connection.console.error("journalFile: " + journalFile)
         const text = await runExternalCommand(
             'python',
             pyArgs,

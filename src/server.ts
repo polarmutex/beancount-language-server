@@ -21,10 +21,10 @@ export default class BeancountLspServer {
         this.connection = container.resolve("Connection");
 
         const opts = params.initializationOptions;
-        const rootBeancountFile = opts['rootBeancountFile']
-        if (rootBeancountFile == undefined) {
+        const journalFile = opts['journalFile']
+        if (journalFile == undefined) {
             this.connection.window.showErrorMessage(
-                'Must include rootBeancountFile in Initiaize parameters'
+                'Must include journalFile in Initiaize parameters'
             )
         }
     }
@@ -34,7 +34,7 @@ export default class BeancountLspServer {
      * care about.
      */
     public async register(): Promise<void> {
-        container.register(Forest, {
+        container.register("Forest", {
             useValue: new Forest()
         })
         container.register(ASTProvider, {
