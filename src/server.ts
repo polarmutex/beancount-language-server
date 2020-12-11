@@ -62,7 +62,7 @@ export default class BeancountLspServer {
                 documentFormattingProvider: true,
                 completionProvider: {
                     resolveProvider: false,
-                    triggerCharacters: [':'],
+                    triggerCharacters: ['^', ':', '#', '"'],
                 },
                 hoverProvider: false,
                 documentHighlightProvider: false,

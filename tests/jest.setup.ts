@@ -4,9 +4,10 @@ import { Connection } from 'vscode-languageserver';
 import { mockDeep } from 'jest-mock-extended';
 import { Settings } from '../src/utils/settings';
 import { DocumentEvents } from '../src/utils/documentEvents';
+import { Forest } from '../src/forest'
 
 container.register("Connection", { useValue: mockDeep<Connection>() });
-container.register("ElmWorkspaces", { useValue: [] });
+container.register("Forest", { useValue: new Forest() });
 container.register("Settings", {
     useValue: new Settings({
         journalFile: "",
