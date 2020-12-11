@@ -163,12 +163,35 @@ describe("CompletionProvider", () => {
     it("Should complete payee str 1", async () => {
         const source = `
 --@ Test.beancount
-2020-12-01 txn "Test"
-    Assets:Checing    5.00
+2020-12-01 txn "Foo" "Bar"
+    Assets:Checking    5.00
     Expenses:Food
 2020-12-01 txn "{-caret-}
-        `;
+`;
 
-        await testCompletions(source, ["Test"])
+        await testCompletions(source, ["Foo"])
+    })
+
+    it("Should complete payee str 2", async () => {
+        const source = `
+--@ Test.beancount
+2020-12-01 txn "Foo" "Bar"
+    Assets:Checking    5.00
+    Expenses:Food
+2020-12-01 txn "Test" "{-caret-}
+`;
+        await testCompletions(source, ["Bar"])
+    })
+
+    it("Should complete accounts", async () => {
+        const source = `
+--@ Test.beancount
+2020-12-01 open Assets:Checking
+
+2020-12-01 txn "Test"
+    {-caret-}
+
+`;
+        await testCompletions(source, ["Assets:Checking"])
     })
 })

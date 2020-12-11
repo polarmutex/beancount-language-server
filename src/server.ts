@@ -91,7 +91,7 @@ export default class BeancountLspServer {
             const tree = parser.parse(fileUri);
             forest.setTree(fileUri, tree);
 
-            const includeNodes = TreeSitterUtils.findIncludeFiles(tree.rootNode)
+            const includeNodes = TreeSitterUtils.findIncludes(tree.rootNode)
             if (includeNodes) {
                 includeNodes.forEach(
                     (includeNode) => {

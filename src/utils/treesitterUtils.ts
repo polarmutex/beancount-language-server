@@ -5,9 +5,30 @@ import { comparePosition } from './positionUtils'
 
 export default class TreeSitterUtils {
 
-    public static findIncludeFiles(node: SyntaxNode): SyntaxNode[] | undefined {
+    public static isIdentifier(node: SyntaxNode): boolean {
+        return (
+            node.type === "lower_case_identifier" ||
+            node.type === "upper_case_identifier"
+        );
+    }
+
+    public static findIncludes(node: SyntaxNode): SyntaxNode[] | undefined {
         const result = node.children.filter(
             (child) => child.type === 'include'
+        );
+        return result.length === 0 ? undefined : result;
+    }
+
+    public static findTransactions(node: SyntaxNode): SyntaxNode[] | undefined {
+        const result = node.children.filter(
+            (child) => child.type === 'transaction'
+        );
+        return result.length === 0 ? undefined : result;
+    }
+
+    public static findOpens(node: SyntaxNode): SyntaxNode[] | undefined {
+        const result = node.children.filter(
+            (child) => child.type === 'open'
         );
         return result.length === 0 ? undefined : result;
     }
@@ -50,6 +71,7 @@ export default class TreeSitterUtils {
             },
         );
     }
+
     public static findPreviousNode(
         node: SyntaxNode,
         position: Position,

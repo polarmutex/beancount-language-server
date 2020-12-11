@@ -5,6 +5,7 @@ import {
     CompletionItemTag,
     CompletionList,
     CompletionParams,
+    CompletionTriggerKind,
     Connection,
     InsertTextFormat,
     MarkupKind,
@@ -17,6 +18,7 @@ import { SyntaxNode, Tree } from "web-tree-sitter";
 
 import { Forest } from '../forest'
 import TreeSitterUtils from '../utils/treesitterUtils'
+import { comparePosition, PositionUtil } from '../utils/positionUtils'
 
 export class CompletionProvider {
 
@@ -37,25 +39,20 @@ export class CompletionProvider {
 
         if (treeContainer) {
             const tree = treeContainer?.tree;
+            //console.log(tree.rootNode.toString())
 
             const nodeAtPosition = TreeSitterUtils.getNamedDescendantForPosition(
                 tree.rootNode,
                 params.position
             );
 
-            const nodeAtLineBefore = TreeSitterUtils.getNamedDescendantForLineBeforePosition(
-                tree.rootNode,
-                params.position,
-            );
-
-            const nodeAtLineAfter = TreeSitterUtils.getNamedDescendantForLineAfterPosition(
-                tree.rootNode,
-                params.position,
-            );
+            const currentCharacter = params.position.character;
 
             const targetLine = tree.rootNode.text.split("\n")[params.position.line];
-
-            const currentCharacter = params.position.character;
+            const containsTrigger = params.context && params.context.triggerKind == CompletionTriggerKind.TriggerCharacter;
+            const triggerChar = containsTrigger ?
+                params.context?.triggerCharacter :
+                targetLine[currentCharacter - 1]
 
             let replaceRange = Range.create(
                 Position.create(params.position.line, currentCharacter),
@@ -77,6 +74,55 @@ export class CompletionProvider {
             if (isAtStartOfLine) {
                 // Date is always at the start of a line
                 return this.getDateCompletions(tree, replaceRange)
+            }
+            else {
+                if (contextNode?.parent?.hasError()) {
+                    // We are completing a type
+                    let prevSibling = contextNode.previousSibling?.type;
+
+                    if (prevSibling === "date") {
+                        console.log("Next is flag | directive")
+                    }
+                    else if (prevSibling === "flag") {
+                        const payeeOnes: string[] = [];
+                        forest.treeMap.forEach((container) => {
+                            container.payeeStr1.forEach((value) => {
+                                if (!payeeOnes.includes(value)) {
+                                    payeeOnes.push(value)
+                                }
+                            })
+                        })
+                        return this.getPayeeCompletions(payeeOnes);
+                    }
+                    else if (contextNode.type === "ERROR" && prevSibling === "string") {
+                        const payeeTwos: string[] = [];
+                        forest.treeMap.forEach((container) => {
+                            container.payeeStr2.forEach((value) => {
+                                if (!payeeTwos.includes(value)) {
+                                    payeeTwos.push(value)
+                                }
+                            })
+                        })
+                        return this.getPayeeCompletions(payeeTwos);
+                    }
+                    else {
+                        console.log("conextNode: " + contextNode.type)
+                    }
+                }
+                else {
+                    if (nodeAtPosition.type === "postings" &&
+                        nodeAtPosition.parent?.type === "transaction") {
+                        const accounts: string[] = [];
+                        forest.treeMap.forEach((container) => {
+                            container.accountDefinitions.forEach((value) => {
+                                if (!accounts.includes(value)) {
+                                    accounts.push(value)
+                                }
+                            })
+                        })
+                        return this.getAccountCompletions(accounts)
+                    }
+                }
             }
         }
 
@@ -124,5 +170,35 @@ export class CompletionProvider {
         });
 
         return completions
+    }
+
+    private getPayeeCompletions(
+        values: string[]
+    ): CompletionItem[] {
+        const completions: CompletionItem[] = [];
+
+        values.forEach((value) => {
+            completions.push({
+                label: value,
+                kind: CompletionItemKind.Text
+            });
+        })
+
+        return completions;
+    }
+
+    private getAccountCompletions(
+        values: string[]
+    ): CompletionItem[] {
+        const completions: CompletionItem[] = [];
+
+        values.forEach((value) => {
+            completions.push({
+                label: value,
+                kind: CompletionItemKind.Class
+            });
+        })
+
+        return completions;
     }
 }
