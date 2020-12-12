@@ -7,18 +7,13 @@ import {
     CompletionParams,
     CompletionTriggerKind,
     Connection,
-    InsertTextFormat,
-    MarkupKind,
     Position,
     Range,
-    TextEdit,
 } from "vscode-languageserver";
-import { URI } from "vscode-uri";
-import { SyntaxNode, Tree } from "web-tree-sitter";
+import { Tree } from "web-tree-sitter";
 
 import { Forest } from '../forest'
 import TreeSitterUtils from '../utils/treesitterUtils'
-import { comparePosition, PositionUtil } from '../utils/positionUtils'
 
 export class CompletionProvider {
 
@@ -33,7 +28,7 @@ export class CompletionProvider {
     protected handleCompletionRequest = (
         params: CompletionParams,
     ): CompletionItem[] | CompletionList => {
-        const completions: CompletionItem[] = [];
+
         const forest = container.resolve<Forest>("Forest")
         const treeContainer = forest.getByUri(params.textDocument.uri)
 
@@ -61,72 +56,71 @@ export class CompletionProvider {
 
             const isAtStartOfLine = replaceRange.start.character === 0;
 
-            let targetWord = targetLine.substring(
-                replaceRange.start.character,
-                replaceRange.end.character,
-            );
+            let contextNode = nodeAtPosition.previousSibling
 
-            let contextNode = TreeSitterUtils.findPreviousNode(
-                tree.rootNode,
-                params.position,
-            );
-
-            if (isAtStartOfLine) {
-                // Date is always at the start of a line
+            // Date is always at the start of a line
+            if (isAtStartOfLine
+                || (params.position.character == 1 && triggerChar === '2')) {
                 return this.getDateCompletions(tree, replaceRange)
             }
-            else {
-                if (contextNode?.parent?.hasError()) {
-                    // We are completing a type
-                    let prevSibling = contextNode.previousSibling?.type;
 
-                    if (prevSibling === "date") {
-                        console.log("Next is flag | directive")
-                    }
-                    else if (prevSibling === "flag") {
-                        const payeeOnes: string[] = [];
-                        forest.treeMap.forEach((container) => {
-                            container.payeeStr1.forEach((value) => {
-                                if (!payeeOnes.includes(value)) {
-                                    payeeOnes.push(value)
-                                }
-                            })
-                        })
-                        return this.getPayeeCompletions(payeeOnes);
-                    }
-                    else if (contextNode.type === "ERROR" && prevSibling === "string") {
-                        const payeeTwos: string[] = [];
-                        forest.treeMap.forEach((container) => {
-                            container.payeeStr2.forEach((value) => {
-                                if (!payeeTwos.includes(value)) {
-                                    payeeTwos.push(value)
-                                }
-                            })
-                        })
-                        return this.getPayeeCompletions(payeeTwos);
-                    }
-                    else {
-                        console.log("conextNode: " + contextNode.type)
-                    }
-                }
-                else {
-                    if (nodeAtPosition.type === "postings" &&
-                        nodeAtPosition.parent?.type === "transaction") {
-                        const accounts: string[] = [];
-                        forest.treeMap.forEach((container) => {
-                            container.accountDefinitions.forEach((value) => {
-                                if (!accounts.includes(value)) {
-                                    accounts.push(value)
-                                }
-                            })
-                        })
-                        return this.getAccountCompletions(accounts)
-                    }
-                }
+            //if (nodeAtPosition.parent && nodeAtPosition.parent.type != "file") this.connection.console.error("parent: " + nodeAtPosition.parent.toString());
+            //if (nodeAtLineBefore.type != "file") this.connection.console.error("before:" + nodeAtLineBefore.toString())
+            //this.connection.console.error(nodeAtPosition.toString())
+            //if (nodeAtLineAfter.type != "file") this.connection.console.error("after" + nodeAtLineAfter.toString())
+            //if (contextNode) this.connection.console.error("context:" + contextNode.toString())
+            //if (triggerChar) this.connection.console.error("triggerChar: " + triggerChar)
+
+            //this.connection.console.error(nodeAtPosition.toString())
+
+            if (
+                contextNode && contextNode.type === "txn" &&
+                triggerChar === "\""
+            ) {
+                const payeeOnes: string[] = [];
+                forest.treeMap.forEach((container) => {
+                    container.payeeStr1.forEach((value) => {
+                        if (!payeeOnes.includes(value)) {
+                            payeeOnes.push(value)
+                        }
+                    })
+                })
+                return this.getPayeeCompletions(payeeOnes);
+            }
+
+            if (
+                contextNode && contextNode.type === "string" &&
+                triggerChar === "\""
+            ) {
+                const payeeTwos: string[] = [];
+                forest.treeMap.forEach((container) => {
+                    container.payeeStr2.forEach((value) => {
+                        if (!payeeTwos.includes(value)) {
+                            payeeTwos.push(value)
+                        }
+                    })
+                })
+                return this.getPayeeCompletions(payeeTwos);
+            }
+
+            if (
+                //TreeSitterUtils.findParentOfType("posting_or_kv_list", nodeAtPosition) &&
+                nodeAtPosition.type === "identifier" &&
+                contextNode && contextNode.type != "date"
+            ) {
+                const accounts: string[] = [];
+                forest.treeMap.forEach((container) => {
+                    container.accountDefinitions.forEach((value) => {
+                        if (!accounts.includes(value)) {
+                            accounts.push(value)
+                        }
+                    })
+                })
+                return this.getAccountCompletions(accounts)
             }
         }
 
-        return completions;
+        return [];
     }
 
     private getDateCompletions(
@@ -180,6 +174,7 @@ export class CompletionProvider {
         values.forEach((value) => {
             completions.push({
                 label: value,
+                insertText: value + "\"",
                 kind: CompletionItemKind.Text
             });
         })
