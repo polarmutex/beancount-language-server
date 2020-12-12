@@ -45,6 +45,10 @@ export class ASTProvider {
 
         let tree: Tree | undefined = this.forest.getTree(document.uri)
 
+
+        // TODO incremental syncing not working
+        // tree seems to get corrupted
+
         if ("contentChanges" in params) {
             for (const change of params.contentChanges) {
                 if ("range" in change) {
@@ -52,12 +56,13 @@ export class ASTProvider {
                 }
             }
         }
-        else {
-            const newText =
-                this.documentEvents.get(document.uri)?.getText() ??
-                readFileSync(URI.parse(document.uri).fsPath, "utf8");
-            tree = this.parser.parse(newText);
-        }
+
+        const newText =
+            this.documentEvents.get(document.uri)?.getText() ??
+            readFileSync(URI.parse(document.uri).fsPath, "utf8");
+
+        const newTree = this.parser.parse(newText);
+        tree = newTree
 
         if (tree) {
             this.forest.setTree(
