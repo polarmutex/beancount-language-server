@@ -2,6 +2,10 @@ import * as lsp from 'vscode-languageserver'
 import { container } from "tsyringe";
 import * as path from 'path'
 import { Parser } from 'web-tree-sitter'
+import { promisify } from "util";
+import * as fs from "fs";
+import * as os from 'os'
+const readFileAsync = promisify(fs.readFile);
 
 import { Settings } from './utils/settings'
 import TreeSitterUtils from './utils/treesitterUtils'
@@ -9,6 +13,7 @@ import { Forest } from './forest'
 import { ASTProvider } from './providers/astProvider'
 import { BeanCheckProvider } from './providers/beanCheckProvider'
 import { DocumentFormattingProvider } from './providers/documentFormattingProvider'
+import { CompletionProvider } from './providers/completionProvider'
 
 export default class BeancountLspServer {
 
@@ -42,6 +47,7 @@ export default class BeancountLspServer {
         })
         new BeanCheckProvider();
         new DocumentFormattingProvider();
+        new CompletionProvider();
     }
 
     /**
@@ -61,8 +67,8 @@ export default class BeancountLspServer {
                 },
                 documentFormattingProvider: true,
                 completionProvider: {
-                    resolveProvider: false,
-                    triggerCharacters: ['^', ':', '#', '"'],
+                    resolveProvider: true,
+                    triggerCharacters: ['^', ':', '#', '"', '2'],
                 },
                 hoverProvider: false,
                 documentHighlightProvider: false,
@@ -86,23 +92,28 @@ export default class BeancountLspServer {
 
         for (var i = 0; i < seenFiles.length; i++) {
             const fileUri = seenFiles[i]
-            const file = fileUri.replace("file://", "")
+            const file = fileUri.replace("file://", "").replace("~", os.homedir)
+
             this.connection.console.info("Parsing ... " + file);
-            const tree = parser.parse(fileUri);
+            const fileContent = await readFileAsync(file, 'utf8');
+            const tree = parser.parse(fileContent);
             forest.setTree(fileUri, tree);
 
             const includeNodes = TreeSitterUtils.findIncludes(tree.rootNode)
             if (includeNodes) {
                 includeNodes.forEach(
                     (includeNode) => {
-                        const includePath = includeNode.text.replace(/"/g, "")
-                        const includeFile = path.join(
-                            path.dirname(file),
-                            includePath
-                        )
-                        const includeUri = `file://${includeFile}`
-                        if (seenFiles.includes(includeUri)) {
-                            seenFiles.push(includeUri);
+                        const stringNode = includeNode.children[1]
+                        if (stringNode) {
+                            const includePath = stringNode.text.replace(/"/g, "")
+                            const includeFile = path.join(
+                                path.dirname(file),
+                                includePath
+                            )
+                            const includeUri = `file://${includeFile}`
+                            if (!seenFiles.includes(includeUri)) {
+                                seenFiles.push(includeUri);
+                            }
                         }
                     }
                 );
