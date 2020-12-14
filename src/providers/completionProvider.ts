@@ -66,15 +66,16 @@ export class CompletionProvider {
 
             //if (nodeAtPosition.parent && nodeAtPosition.parent.type != "file") this.connection.console.error("parent: " + nodeAtPosition.parent.toString());
             //if (nodeAtLineBefore.type != "file") this.connection.console.error("before:" + nodeAtLineBefore.toString())
-            //this.connection.console.error(nodeAtPosition.toString())
+            this.connection.console.error(nodeAtPosition.toString())
             //if (nodeAtLineAfter.type != "file") this.connection.console.error("after" + nodeAtLineAfter.toString())
-            //if (contextNode) this.connection.console.error("context:" + contextNode.toString())
-            //if (triggerChar) this.connection.console.error("triggerChar: " + triggerChar)
+            if (contextNode) this.connection.console.error("context:" + contextNode.toString())
+            if (triggerChar) this.connection.console.error("triggerChar: " + triggerChar)
 
             //this.connection.console.error(nodeAtPosition.toString())
 
             if (
-                contextNode && contextNode.type === "txn" &&
+                ((contextNode && contextNode.type === "txn") ||
+                    (nodeAtPosition.type === "string")) &&
                 triggerChar === "\""
             ) {
                 const payeeOnes: string[] = [];
