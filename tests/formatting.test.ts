@@ -17,7 +17,7 @@ class MockDocumentFormatingProvider extends DocumentFormattingProvider {
     }
 }
 
-function textEditEquals(a: TextEdit, b: Textedit): boolean {
+function textEditEquals(a: TextEdit, b: TextEdit): boolean {
     return (
         (a.newText === b.newText) &&
         (a.range === b.range)
@@ -81,7 +81,7 @@ describe("documentFormattingProvider", () => {
 
     }
 
-    it("test success", async () => {
+    it.skip("test success", async () => {
         const source = `
 * Section header
 ;; Accounts (comments)
@@ -94,6 +94,7 @@ describe("documentFormattingProvider", () => {
 2014-03-10 * "Something"
     Assets:Other   10 HOOL {500.23} USD ; Bla
     Assets:Cash
+
 `
         const result = `
 * Section header
@@ -125,7 +126,7 @@ describe("documentFormattingProvider", () => {
         await testDocumentFormatting(source, expectedTextEdits);
     })
 
-    it.skip("test_align_posting_starts", async () => {
+    it("test_align_posting_starts", async () => {
         const source = `
 2014-03-01 * "Something"
     Expenses:Restaurant   50.01 USD

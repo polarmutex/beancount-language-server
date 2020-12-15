@@ -5,6 +5,7 @@ import { mockDeep } from 'jest-mock-extended';
 import { Settings } from '../src/utils/settings';
 import { DocumentEvents } from '../src/utils/documentEvents';
 import { Forest } from '../src/forest'
+import { TextDocumentEvents } from '../src/utils/textDocumentEvents'
 
 container.register("Connection", { useValue: mockDeep<Connection>() });
 container.register("Forest", { useValue: new Forest() });
@@ -18,3 +19,6 @@ container.register("ClientSettings", {
     useValue: {},
 });
 container.registerSingleton("DocumentEvents", DocumentEvents);
+container.register("TextDocumentEvents", {
+    useValue: new TextDocumentEvents
+});

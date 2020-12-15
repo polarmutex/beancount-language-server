@@ -183,7 +183,7 @@ describe("CompletionProvider", () => {
         await testCompletions(source, ["Bar"])
     })
 
-    it("Should complete accounts", async () => {
+    it.skip("Should complete accounts", async () => {
         const source = `
 --@ Test.beancount
 2020-12-01 open Assets:Checking
