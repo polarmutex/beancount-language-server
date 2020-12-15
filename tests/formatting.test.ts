@@ -20,7 +20,10 @@ class MockDocumentFormatingProvider extends DocumentFormattingProvider {
 function textEditEquals(a: TextEdit, b: TextEdit): boolean {
     return (
         (a.newText === b.newText) &&
-        (a.range === b.range)
+        (a.range.start.line === b.range.start.line) &&
+        (a.range.start.character === b.range.start.character) &&
+        (a.range.end.line === b.range.end.line) &&
+        (a.range.end.character === b.range.end.character)
     );
 }
 
@@ -135,21 +138,49 @@ describe("documentFormattingProvider", () => {
     Expenses:Restaurant    50.02 USD
     Assets:Cash
 2014-03-03 * "Something"
-    Expenses:Restaurant   50.03 USD
-    Assets:Cash
-`
-        const result = `
-2014-03-01 * "Something"
-    Expenses:Restaurant  50.01 USD
-    Assets:Cash
-2014-03-02 * "Something"
-    Expenses:Restaurant  50.02 USD
-    Assets:Cash
-2014-03-03 * "Something"
-    Expenses:Restaurant  50.03 USD
+    Expenses:Restaurant 50.03 USD
     Assets:Cash
 `
         const expectedTextEdits: TextEdit[] = []
+        expectedTextEdits.push({
+            newText: "",
+            range: {
+                start: {
+                    line: 2,
+                    character: 24
+                },
+                end: {
+                    line: 2,
+                    character: 25
+                }
+            }
+        });
+        expectedTextEdits.push({
+            newText: "",
+            range: {
+                start: {
+                    line: 5,
+                    character: 24
+                },
+                end: {
+                    line: 5,
+                    character: 26
+                }
+            }
+        });
+        expectedTextEdits.push({
+            newText: " ",
+            range: {
+                start: {
+                    line: 8,
+                    character: 24
+                },
+                end: {
+                    line: 8,
+                    character: 24
+                }
+            }
+        });
         await testDocumentFormatting(source, expectedTextEdits);
     })
 

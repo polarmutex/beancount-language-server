@@ -16,11 +16,17 @@ import Parser, { Edit, Language, Point, Query, QueryResult, SyntaxNode, Tree } f
 import { Forest } from '../forest'
 import { TextDocumentEvents } from '../utils/textDocumentEvents'
 import { Settings } from '../utils/settings'
+import { compareTSPositions } from '../utils/positionUtils'
 
+
+interface TSRange {
+    start: Point
+    end: Point
+}
 interface Match {
-    prefix: SyntaxNode[];
-    number: SyntaxNode[];
-    rest: SyntaxNode[];
+    prefix: TSRange | null;
+    number: TSRange | null;
+    rest: TSRange | null;
 }
 
 export class DocumentFormattingProvider {
@@ -79,7 +85,6 @@ export class DocumentFormattingProvider {
         if (treeContainer) {
 
             const tree = treeContainer.tree
-            console.log(tree.rootNode.toString())
 
             let opts = params.options
 
@@ -93,25 +98,64 @@ export class DocumentFormattingProvider {
 
             const match_pairs: Match[] = this.query.matches(tree.rootNode)
                 .map((match) => {
-                    console.log(match)
-                    const prefixNodes: SyntaxNode[] = [];
-                    const numberNodes: SyntaxNode[] = [];
-                    const restNodes: SyntaxNode[] = [];
+
+                    let prefix: TSRange | null = null;
+                    let number: TSRange | null = null;
+                    let rest: TSRange | null = null;
+
                     match.captures.forEach((capture) => {
-                        if (capture.name === "prefix") {
-                            prefixNodes.push(capture.node)
-                        }
-                        if (capture.name === "number") {
-                            numberNodes.push(capture.node)
-                        }
-                        if (capture.name === "rest") {
-                            restNodes.push(capture.node)
+                        let temp: TSRange | null = null;
+                        if (
+                            capture.name === "prefix" ||
+                            capture.name === "number" ||
+                            capture.name === "rest"
+                        ) {
+                            if (capture.name === "prefix") {
+                                temp = prefix
+                            }
+                            else if (capture.name === "number") {
+                                temp = number
+                            }
+                            else if (capture.name === "rest") {
+                                temp = rest
+                            }
+
+                            if (temp == null) {
+                                temp = {
+                                    start: capture.node.startPosition,
+                                    end: capture.node.endPosition
+                                }
+                            }
+                            else {
+                                if (compareTSPositions(
+                                    capture.node.startPosition,
+                                    temp.start
+                                ) < 0) {
+                                    temp.start = capture.node.startPosition
+                                }
+                                if (compareTSPositions(
+                                    capture.node.endPosition,
+                                    temp.end
+                                ) > 0) {
+                                    temp.end = capture.node.endPosition
+                                }
+                            }
+
+                            if (capture.name === "prefix") {
+                                prefix = temp
+                            }
+                            else if (capture.name === "number") {
+                                number = temp
+                            }
+                            else if (capture.name === "rest") {
+                                rest = temp
+                            }
                         }
                     })
                     return {
-                        prefix: prefixNodes,
-                        number: numberNodes,
-                        rest: restNodes
+                        prefix: prefix,
+                        number: number,
+                        rest: rest
                     }
                 })
 
@@ -122,28 +166,65 @@ export class DocumentFormattingProvider {
             let max_prefix_width: number = 0;
             let max_number_width: number = 0;
             match_pairs.forEach((match) => {
-                if (match.prefix.length > 0 && match.number.length > 0) {
-                    let maxPrefix = 0;
-                    match.prefix.forEach((p) => {
-                        if (p.endPosition.column > maxPrefix) {
-                            maxPrefix = p.endPosition.column
-                        }
-                    })
-                    if (maxPrefix > max_prefix_width) {
-                        max_prefix_width = maxPrefix
+                if (match.prefix != null) {
+                    const len = match.prefix.end.column - match.prefix.start.column
+                    if (len > max_prefix_width) {
+                        max_prefix_width = len;
                     }
+                }
 
-                    let maxNumber = 0;
-                    match.number.forEach((n) => {
-                        if (n.endPosition.column > maxPrefix) {
-                            maxNumber = n.endPosition.column
-                        }
-                    })
-                    if (maxNumber > max_number_width) {
-                        max_number_width = maxNumber
+                if (match.number != null) {
+                    const len = match.number.end.column - match.number.start.column
+                    if (len > max_number_width) {
+                        max_number_width = len;
                     }
                 }
             });
+
+            const tabLen = 4;
+            const prefixNumberBuffer = 2
+            const correct_number_placement = tabLen + max_prefix_width + prefixNumberBuffer
+            match_pairs.forEach((match) => {
+                if (match.number && match.prefix) {
+                    const numColPos = match.number.start.column
+                    const insertPos: Position = {
+                        line: match.prefix.end.row,
+                        character: match.prefix.end.column + 1
+                    }
+                    console.log(correct_number_placement)
+                    console.log(numColPos)
+                    if (numColPos < correct_number_placement) {
+                        // Insert Spaces
+                        const edit: TextEdit = {
+                            range: {
+                                start: insertPos,
+                                end: insertPos
+                            },
+                            newText: ' '.repeat(correct_number_placement - numColPos)
+                        }
+                        textEdits.push(edit)
+                    }
+                    else if (numColPos > correct_number_placement) {
+                        // remove spaces
+                        const endPos: Position = {
+                            line: insertPos.line,
+                            character: insertPos.character + (numColPos - correct_number_placement)
+                        }
+                        const edit: TextEdit = {
+                            range: {
+                                start: insertPos,
+                                end: endPos
+                            },
+                            newText: ''
+                        }
+                        textEdits.push(edit)
+                    }
+                }
+            })
+
+            console.log(max_prefix_width)
+            console.log(max_number_width)
+            console.log(textEdits)
 
             return textEdits
         }

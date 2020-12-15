@@ -44,3 +44,18 @@ export function comparePosition(pos1: VSPosition, pos2: TSPosition): number {
 
     return 1;
 }
+
+export function compareTSPositions(pos1: TSPosition, pos2: TSPosition): number {
+    if (pos1.row === pos2.row && pos1.column === pos2.column) {
+        return 0;
+    }
+
+    if (
+        pos1.row < pos2.row ||
+        (pos1.row === pos2.row && pos1.column < pos2.column)
+    ) {
+        return -1;
+    }
+
+    return 1;
+}
