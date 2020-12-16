@@ -84,7 +84,7 @@ describe("documentFormattingProvider", () => {
 
     }
 
-    it.skip("test success", async () => {
+    it("test success", async () => {
         const source = `
 * Section header
 ;; Accounts (comments)
@@ -93,7 +93,7 @@ describe("documentFormattingProvider", () => {
 2014-03-02 * "Something"
     Expenses:Restaurant   50.02 USD
     Assets:Cash
-2014-03-05 balance   Assets:Cash  -50.02 USD
+2014-03-05 balance Assets:Cash -50.02 USD
 2014-03-10 * "Something"
     Assets:Other   10 HOOL {500.23} USD ; Bla
     Assets:Cash
@@ -107,29 +107,55 @@ describe("documentFormattingProvider", () => {
 2014-03-02 * "Something"
     Expenses:Restaurant            50.02 USD
     Assets:Cash
-2014-03-05 balance   Assets:Cash  -50.02 USD
+2014-03-05 balance Assets:Cash  -50.02 USD
 2014-03-10 * "Something"
-    Assets:Other                      10 HOOL {500.23} USD ; Bla
+    Assets:Other                    10 HOOL {500.23} USD ; Bla
     Assets:Cash
 `
         const expectedTextEdits: TextEdit[] = []
         expectedTextEdits.push({
-            newText: "",
+            newText: "         ",
             range: {
                 start: {
-                    line: 0,
-                    character: 0
+                    line: 6,
+                    character: 24
                 },
                 end: {
-                    line: 0,
-                    character: 0
+                    line: 6,
+                    character: 24
+                }
+            }
+        });
+        expectedTextEdits.push({
+            newText: " ",
+            range: {
+                start: {
+                    line: 8,
+                    character: 30
+                },
+                end: {
+                    line: 8,
+                    character: 30
+                }
+            }
+        });
+        expectedTextEdits.push({
+            newText: "                 ",
+            range: {
+                start: {
+                    line: 10,
+                    character: 24
+                },
+                end: {
+                    line: 10,
+                    character: 24
                 }
             }
         });
         await testDocumentFormatting(source, expectedTextEdits);
     })
 
-    it("test_align_posting_starts", async () => {
+    it.skip("test_align_posting_starts", async () => {
         const source = `
 2014-03-01 * "Something"
     Expenses:Restaurant   50.01 USD
