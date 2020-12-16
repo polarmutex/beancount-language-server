@@ -17,7 +17,7 @@ import { Forest } from '../forest'
 import { TextDocumentEvents } from '../utils/textDocumentEvents'
 import { Settings } from '../utils/settings'
 import { runExternalCommand } from '../utils/runExternalCmd'
-import { provideDiagnostics } from '../diagnostics'
+import { provideDiagnostics } from '../utils/diagnostics'
 
 export class BeanCheckProvider {
     private connection: Connection;
