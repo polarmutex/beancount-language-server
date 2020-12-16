@@ -99,30 +99,17 @@ describe("documentFormattingProvider", () => {
     Assets:Cash
 
 `
-        const result = `
-* Section header
-;; Accounts (comments)
-2013-01-01 open Expenses:Restaurant
-2013-01-01 open Assets:Cash
-2014-03-02 * "Something"
-    Expenses:Restaurant            50.02 USD
-    Assets:Cash
-2014-03-05 balance Assets:Cash  -50.02 USD
-2014-03-10 * "Something"
-    Assets:Other                    10 HOOL {500.23} USD ; Bla
-    Assets:Cash
-`
         const expectedTextEdits: TextEdit[] = []
         expectedTextEdits.push({
-            newText: "         ",
+            newText: "       ",
             range: {
                 start: {
                     line: 6,
-                    character: 24
+                    character: 23
                 },
                 end: {
                     line: 6,
-                    character: 24
+                    character: 23
                 }
             }
         });
@@ -144,11 +131,11 @@ describe("documentFormattingProvider", () => {
             range: {
                 start: {
                     line: 10,
-                    character: 24
+                    character: 16
                 },
                 end: {
                     line: 10,
-                    character: 24
+                    character: 16
                 }
             }
         });

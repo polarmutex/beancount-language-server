@@ -97,11 +97,9 @@ export class DocumentFormattingProvider {
 
                     let prefix: TSRange | null = null;
                     let number: TSRange | null = null;
-                    console.log(match)
 
                     match.captures.forEach((capture) => {
                         if (capture.name === "prefix") {
-                            console.log(capture.node.toString())
                             prefix = {
                                 start: capture.node.startPosition,
                                 end: capture.node.endPosition
@@ -115,18 +113,15 @@ export class DocumentFormattingProvider {
                             }
                         }
                     })
-                    if (prefix != null) {
-                        //console.log(prefix!.start.column.toString())
-                        //console.log(prefix!.end.column.toString())
-                    }
                     return {
                         prefix: prefix,
                         number: number,
                     }
                 })
 
-            // make sure inital white spaec is lined up
-            //const norm_match_pairs = this.normalize_indent_whitespace(match_pairs)
+            // TODO
+            // Can we normalize the indents of the postings?
+            // the optional flags kind of make this hard
 
             // find the max width of prefix and numbers
             let max_prefix_width: number = 0;
@@ -134,13 +129,10 @@ export class DocumentFormattingProvider {
             match_pairs.forEach((match) => {
 
                 if (match.prefix != null && match.number != null) {
-                    let len = match.prefix.end.column - match.prefix.start.column
+                    let len = match.prefix.end.column
                     if (len > max_prefix_width) {
                         max_prefix_width = len;
-                        this.connection.console.error("maxRow: " + match.prefix.start.row.toString() + " - " + len)
                     }
-                    //console.log(match.prefix.start.column)
-                    //console.log(match.prefix.end.column)
                     len = match.number.end.column - match.number.start.column
                     if (len > max_number_width) {
                         max_number_width = len;
@@ -162,12 +154,6 @@ export class DocumentFormattingProvider {
                         character: match.prefix.end.column
                     }
 
-                    //console.log("correct_number" + correct_number_placement)
-                    //console.log("newPos" + newNumPos)
-                    //console.log("numPos" + numColPos)
-                    //console.log("numStart" + match.number.start.column)
-                    //console.log("numEnd" + match.number.end.column)
-
                     if (newNumPos > numColPos) {
                         // Insert Spaces
                         const edit: TextEdit = {
@@ -181,6 +167,7 @@ export class DocumentFormattingProvider {
                     }
                     else if (numColPos > newNumPos) {
                         // remove spaces
+                        // TODO conform text will not be deleted
                         const endPos: Position = {
                             line: insertPos.line,
                             character: insertPos.character + (numColPos - newNumPos)
@@ -196,10 +183,6 @@ export class DocumentFormattingProvider {
                     }
                 }
             })
-
-            this.connection.console.error(max_prefix_width.toString())
-            this.connection.console.error(max_number_width.toString())
-            console.log(textEdits)
 
             return textEdits
         }
