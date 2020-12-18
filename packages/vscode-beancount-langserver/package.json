@@ -1,0 +1,66 @@
+{
+	"name": "beancount-langserver",
+	"description": "beancount language server",
+	"author": "Brian Ryall",
+	"license": "MIT",
+	"version": "1.0.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Microsoft/vscode-extension-samples"
+	},
+	"publisher": "bryall",
+	"categories": [],
+	"keywords": [
+		"beancount",
+		"plaintext",
+		"accounting"
+	],
+	"engines": {
+		"vscode": "^1.43.0"
+	},
+	"activationEvents": [
+		"onLanguage:beancount"
+	],
+	"main": "./client/out/extension",
+	"contributes": {
+		"configuration": {
+			"type": "object",
+			"title": "Beancount Language Server Configuration",
+			"properties": {
+				"beancount-langserver.journalPath": {
+					"scope": "resource",
+					"type": "string",
+					"default": "",
+					"description": "Path to the beancount journal"
+				}
+			}
+		},
+		"languages": [
+			{
+				"id": "beancount",
+				"extensions": [
+					".beancount",
+					".bean"
+				],
+				"aliases": [
+					"Beancount",
+					"beancount"
+				]
+			}
+		]
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -b",
+		"watch": "tsc -b -w",
+		"postinstall": "cd client && npm install && cd ../server && npm install && cd .."
+	},
+	"devDependencies": {
+		"@types/mocha": "^8.0.3",
+		"mocha": "^8.1.1",
+		"@types/node": "^12.12.0",
+		"eslint": "^6.4.0",
+		"@typescript-eslint/parser": "^2.3.0",
+		"typescript": "^4.0.2"
+	}
+}

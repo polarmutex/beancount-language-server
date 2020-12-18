@@ -1,0 +1,22 @@
+{
+	"name": "vscode-beancount-langserver-client",
+	"description": "VSCode Ext of the Beancount LangServer",
+	"author": "Brian Ryall",
+	"license": "MIT",
+	"version": "1.0.0",
+	"publisher": "bryall",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Microsoft/vscode-extension-samples"
+	},
+	"engines": {
+		"vscode": "^1.43.0"
+	},
+	"dependencies": {
+		"vscode-languageclient": "^7.0.0"
+	},
+	"devDependencies": {
+		"@types/vscode": "^1.52.0",
+		"vscode-test": "^1.4.1"
+	}
+}
