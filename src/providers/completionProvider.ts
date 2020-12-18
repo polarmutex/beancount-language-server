@@ -74,8 +74,7 @@ export class CompletionProvider {
             //this.connection.console.error(nodeAtPosition.toString())
 
             if (
-                ((contextNode && contextNode.type === "txn") ||
-                    (nodeAtPosition.type === "string")) &&
+                (contextNode && contextNode.type === "txn") &&
                 triggerChar === "\""
             ) {
                 const payeeOnes: string[] = [];
@@ -105,7 +104,6 @@ export class CompletionProvider {
             }
 
             if (
-                //TreeSitterUtils.findParentOfType("posting_or_kv_list", nodeAtPosition) &&
                 nodeAtPosition.type === "identifier" &&
                 contextNode && contextNode.type != "date"
             ) {

@@ -81,6 +81,7 @@ export default class BeancountLspServer {
     }
 
     async init(): Promise<void> {
+        // TODO add progress bar
         const settings = container.resolve<Settings>("Settings");
         const forest = container.resolve<Forest>("Forest");
         const parser = container.resolve<Parser>("Parser");

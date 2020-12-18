@@ -26,7 +26,6 @@ interface TSRange {
 interface Match {
     prefix: TSRange | null;
     number: TSRange | null;
-    rest: TSRange | null;
 }
 
 export class DocumentFormattingProvider {
@@ -49,27 +48,24 @@ export class DocumentFormattingProvider {
         this.language = container.resolve<Parser>("Parser").getLanguage();
         this.query = this.language.query(
             `
-                    ( posting
-                        (
-                            (optflag)?
-                            (account)
-                        ) @prefix
-                        (
-                            (incomplete_amount
-                                    [
-                                        (unary_number_expr)
-                                        (number)
-                                    ] @number
-                                    (currency)? @rest
-                            )?
-                        )
-                        (
-                            (cost_spec)?
-                            (at)?
-                            (atat)?
-                            (price_annotation)?
-                        ) @rest
-                    )
+            ( posting
+                (account) @prefix
+                amount: (incomplete_amount
+                    [
+                        (unary_number_expr)
+                        (number)
+                    ] @number
+                )?
+            )
+            ( balance
+                (account) @prefix
+                (amount_tolerance
+                    ([
+                        (unary_number_expr)
+                        (number)
+                    ] @number)
+                )
+            )
             `
         );
     }
@@ -101,114 +97,80 @@ export class DocumentFormattingProvider {
 
                     let prefix: TSRange | null = null;
                     let number: TSRange | null = null;
-                    let rest: TSRange | null = null;
 
                     match.captures.forEach((capture) => {
-                        let temp: TSRange | null = null;
-                        if (
-                            capture.name === "prefix" ||
-                            capture.name === "number" ||
-                            capture.name === "rest"
-                        ) {
-                            if (capture.name === "prefix") {
-                                temp = prefix
+                        if (capture.name === "prefix") {
+                            prefix = {
+                                start: capture.node.startPosition,
+                                end: capture.node.endPosition
                             }
-                            else if (capture.name === "number") {
-                                temp = number
-                            }
-                            else if (capture.name === "rest") {
-                                temp = rest
-                            }
-
-                            if (temp == null) {
-                                temp = {
-                                    start: capture.node.startPosition,
-                                    end: capture.node.endPosition
-                                }
-                            }
-                            else {
-                                if (compareTSPositions(
-                                    capture.node.startPosition,
-                                    temp.start
-                                ) < 0) {
-                                    temp.start = capture.node.startPosition
-                                }
-                                if (compareTSPositions(
-                                    capture.node.endPosition,
-                                    temp.end
-                                ) > 0) {
-                                    temp.end = capture.node.endPosition
-                                }
-                            }
-
-                            if (capture.name === "prefix") {
-                                prefix = temp
-                            }
-                            else if (capture.name === "number") {
-                                number = temp
-                            }
-                            else if (capture.name === "rest") {
-                                rest = temp
+                            prefix.start.column = 0;
+                        }
+                        else if (capture.name === "number") {
+                            number = {
+                                start: capture.node.startPosition,
+                                end: capture.node.endPosition
                             }
                         }
                     })
                     return {
                         prefix: prefix,
                         number: number,
-                        rest: rest
                     }
                 })
 
-            // make sure inital white spaec is lined up
-            //const norm_match_pairs = this.normalize_indent_whitespace(match_pairs)
+            // TODO
+            // Can we normalize the indents of the postings?
+            // the optional flags kind of make this hard
 
             // find the max width of prefix and numbers
             let max_prefix_width: number = 0;
             let max_number_width: number = 0;
             match_pairs.forEach((match) => {
-                if (match.prefix != null) {
-                    const len = match.prefix.end.column - match.prefix.start.column
+
+                if (match.prefix != null && match.number != null) {
+                    let len = match.prefix.end.column
                     if (len > max_prefix_width) {
                         max_prefix_width = len;
                     }
-                }
-
-                if (match.number != null) {
-                    const len = match.number.end.column - match.number.start.column
+                    len = match.number.end.column - match.number.start.column
                     if (len > max_number_width) {
                         max_number_width = len;
                     }
                 }
             });
 
-            const tabLen = 4;
             const prefixNumberBuffer = 2
-            const correct_number_placement = tabLen + max_prefix_width + prefixNumberBuffer
+            const correct_number_placement = max_prefix_width + prefixNumberBuffer
             match_pairs.forEach((match) => {
                 if (match.number && match.prefix) {
+
+                    const numLen = match.number.end.column - match.number.start.column
                     const numColPos = match.number.start.column
+                    const newNumPos = correct_number_placement + (max_number_width - numLen)
+
                     const insertPos: Position = {
                         line: match.prefix.end.row,
-                        character: match.prefix.end.column + 1
+                        character: match.prefix.end.column
                     }
-                    console.log(correct_number_placement)
-                    console.log(numColPos)
-                    if (numColPos < correct_number_placement) {
+
+                    if (newNumPos > numColPos) {
                         // Insert Spaces
                         const edit: TextEdit = {
                             range: {
                                 start: insertPos,
                                 end: insertPos
                             },
-                            newText: ' '.repeat(correct_number_placement - numColPos)
+                            newText: ' '.repeat(newNumPos - numColPos)
                         }
                         textEdits.push(edit)
                     }
-                    else if (numColPos > correct_number_placement) {
+                    else if (numColPos > newNumPos) {
                         // remove spaces
+                        // TODO conform text will not be deleted
                         const endPos: Position = {
                             line: insertPos.line,
-                            character: insertPos.character + (numColPos - correct_number_placement)
+                            character: insertPos.character + (numColPos - newNumPos)
                         }
                         const edit: TextEdit = {
                             range: {
@@ -221,10 +183,6 @@ export class DocumentFormattingProvider {
                     }
                 }
             })
-
-            console.log(max_prefix_width)
-            console.log(max_number_width)
-            console.log(textEdits)
 
             return textEdits
         }

@@ -183,13 +183,13 @@ describe("CompletionProvider", () => {
         await testCompletions(source, ["Bar"])
     })
 
-    it.skip("Should complete accounts", async () => {
+    it("Should complete accounts", async () => {
         const source = `
 --@ Test.beancount
 2020-12-01 open Assets:Checking
 
 2020-12-01 txn "Test"
-    {-caret-}
+    As{-caret-}
 
 `;
         await testCompletions(source, ["Assets:Checking"])
