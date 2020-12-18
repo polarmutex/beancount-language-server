@@ -27,7 +27,7 @@
 			"type": "object",
 			"title": "Beancount Language Server Configuration",
 			"properties": {
-				"beancount-langserver.journalPath": {
+				"beancount-langserver.journalFile": {
 					"scope": "resource",
 					"type": "string",
 					"default": "",

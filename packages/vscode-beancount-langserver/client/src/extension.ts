@@ -4,7 +4,7 @@
  * ------------------------------------------------------------------------------------------ */
 
 import * as path from 'path';
-import { workspace, ExtensionContext } from 'vscode';
+import { window, workspace, ExtensionContext } from 'vscode';
 
 import {
 	LanguageClient,
@@ -14,11 +14,26 @@ import {
 } from 'vscode-languageclient/node';
 
 let client: LanguageClient;
+let logger = window.createOutputChannel('Beancount-LangServer')
+
+export interface IClientSettings {
+    journalFile:string
+}
+
+const config = workspace.getConfiguration().get<IClientSettings>("beancount-langserver")
+
+function getSettings(config: IClientSettings) {
+    return config ?
+        {
+            journalFile: config.journalFile
+        }
+        : {};
+}
 
 export function activate(context: ExtensionContext) {
 	// The server is implemented in node
 	let serverModule = context.asAbsolutePath(
-		path.join('server', 'out', 'server.js')
+		path.join('server', 'out', 'cli.js')
 	);
 	// The debug options for the server
 	// --inspect=6009: runs the server in Node's Inspector mode so VS Code can attach to the server for debugging
@@ -38,11 +53,12 @@ export function activate(context: ExtensionContext) {
 	// Options to control the language client
 	let clientOptions: LanguageClientOptions = {
 		// Register the server for plain text documents
-		documentSelector: [{ scheme: 'file', language: 'plaintext' }],
+		documentSelector: [{ scheme: 'file', language: 'beancount' }],
 		synchronize: {
 			// Notify the server about file changes to '.clientrc files contained in the workspace
-			fileEvents: workspace.createFileSystemWatcher('**/.clientrc')
-		}
+			fileEvents: workspace.createFileSystemWatcher('**/.beancount')
+		},
+        initializationOptions: getSettings(config)
 	};
 
 	// Create the language client and start the client.
