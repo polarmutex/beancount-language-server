@@ -24,6 +24,7 @@ const version = require('../package.json').version
 
 const program = new Command('beancount-langserver')
     .version(version)
+    .allowUnknownOption()
     .option('--stdio', 'use stdio')
     .option('--node-ipc', 'use node-ipc')
     .parse(process.argv);
