@@ -12,7 +12,7 @@ export class Settings {
 
     private clientSettings: IClientSettings = {
         journalFile: "",
-        pythonPath: ""
+        pythonPath: "python3"
     }
     private connection: Connection;
 
@@ -28,7 +28,8 @@ export class Settings {
     }
 
     private updateSettings(config: IClientSettings): void {
+        config.journalFile = config.journalFile.replace("~", os.homedir)
+        config.pythonPath = config.pythonPath.replace("~", os.homedir)
         this.clientSettings = { ...this.clientSettings, ...config };
-        this.clientSettings.journalFile.replace("~", os.homedir)
     }
 }
