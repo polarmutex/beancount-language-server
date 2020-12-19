@@ -32,6 +32,12 @@
 					"type": "string",
 					"default": "",
 					"description": "Path to the beancount journal"
+				},
+				"beancount-langserver.pythonPath": {
+					"scope": "resource",
+					"type": "string",
+					"default": "python3",
+					"description": "Path to python exe where beancount is installed"
 				}
 			}
 		},

@@ -18,6 +18,7 @@ let logger = window.createOutputChannel('Beancount-LangServer')
 
 export interface IClientSettings {
     journalFile:string
+    pythonPath:string
 }
 
 const config = workspace.getConfiguration().get<IClientSettings>("beancount-langserver")
@@ -25,7 +26,8 @@ const config = workspace.getConfiguration().get<IClientSettings>("beancount-lang
 function getSettings(config: IClientSettings) {
     return config ?
         {
-            journalFile: config.journalFile
+            journalFile: config.journalFile,
+            pythonPath: config.pythonPath
         }
         : {};
 }
