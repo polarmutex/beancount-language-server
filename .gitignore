@@ -3,10 +3,7 @@ node_modules
 out
 coverage
 .DS_Store
-package-lock.json
 
-packages/beancount-langserver/poetry.lock
-packages/beancount-langserver/pyproject.toml
 tsconfig.tsbuildinfo
 poetry.lock
 pyproject.toml
