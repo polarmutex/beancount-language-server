@@ -33,7 +33,7 @@ pip install -g beancount
  - journalFile: Path to main journal file
  - pythonPath: Path to python executable that has beancount installed
 
-### Semantic Tokem Troiblshooting
+### Semantic Tokem Troublshooting
 
  May need the following setting to enable syntax colors for beancount files
  ```
