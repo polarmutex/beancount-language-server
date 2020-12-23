@@ -3,6 +3,10 @@
 **Table of Contents**
 
 - [vscode-beancount-langserver](#vscode-beancount-langserver)
+  - [Requirements](#requirements)
+  - [Configuration](#configuration)
+  - [Features](#features)
+  - [Contributing](#contributing)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
