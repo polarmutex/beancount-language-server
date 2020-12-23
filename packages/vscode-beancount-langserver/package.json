@@ -27,13 +27,24 @@
 			"type": "object",
 			"title": "Beancount Language Server Configuration",
 			"properties": {
-				"beancount-langserver.journalFile": {
+				"beancountLangServer.trace.server": {
+					"scope": "window",
+					"type": "string",
+					"enum": [
+						"off",
+						"messages",
+						"verbose"
+					],
+					"default": "off",
+					"description": "Traces the communication between VS Code and the language server."
+				},
+				"beancountLangServer.journalFile": {
 					"scope": "resource",
 					"type": "string",
 					"default": "",
 					"description": "Path to the beancount journal"
 				},
-				"beancount-langserver.pythonPath": {
+				"beancountLangServer.pythonPath": {
 					"scope": "resource",
 					"type": "string",
 					"default": "python3",
@@ -47,10 +58,6 @@
 				"extensions": [
 					".beancount",
 					".bean"
-				],
-				"aliases": [
-					"Beancount",
-					"beancount"
 				]
 			}
 		]
