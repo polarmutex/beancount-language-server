@@ -5,6 +5,7 @@
 - [vscode-beancount-langserver](#vscode-beancount-langserver)
   - [Requirements](#requirements)
   - [Configuration](#configuration)
+    - [Semantic Tokem Troiblshooting](#semantic-tokem-troiblshooting)
   - [Features](#features)
   - [Contributing](#contributing)
 
