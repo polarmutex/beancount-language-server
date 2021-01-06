@@ -8,7 +8,7 @@
 		"type": "git",
 		"url": "https://github.com/Microsoft/vscode-extension-samples"
 	},
-	"publisher": "bryall",
+	"publisher": "polarmutex",
 	"categories": [],
 	"keywords": [
 		"beancount",
@@ -75,5 +75,10 @@
 		"eslint": "^6.4.0",
 		"@typescript-eslint/parser": "^2.3.0",
 		"typescript": "^4.0.2"
+	},
+	"__metadata": {
+		"id": "b3caba90-f41e-4698-adf5-23463f6daba3",
+		"publisherDisplayName": "polarmutex",
+		"publisherId": "3205ea90-ca1b-4274-bc5b-0a1721811b70"
 	}
 }
