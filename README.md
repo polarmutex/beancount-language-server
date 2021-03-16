@@ -85,7 +85,7 @@ Settings may need a restart to be applied.
 
 ### Neovim
 
-* Plan on submitting this langauge server to nvim-lspconfig for easier setup
+The settings for the language server are in the lspconfig repo
 
 1. Install the beancount language server
     ```sh
@@ -93,25 +93,14 @@ Settings may need a restart to be applied.
     ```
     However you install it, you need to remember how to access the binary
 
-2. Create a lspconfig for the beancount LSP [example in my dotfiles](https://github.com/polarmutex/dotfiles/blob/master/neovim/lua/lspconfig/beancount.lua)
-    - Create a folder `lua/lspconfig/` in your nvim config folder(~/.config/nvim)
-    - add the following file inside that folder (beancount.lua)
+2. Create a lua lspconfig for the beancount LSP [example in my dotfiles](https://github.com/polarmutex/dotfiles/blob/master/neovim/lua/polarmutex/lsp/beancount.lua)
+    - add the following code to your lspconfig
     ```lua
-    local configs = require 'lspconfig/configs'
-    configs.beancount = {
-        default_config = {
-            cmd = {
-                'beancount-langserver',
-                '--stdio'
-            };
-            filetypes = {"beancount"};
-            root_dir = function(fname)
-                return util.find_git_ancestor(fname) or util.path.dirname(fname)
-            end;
-            init_options = {
-                journalFile = "<path to journal file>",
-                pythonPath = "<path to python executable with beancount installed>";
-            };
+    local lspconfig = require 'lspconfig'
+    lspconfig.beancount.setup= {
+        init_options = {
+            journalFile = "<path to journal file>",
+            pythonPath = "<path to python executable with beancount installed>";
         };
     };
     ```
