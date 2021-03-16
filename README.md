@@ -101,6 +101,8 @@ Settings may need a restart to be applied.
     - add the following file inside that folder (beancount.lua)
     ```lua
     local configs = require 'lspconfig/configs'
+    local util = require 'lspconfig/util'
+
     configs.beancount = {
         default_config = {
             cmd = {
