@@ -83,6 +83,58 @@ Settings may need a restart to be applied.
 
 ## Editor Support
 
+### Neovim
+
+* Plan on submitting this langauge server to nvim-lspconfig for easier setup
+
+1. Install the beancount language server
+    ```sh
+    npm install -g beancount-langserver
+    ```
+    However you install it, you need to remember how to access the binary
+
+2. Create a lspconfig for the beancount LSP [example in my dotfiles](https://github.com/polarmutex/dotfiles/blob/master/neovim/lua/lspconfig/beancount.lua)
+    - Create a folder `lua/lspconfig/` in your nvim config folder(~/.config/nvim)
+    - add the following file inside that folder (beancount.lua)
+    ```lua
+    local configs = require 'lspconfig/configs'
+    configs.beancount = {
+        default_config = {
+            cmd = {
+                'beancount-langserver',
+                '--stdio'
+            };
+            filetypes = {"beancount"};
+            root_dir = function(fname)
+                return util.find_git_ancestor(fname) or util.path.dirname(fname)
+            end;
+            init_options = {
+                journalFile = "<path to journal file>",
+                pythonPath = "<path to python executable with beancount installed>";
+            };
+        };
+    };
+    ```
+3. Open a beancount file and verify LSP connected with the LSPInfo command
+
+#### Troubleshooting
+
+#### beancount file type not detected
+
+If you notice beancount files not having the "beancount" type, you need a neovim v0.5 or master built after Feb 17, 2021
+
+If not the following in a file named `beancount.vim` in the `ftdetect` folder
+
+```vim
+function! s:setf(filetype) abort
+    if &filetype !=# a:filetype
+        let &filetype = a:filetype
+    endif
+endfunction
+
+au BufNewFile,BufRead *.bean,*.beancount call s:setf('beancount')
+```
+
 ### VS Code
 
 Plan to make a VS Code extesion in the future
