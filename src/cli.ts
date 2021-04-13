@@ -83,3 +83,18 @@ process.on("unhandledRejection", (reason, p) => {
         `Unhandled Rejection at: Promise ${p} reason:, ${reason}`,
     );
 });
+
+process.on('uncaughtException', (err:any, origin:any) => {
+    connection.console.error(`Caught exception: ${err}\n` + `Exception origin: ${origin}`);
+    console.error(`Caught exception: ${err}\n` + `Exception origin: ${origin}`);
+});
+
+process.on('beforeExit', (code) => {
+  console.log('Process beforeExit event with code: ', code);
+  connection.console.log('Process beforeExit event with code: ' + code);
+});
+
+process.on('exit', (code) => {
+  console.log('Process exit event with code: ', code);
+  connection.console.log('Process exit event with code: ' + code);
+});
