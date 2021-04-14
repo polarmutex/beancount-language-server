@@ -49,9 +49,12 @@ export class ASTProvider {
         // TODO incremental syncing not working
         // tree seems to get corrupted
 
+        let hasContentChanges = false
         if ("contentChanges" in params) {
+            hasContentChanges = true
             for (const change of params.contentChanges) {
                 if ("range" in change) {
+                    console.info(change)
                     tree?.edit(this.getEditFromChange(change, tree.rootNode.text));
                 }
             }
@@ -61,7 +64,11 @@ export class ASTProvider {
             this.documentEvents.get(document.uri)?.getText() ??
             readFileSync(URI.parse(document.uri).fsPath, "utf8");
 
-        const newTree = this.parser.parse(newText);
+        const newTree = this.parser.parse(
+            newText,
+            hasContentChanges ? tree : undefined
+        );
+
         tree = newTree
 
         if (tree) {
@@ -70,7 +77,6 @@ export class ASTProvider {
                 tree
             );
         }
-
     }
 
     private getEditFromChange(
