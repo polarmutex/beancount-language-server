@@ -1,35 +1,26 @@
-import { spawn, SpawnOptions } from 'child_process';
+import { Connection } from "vscode-languageserver";
+import execa, { ExecaSyncReturnValue } from "execa";
 
-export function runExternalCommand(
-    cmd: string,
-    args: string[],
-    opts?: SpawnOptions,
-    logger?: (str: string) => void
-): Promise<string> {
+export function execCmdSync(
+  cmd: string,
+  cmdArguments: string[],
+  connection: Connection,
+): ExecaSyncReturnValue<string> {
 
-    const options: SpawnOptions = opts ? opts : {};
-    const child = spawn(cmd, args, options);
+    try {
 
-    return new Promise((resolve, reject) => {
-        let response: string = '';
+        return execa.sync(cmd, cmdArguments, {});
 
-        const handleClose = (returnCode: number | Error) => {
-            if (response != '') {
-                resolve(response);
-            }
-            else {
-                reject('Failed to execute bean-check')
-            }
+    } catch (error) {
+
+        connection.console.warn(JSON.stringify(error));
+        if (error.errno && error.errno === "ENOENT") {
+            connection.window.showErrorMessage(
+                `Cannot find executable with name '${cmd}'`,
+            );
+            throw "Executable not found";
+        } else {
+            throw error;
         }
-
-        if (logger) {
-            child.on('error', (e: string) => logger('error: ' + e));
-            child.stderr!.on('data', e => logger('stderr: ' + e));
-        }
-
-        child.stdout!.on('data', buffer => {
-            response += buffer.toString()
-        });
-        child.stdout!.on('end', handleClose);
-    });
+    }
 }
