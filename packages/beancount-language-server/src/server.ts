@@ -11,7 +11,9 @@ import { Settings } from './utils/settings'
 import TreeSitterUtils from './utils/treesitterUtils'
 import { Forest } from './forest'
 import { ASTProvider } from './providers/astProvider'
-import { BeanCheckProvider } from './providers/beanCheckProvider'
+import { DiagnosticsProvider } from './providers/diagnostics/diagnosticsProvider'
+import { TreeSitterDiagnostics } from './providers/diagnostics/treesitterDiagnostics'
+import { BeanCheckDiagnostics } from './providers/diagnostics/beanCheckDiagnostics'
 import { DocumentFormattingProvider } from './providers/documentFormattingProvider'
 import { CompletionProvider } from './providers/completionProvider'
 
@@ -45,7 +47,15 @@ export default class BeancountLspServer {
         container.register(ASTProvider, {
             useValue: new ASTProvider()
         })
-        new BeanCheckProvider();
+
+        container.register(BeanCheckDiagnostics, {
+            useValue: new BeanCheckDiagnostics()
+        })
+        container.register(TreeSitterDiagnostics, {
+            useValue: new TreeSitterDiagnostics()
+        })
+        new DiagnosticsProvider();
+
         new DocumentFormattingProvider();
         new CompletionProvider();
     }
