@@ -67,8 +67,12 @@ connection.onInitialize(
         const server = new BeancountLspServer(params, progress);
 
         server.register();
-
-        await server.init()
+        
+        try {
+            await server.init();
+        } catch(e) {
+            connection.window.showErrorMessage(e);
+        }
 
 
         return server.capabilities;

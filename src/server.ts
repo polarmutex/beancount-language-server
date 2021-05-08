@@ -91,34 +91,54 @@ export default class BeancountLspServer {
         const seenFiles: string[] = []
         seenFiles.push(journalUri)
 
+        const failedFiles: string[] = []
+
         for (var i = 0; i < seenFiles.length; i++) {
             const fileUri = seenFiles[i]
             const file = fileUri.replace("file://", "").replace("~", os.homedir)
 
             this.connection.console.info("Parsing ... " + file);
-            const fileContent = await readFileAsync(file, 'utf8');
-            const tree = parser.parse(fileContent);
-            forest.setTree(fileUri, tree);
+            try {
+                const fileContent = await readFileAsync(file, 'utf8');
+                const tree = parser.parse(fileContent);
+                forest.setTree(fileUri, tree);
 
-            const includeNodes = TreeSitterUtils.findIncludes(tree.rootNode)
-            if (includeNodes) {
-                includeNodes.forEach(
-                    (includeNode) => {
-                        const stringNode = includeNode.children[1]
-                        if (stringNode) {
-                            const includePath = stringNode.text.replace(/"/g, "")
-                            const includeFile = path.join(
-                                path.dirname(file),
-                                includePath
-                            )
-                            const includeUri = `file://${includeFile}`
-                            if (!seenFiles.includes(includeUri)) {
-                                seenFiles.push(includeUri);
+                const includeNodes = TreeSitterUtils.findIncludes(tree.rootNode)
+                if (includeNodes) {
+                    includeNodes.forEach(
+                        (includeNode) => {
+                            const stringNode = includeNode.children[1]
+                            if (stringNode) {
+                                const includePath = stringNode.text.replace(/"/g, "")
+                                const includeFile = path.join(
+                                    path.dirname(file),
+                                    includePath
+                                )
+                                const includeUri = `file://${includeFile}`;
+                                
+                                if (includeUri.endsWith("*")) {
+                                    const filenames = fs.readdirSync(includeUri.replace("file://", "").replace("*", ""));
+                                    filenames.forEach(function (fileInFolder) {
+                                        const folderFileUir = `file://${fileInFolder}`;
+                                        if (!seenFiles.includes(folderFileUir)) {
+                                            seenFiles.push(folderFileUir);
+                                        } 
+                                    });
+                                } else if (!seenFiles.includes(includeUri)) {
+                                    seenFiles.push(includeUri);
+                                }
                             }
                         }
-                    }
-                );
+                    );
+                }
+            } catch (e) {
+                console.error(e);
+                failedFiles.push(fileUri);
+                continue;
             }
+        }
+        if (failedFiles.length > 0) {
+            throw new Error("Not all files are loaded. Error loading files: " + failedFiles);
         }
 
     }
