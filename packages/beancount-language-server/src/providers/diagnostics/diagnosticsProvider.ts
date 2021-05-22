@@ -55,7 +55,7 @@ export class DiagnosticsProvider {
 
         this.resetDiagnostics(checkDiagnostics, DiagnosticKind.BeanCheck);
 
-        if (checkDiagnostics.size == 1) {
+        if (checkDiagnostics.size == 0) {
             return
         }
 
