@@ -7,3 +7,8 @@ coverage
 tsconfig.tsbuildinfo
 poetry.lock
 pyproject.toml
+
+
+# Added by cargo
+
+/target
