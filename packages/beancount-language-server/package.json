@@ -26,6 +26,7 @@
   "dependencies": {
     "commander": "^6.2.0",
     "doctoc": "^2.0.0",
+    "execa": "^5.1.1",
     "reflect-metadata": "^0.1.13",
     "tree-sitter": "^0.17.1",
     "tree-sitter-beancount": "^1.0.0",
