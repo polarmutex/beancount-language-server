@@ -1,0 +1,3 @@
+[submodule "vendor/tree-sitter-beancount"]
+	path = vendor/tree-sitter-beancount
+	url = https://github.com/polarmutex/tree-sitter-beancount
