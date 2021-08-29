@@ -1,6 +1,7 @@
 use clap::App;
 use lspower::{LspService, Server};
 mod core;
+mod handlers;
 mod server;
 
 fn cli() {
