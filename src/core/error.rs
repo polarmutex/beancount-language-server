@@ -17,4 +17,18 @@ pub enum Error {
         /// The URL of the requested session resource.
         uri: lsp::Url,
     },
+
+    #[error("Cannot convert URI to file path")]
+    UriToPathConversion,
+}
+
+/// Wrapper struct for converting [`anyhow::Error`] into [`lspower::jsonrpc::Error`].
+pub struct IntoJsonRpcError(pub anyhow::Error);
+
+impl From<IntoJsonRpcError> for lspower::jsonrpc::Error {
+    fn from(error: IntoJsonRpcError) -> Self {
+        let mut rpc_error = lspower::jsonrpc::Error::internal_error();
+        rpc_error.data = Some(serde_json::to_value(format!("{}", error.0)).unwrap());
+        rpc_error
+    }
 }

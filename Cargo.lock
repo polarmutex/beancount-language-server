@@ -76,6 +76,8 @@ dependencies = [
  "lsp-text",
  "lspower",
  "ropey",
+ "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "tree-sitter",
