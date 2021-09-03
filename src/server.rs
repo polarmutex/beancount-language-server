@@ -34,6 +34,10 @@ pub fn capabilities() -> lsp::ServerCapabilities {
 #[lspower::async_trait]
 impl LanguageServer for Server {
     async fn initialize(&self, params: lsp::InitializeParams) -> jsonrpc::Result<lsp::InitializeResult> {
+        self.client
+            .log_message(lsp::MessageType::Error, "Beancount Server initializing")
+            .await;
+
         *self.session.client_capabilities.write().await = Some(params.capabilities);
         let capabilities = capabilities();
 
@@ -47,7 +51,9 @@ impl LanguageServer for Server {
         }
         // TODO need error if it does not exist
 
-        self.session.parse_initial_forest(beancount_lsp_settings.journal_file);
+        self.session
+            .parse_initial_forest(lsp::Url::from_file_path(beancount_lsp_settings.journal_file).unwrap())
+            .await;
         Ok(lsp::InitializeResult {
             capabilities,
             ..lsp::InitializeResult::default()
