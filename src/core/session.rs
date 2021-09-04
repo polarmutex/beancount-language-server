@@ -4,10 +4,14 @@ use dashmap::{
     DashMap,
 };
 use linked_list::LinkedList;
-use log::{debug, error, info, log_enabled, Level};
+use log::debug;
 use lspower::lsp;
 use serde::{Deserialize, Serialize};
-use std::{fs::read_to_string, path::Path};
+use std::{
+    env,
+    fs::read_to_string,
+    path::{Path, PathBuf},
+};
 use tokio::sync::{Mutex, RwLock};
 
 /// A tag representing of the kinds of session resource.
@@ -28,6 +32,8 @@ pub struct Session {
     documents: DashMap<lsp::Url, core::Document>,
     parsers: DashMap<lsp::Url, Mutex<tree_sitter::Parser>>,
     forest: DashMap<lsp::Url, Mutex<tree_sitter::Tree>>,
+    pub root_journal_path: RwLock<Option<PathBuf>>,
+    pub bean_check_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -43,6 +49,17 @@ impl Session {
         let documents = DashMap::new();
         let parsers = DashMap::new();
         let forest = DashMap::new();
+
+        let bean_check_path = env::var_os("PATH").and_then(|paths| {
+            env::split_paths(&paths).find_map(|p| {
+                let full_path = p.join("bean-check");
+
+                if full_path.is_file() { Some(full_path) } else { None }
+            })
+        });
+
+        let root_journal_path = RwLock::new(None);
+
         Ok(Session {
             server_capabilities,
             client_capabilities,
@@ -50,6 +67,8 @@ impl Session {
             documents,
             parsers,
             forest,
+            root_journal_path,
+            bean_check_path,
         })
     }
 
@@ -135,9 +154,12 @@ impl Session {
 
     // Issus to look at if running into issues with this
     // https://github.com/silvanshade/lspower/issues/8
-    pub async fn parse_initial_forest(&self, root_journal: lsp::Url) -> anyhow::Result<bool, anyhow::Error> {
+    pub async fn parse_initial_forest(&self, root_url: lsp::Url) -> anyhow::Result<bool, anyhow::Error> {
         let mut seen_files = LinkedList::new();
-        seen_files.push_back(root_journal);
+        // let root_pathbuf: String = self.root_journal_path.into_inner().unwrap().as_ref().as_os_str();
+        // let temp = self.root_journal_path.read().await;
+        // let root_url = lsp::Url::from_file_path(temp.clone().unwrap()).unwrap();
+        seen_files.push_back(root_url);
 
         // follow this for native cursor support
         // https://github.com/rust-lang/rust/issues/58533
