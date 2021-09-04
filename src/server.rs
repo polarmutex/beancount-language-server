@@ -24,9 +24,18 @@ pub fn capabilities() -> lsp::ServerCapabilities {
         };
         Some(lsp::TextDocumentSyncCapability::Options(options))
     };
+    let completion_provider = {
+        let options = lsp::CompletionOptions {
+            resolve_provider: Some(false),
+            trigger_characters: Some(vec![":".to_string()]),
+            ..Default::default()
+        };
+        Some(options)
+    };
 
     lsp::ServerCapabilities {
         text_document_sync,
+        completion_provider,
         ..Default::default()
     }
 }
@@ -85,5 +94,11 @@ impl LanguageServer for Server {
     async fn did_close(&self, params: lsp::DidCloseTextDocumentParams) {
         let session = self.session.clone();
         handlers::text_document::did_close(session, params).await.unwrap()
+    }
+
+    async fn completion(&self, params: lsp::CompletionParams) -> jsonrpc::Result<Option<lsp::CompletionResponse>> {
+        let session = self.session.clone();
+        let result = handlers::text_document::completion(session, params).await;
+        Ok(result.map_err(core::IntoJsonRpcError)?)
     }
 }
