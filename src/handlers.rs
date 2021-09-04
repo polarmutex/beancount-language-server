@@ -80,6 +80,15 @@ pub mod text_document {
             *session.get_mut_tree(uri).await?.value_mut() = Mutex::new(tree.clone());
         }
 
+        if let Err(err) = check_beancont(&session).await {
+            debug!("handlers::did_open -- Error finding diagnostics {}", err.to_string());
+            session
+                .as_ref()
+                .client()?
+                .log_message(lsp::MessageType::Error, err.to_string())
+                .await;
+        }
+
         debug!("handlers::did_close - done");
         Ok(())
     }
@@ -94,7 +103,10 @@ pub mod text_document {
         let temp = session.root_journal_path.read().await;
         let root_journal_path = temp.clone().unwrap();
 
-        providers::diagnostics(bean_check_cmd, &root_journal_path).await;
+        let diags = providers::diagnostics(bean_check_cmd, &root_journal_path).await;
+        for (key, value) in diags {
+            session.client()?.publish_diagnostics(key, value, None).await;
+        }
         Ok(())
     }
 }

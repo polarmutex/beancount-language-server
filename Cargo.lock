@@ -84,6 +84,7 @@ dependencies = [
  "log",
  "log4rs",
  "lspower",
+ "regex",
  "ropey",
  "serde",
  "serde_json",
