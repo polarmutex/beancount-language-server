@@ -5,7 +5,6 @@ use log4rs::{
     config::{Appender, Config, Root},
     encode::pattern::PatternEncoder,
 };
-use serde::Serialize;
 use std::{io::Write, path::PathBuf};
 
 pub struct Logger {
