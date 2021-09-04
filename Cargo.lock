@@ -77,12 +77,12 @@ name = "beancount-language-server"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
  "dashmap",
  "linked-list",
  "log",
  "log4rs",
- "lsp-text",
  "lspower",
  "ropey",
  "serde",
@@ -443,18 +443,6 @@ dependencies = [
  "thread-id",
  "typemap",
  "winapi",
-]
-
-[[package]]
-name = "lsp-text"
-version = "0.0.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b19817897b51f6a0c400c4a4c4ba249f821ca89058212a2478e0d2fc43c191ad"
-dependencies = [
- "anyhow",
- "bytes",
- "lsp-types",
- "ropey",
 ]
 
 [[package]]
