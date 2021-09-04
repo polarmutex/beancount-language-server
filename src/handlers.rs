@@ -28,6 +28,23 @@ pub mod text_document {
         Ok(())
     }
 
+    /// handler for `textDocument/didSave`.
+    pub async fn did_save(session: Arc<core::Session>, params: lsp::DidSaveTextDocumentParams) -> anyhow::Result<()> {
+        debug!("handlers::did_save");
+        let uri = params.text_document.uri.clone();
+
+        if let Err(err) = check_beancont(&session).await {
+            debug!("handlers::did_save -- Error finding diagnostics {}", err.to_string());
+            session
+                .as_ref()
+                .client()?
+                .log_message(lsp::MessageType::Error, err.to_string())
+                .await;
+        }
+
+        Ok(())
+    }
+
     // handler for `textDocument/didClose`.
     pub async fn did_close(session: Arc<core::Session>, params: lsp::DidCloseTextDocumentParams) -> anyhow::Result<()> {
         debug!("handlers::did_close");
