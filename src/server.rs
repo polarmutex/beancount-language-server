@@ -1,6 +1,6 @@
 use crate::{core, handlers};
 use lspower::{jsonrpc, lsp, LanguageServer};
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 pub struct Server {
     pub client: lspower::Client,
@@ -50,6 +50,8 @@ impl LanguageServer for Server {
             };
         }
         // TODO need error if it does not exist
+        *self.session.root_journal_path.write().await =
+            Some(PathBuf::from(beancount_lsp_settings.journal_file.clone()));
 
         self.session
             .parse_initial_forest(lsp::Url::from_file_path(beancount_lsp_settings.journal_file).unwrap())

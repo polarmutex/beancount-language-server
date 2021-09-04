@@ -2,6 +2,7 @@ use clap::App;
 use lspower::{LspService, Server};
 mod core;
 mod handlers;
+mod providers;
 mod server;
 
 use crate::core::logger::Logger;

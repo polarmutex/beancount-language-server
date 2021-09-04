@@ -1,8 +1,8 @@
 pub mod text_document {
-    use crate::{core, core::RopeExt};
+    use crate::{core, core::RopeExt, providers};
     use log::debug;
     use lspower::lsp;
-    use std::sync::Arc;
+    use std::{path::PathBuf, sync::Arc};
     use tokio::sync::Mutex;
 
     /// handler for `textDocument/didOpen`.
@@ -14,9 +14,15 @@ pub mod text_document {
         // let tree = document.tree.clone();
         let text = document.text();
         session.insert_document(uri.clone(), document)?;
-        // let diagnostics = provider::diagnostics(&tree, &text);
-        // let version = Default::default();
-        // session.client()?.publish_diagnostics(uri, diagnostics, version).await;
+
+        if let Err(err) = check_beancont(&session).await {
+            debug!("handlers::did_open -- Error finding diagnostics {}", err.to_string());
+            session
+                .as_ref()
+                .client()?
+                .log_message(lsp::MessageType::Error, err.to_string())
+                .await;
+        }
 
         Ok(())
     }
@@ -75,6 +81,20 @@ pub mod text_document {
         }
 
         debug!("handlers::did_close - done");
+        Ok(())
+    }
+
+    async fn check_beancont(session: &Arc<core::Session>) -> anyhow::Result<()> {
+        debug!("handlers::check_beancount");
+        let bean_check_cmd = &PathBuf::from("bean-check");
+        // session
+        //.bean_check_path
+        //.as_ref()
+        //.ok_or_else(|| core::Error::InvalidState)?;
+        let temp = session.root_journal_path.read().await;
+        let root_journal_path = temp.clone().unwrap();
+
+        providers::diagnostics(bean_check_cmd, &root_journal_path).await;
         Ok(())
     }
 }
