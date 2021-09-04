@@ -20,6 +20,11 @@ pub fn capabilities() -> lsp::ServerCapabilities {
         let options = lsp::TextDocumentSyncOptions {
             open_close: Some(true),
             change: Some(lsp::TextDocumentSyncKind::Incremental),
+            will_save: Some(true),
+            will_save_wait_until: Some(false),
+            save: Some(lsp::TextDocumentSyncSaveOptions::SaveOptions(lsp::SaveOptions {
+                include_text: Some(true),
+            })),
             ..Default::default()
         };
         Some(lsp::TextDocumentSyncCapability::Options(options))
@@ -84,6 +89,11 @@ impl LanguageServer for Server {
     async fn did_open(&self, params: lsp::DidOpenTextDocumentParams) {
         let session = self.session.clone();
         handlers::text_document::did_open(session, params).await.unwrap()
+    }
+
+    async fn did_save(&self, params: lsp::DidSaveTextDocumentParams) {
+        let session = self.session.clone();
+        handlers::text_document::did_save(session, params).await.unwrap()
     }
 
     async fn did_change(&self, params: lsp::DidChangeTextDocumentParams) {
