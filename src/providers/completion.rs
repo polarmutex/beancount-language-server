@@ -79,8 +79,9 @@ pub async fn completion(
                     "ERROR" => {
                         debug!("providers::completion - handle node - handle error");
                         debug!("providers::completion - handle node - handle error {}", text);
-                        if text.chars().nth(0).unwrap() == '\"' {
-                            complete_txn_string()
+                        let prefix = text.chars().nth(0).unwrap();
+                        if prefix == '"' {
+                            complete_txn_string(&session.beancount_data)
                         } else {
                             Ok(None)
                         }
@@ -141,15 +142,16 @@ fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd(year, month, day)
 }
 
-fn complete_txn_string() -> anyhow::Result<Option<lsp::CompletionResponse>> {
-    debug!("providers::completion::txn_string");
-    Ok(None)
+fn complete_txn_string(data: &core::BeancountData) -> anyhow::Result<Option<lsp::CompletionResponse>> {
+    debug!("providers::completion::account");
+    let mut completions = Vec::new();
+    for txn_string in data.get_txn_strings() {
+        completions.push(lsp::CompletionItem::new_simple(txn_string, "".to_string()));
+    }
+    Ok(Some(lsp::CompletionResponse::Array(completions)))
 }
 
-fn complete_account(
-    // forest: &DashMap<lsp::Url, Mutex<tree_sitter::Tree>>,
-    data: &core::BeancountData,
-) -> anyhow::Result<Option<lsp::CompletionResponse>> {
+fn complete_account(data: &core::BeancountData) -> anyhow::Result<Option<lsp::CompletionResponse>> {
     debug!("providers::completion::account");
     let mut completions = Vec::new();
     for account in data.get_accounts() {
