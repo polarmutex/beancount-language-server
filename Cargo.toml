@@ -17,6 +17,7 @@ maintenance = { status = "experimental" }
 [dependencies]
 anyhow = "1.0"
 bytes = "1.0"
+chrono = "0"
 clap = "2.33"
 dashmap = "4.0"
 log4rs = "1"
