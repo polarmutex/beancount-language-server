@@ -1,4 +1,5 @@
 use crate::core;
+use chrono::{Datelike, NaiveDate};
 use log::debug;
 use lspower::lsp;
 use std::sync::Arc;
@@ -28,20 +29,33 @@ pub async fn completion(
         column: char,
     };
     debug!("providers::completion - end {}", end);
-    let is_character_triggered = params
-        .context
-        .and_then(|c| c.trigger_character)
-        .and_then(|c| if c == ":" { Some(()) } else { None })
-        .is_some();
-    debug!("providers::completion - is_char_triggered {}", is_character_triggered);
+    let trigger_character = params.context.and_then(|c| c.trigger_character).and_then(|c| {
+        // Make sure 2 trigger only for first col
+        if c == "2" {
+            debug!("checking 2 - {}", char);
+            if char > 1 {
+                debug!("clearing 2");
+                None
+            } else {
+                debug!("keeping 2");
+                Some(c)
+            }
+        } else {
+            None
+        }
+    });
+    debug!("providers::completion - is_char_triggered {:?}", trigger_character);
     let node = tree.root_node().named_descendant_for_point_range(start, end);
     debug!("providers::completion - node {:?}", node);
 
     match node {
         Some(node) => {
-            if is_character_triggered {
+            if trigger_character.is_some() {
                 debug!("providers::completion - handle trigger char");
-                Ok(None)
+                match trigger_character.unwrap().as_str() {
+                    "2" => complete_date(),
+                    _ => Ok(None),
+                }
             } else {
                 debug!("providers::completion - handle node");
                 Ok(None)
@@ -49,4 +63,44 @@ pub async fn completion(
         },
         None => Ok(None),
     }
+}
+
+fn complete_date() -> anyhow::Result<Option<lsp::CompletionResponse>> {
+    let today = chrono::offset::Local::now().naive_local().date();
+    let prev_month = sub_one_month(today).format("%Y-%m-").to_string();
+    let cur_month = today.format("%Y-%m-").to_string();
+    let next_month = add_one_month(today).format("%Y-%m-").to_string();
+    let today = today.format("%Y-%m-%d").to_string();
+    Ok(Some(lsp::CompletionResponse::Array(vec![
+        lsp::CompletionItem::new_simple(today, "today".to_string()),
+        lsp::CompletionItem::new_simple(cur_month, "this month".to_string()),
+        lsp::CompletionItem::new_simple(prev_month, "prev month".to_string()),
+        lsp::CompletionItem::new_simple(next_month, "next month".to_string()),
+    ])))
+}
+
+fn add_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
+    let mut year = date.year();
+    let mut month = date.month();
+    let day = date.day();
+    if month == 12 {
+        year += 1;
+        month = 1;
+    } else {
+        month += 1;
+    }
+    chrono::NaiveDate::from_ymd(year, month, day)
+}
+
+fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
+    let mut year = date.year();
+    let mut month = date.month();
+    let day = date.day();
+    if month == 1 {
+        year -= 1;
+        month = 12;
+    } else {
+        month += 1;
+    }
+    chrono::NaiveDate::from_ymd(year, month, day)
 }
