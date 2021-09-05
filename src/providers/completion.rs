@@ -1,8 +1,10 @@
-use crate::core;
+use crate::{core, core::RopeExt};
 use chrono::{Datelike, NaiveDate};
+use dashmap::DashMap;
 use log::debug;
 use lspower::lsp;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Provider function for LSP ``.
 pub async fn completion(
@@ -11,10 +13,11 @@ pub async fn completion(
 ) -> anyhow::Result<Option<lsp::CompletionResponse>> {
     debug!("providers::completion");
 
-    let tree = session
-        .get_mut_tree(&params.text_document_position.text_document.uri)
-        .await?;
-    let mut tree = tree.lock().await;
+    let uri = params.text_document_position.text_document.uri;
+    let tree = session.get_mut_tree(&uri).await?;
+    let tree = tree.lock().await;
+    let doc = session.get_document(&uri).await?;
+    let content = doc.clone().content;
     let line = params.text_document_position.position.line as usize;
     debug!("providers::completion - line {}", line);
     let char = params.text_document_position.position.character as usize;
@@ -50,6 +53,20 @@ pub async fn completion(
 
     match node {
         Some(node) => {
+            let text = &content.utf8_text_for_tree_sitter_node(&node);
+            debug!("providers::completion - text {}", text);
+            let parent_node = node.parent();
+            debug!("providers::completion - parent node {:?}", parent_node);
+            let mut parent_parent_node = None;
+            if parent_node.is_some() {
+                parent_parent_node = parent_node.unwrap().parent();
+            }
+            debug!("providers::completion - parent node {:?}", parent_parent_node);
+            let prev_sibling_node = node.prev_sibling();
+            debug!("providers::completion - prev sibling node {:?}", prev_sibling_node);
+            let prev_named_node = node.prev_named_sibling();
+            debug!("providers::completion - prev named node {:?}", prev_named_node);
+
             if trigger_character.is_some() {
                 debug!("providers::completion - handle trigger char");
                 match trigger_character.unwrap().as_str() {
@@ -58,7 +75,25 @@ pub async fn completion(
                 }
             } else {
                 debug!("providers::completion - handle node");
-                Ok(None)
+                match node.kind() {
+                    "ERROR" => {
+                        debug!("providers::completion - handle node - handle error");
+                        debug!("providers::completion - handle node - handle error {}", text);
+                        if text.chars().nth(0).unwrap() == '\"' {
+                            complete_txn_string()
+                        } else {
+                            Ok(None)
+                        }
+                    },
+                    "identifier" => {
+                        if parent_parent_node.is_some() && parent_parent_node.unwrap().kind() == "posting_or_kv_list" {
+                            complete_account(&session.beancount_data)
+                        } else {
+                            Ok(None)
+                        }
+                    },
+                    _ => Ok(None),
+                }
             }
         },
         None => Ok(None),
@@ -66,6 +101,7 @@ pub async fn completion(
 }
 
 fn complete_date() -> anyhow::Result<Option<lsp::CompletionResponse>> {
+    debug!("providers::completion::date");
     let today = chrono::offset::Local::now().naive_local().date();
     let prev_month = sub_one_month(today).format("%Y-%m-").to_string();
     let cur_month = today.format("%Y-%m-").to_string();
@@ -103,4 +139,24 @@ fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
         month += 1;
     }
     chrono::NaiveDate::from_ymd(year, month, day)
+}
+
+fn complete_txn_string() -> anyhow::Result<Option<lsp::CompletionResponse>> {
+    debug!("providers::completion::txn_string");
+    Ok(None)
+}
+
+fn complete_account(
+    // forest: &DashMap<lsp::Url, Mutex<tree_sitter::Tree>>,
+    data: &core::BeancountData,
+) -> anyhow::Result<Option<lsp::CompletionResponse>> {
+    debug!("providers::completion::account");
+    let mut completions = Vec::new();
+    for account in data.get_accounts() {
+        completions.push(lsp::CompletionItem::new_simple(
+            account,
+            "Beancount Account".to_string(),
+        ));
+    }
+    Ok(Some(lsp::CompletionResponse::Array(completions)))
 }
