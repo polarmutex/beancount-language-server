@@ -32,7 +32,12 @@ pub fn capabilities() -> lsp::ServerCapabilities {
     let completion_provider = {
         let options = lsp::CompletionOptions {
             resolve_provider: Some(false),
-            trigger_characters: Some(vec!["2".to_string(), ":".to_string(), "#".to_string()]),
+            trigger_characters: Some(vec![
+                "2".to_string(),
+                ":".to_string(),
+                "#".to_string(),
+                "\"".to_string(),
+            ]),
             ..Default::default()
         };
         Some(options)

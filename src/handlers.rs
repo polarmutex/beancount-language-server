@@ -100,6 +100,7 @@ pub mod text_document {
         debug!("handlers::did_change - save tree");
         if let Some(tree) = result {
             *session.get_mut_tree(uri).await?.value_mut() = Mutex::new(tree.clone());
+            session.beancount_data.update_data(uri.clone(), &tree, &doc.content);
         }
 
         debug!("handlers::did_close - done");

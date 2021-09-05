@@ -31,9 +31,10 @@ pub struct Session {
     client: Option<lspower::Client>,
     documents: DashMap<lsp::Url, core::Document>,
     parsers: DashMap<lsp::Url, Mutex<tree_sitter::Parser>>,
-    forest: DashMap<lsp::Url, Mutex<tree_sitter::Tree>>,
+    pub forest: DashMap<lsp::Url, Mutex<tree_sitter::Tree>>,
     pub root_journal_path: RwLock<Option<PathBuf>>,
     pub bean_check_path: Option<PathBuf>,
+    pub beancount_data: core::BeancountData,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -49,6 +50,7 @@ impl Session {
         let documents = DashMap::new();
         let parsers = DashMap::new();
         let forest = DashMap::new();
+        let beancount_data = core::BeancountData::new();
 
         let bean_check_path = env::var_os("PATH").and_then(|paths| {
             env::split_paths(&paths).find_map(|p| {
@@ -69,6 +71,7 @@ impl Session {
             forest,
             root_journal_path,
             bean_check_path,
+            beancount_data,
         })
     }
 
@@ -186,13 +189,18 @@ impl Session {
             debug!("adding to forest {}", file.as_ref());
             self.forest.insert(file.clone(), Mutex::new(tree.clone()));
 
+            debug!("creating rope from text");
+            let content = ropey::Rope::from_str(text.as_str());
+            debug!("updating beancount data");
+            self.beancount_data.update_data(file.clone(), &tree, &content);
+
             let include_nodes = tree
                 .root_node()
                 .children(&mut cursor)
                 .filter(|c| c.kind() == "include")
                 .collect::<Vec<_>>();
 
-            let _include_filenames = include_nodes.into_iter().filter_map(|include_node| {
+            let include_filenames = include_nodes.into_iter().filter_map(|include_node| {
                 let node = include_node.children(&mut cursor).find(|c| c.kind() == "string")?;
 
                 let filename = node
@@ -217,7 +225,7 @@ impl Session {
 
             // This could get in an infinite loop if there is a loop wtth the include files
             // TODO see if I can prevent this
-            for include_url in _include_filenames {
+            for include_url in include_filenames {
                 if !self.forest.contains_key(&include_url) {
                     ll_cursor.insert(include_url);
                 }
