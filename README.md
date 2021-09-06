@@ -101,8 +101,7 @@ The settings for the language server are in the lspconfig repo
     local lspconfig = require 'lspconfig'
     lspconfig.beancount.setup= {
         init_options = {
-            journalFile = "<path to journal file>",
-            pythonPath = "<path to python executable with beancount installed>";
+            journal_file = "<path to journal file>",
         };
     };
     ```
