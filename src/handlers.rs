@@ -114,6 +114,13 @@ pub mod text_document {
         providers::completion(session, params).await
     }
 
+    pub async fn formatting(
+        session: Arc<core::Session>,
+        params: lsp::DocumentFormattingParams,
+    ) -> anyhow::Result<Option<Vec<lsp::TextEdit>>> {
+        providers::formatting(session, params).await
+    }
+
     async fn check_beancont(session: &Arc<core::Session>) -> anyhow::Result<()> {
         debug!("handlers::check_beancount");
         let bean_check_cmd = &PathBuf::from("bean-check");

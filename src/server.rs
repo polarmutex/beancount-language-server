@@ -116,4 +116,10 @@ impl LanguageServer for Server {
         let result = handlers::text_document::completion(session, params).await;
         Ok(result.map_err(core::IntoJsonRpcError)?)
     }
+
+    async fn formatting(&self, params: lsp::DocumentFormattingParams) -> jsonrpc::Result<Option<Vec<lsp::TextEdit>>> {
+        let session = self.session.clone();
+        let result = handlers::text_document::formatting(session, params).await;
+        Ok(result.map_err(core::IntoJsonRpcError)?)
+    }
 }
