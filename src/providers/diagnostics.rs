@@ -26,6 +26,7 @@ impl DiagnosticData {
 /// Provider function for LSP `textDocument/publishDiagnostics`.
 pub async fn diagnostics(
     previous_diagnostics: &DiagnosticData,
+    beancount_data: &core::BeancountData,
     bean_check_cmd: &PathBuf,
     root_journal_file: &PathBuf,
 ) -> DashMap<lsp::Url, Vec<lsp::Diagnostic>> {
@@ -72,6 +73,31 @@ pub async fn diagnostics(
                 }
             }
         }
+
+        // add flagged entries
+        for uri in beancount_data.flagged_entries.iter() {
+            for entry in uri.value().iter() {
+                let position = lsp::Position {
+                    line: entry.line,
+                    character: 0,
+                };
+                let diag = lsp::Diagnostic {
+                    range: lsp::Range {
+                        start: position,
+                        end: position,
+                    },
+                    message: "Flagged".to_string(),
+                    severity: Some(lsp::DiagnosticSeverity::Warning),
+                    ..lsp::Diagnostic::default()
+                };
+                if map.contains_key(&uri.key()) {
+                    map.get_mut(&uri.key()).unwrap().push(diag);
+                } else {
+                    map.insert(uri.key().clone(), vec![diag]);
+                }
+            }
+        }
+
         map
     } else {
         DashMap::new()

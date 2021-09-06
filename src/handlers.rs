@@ -131,7 +131,13 @@ pub mod text_document {
         let temp = session.root_journal_path.read().await;
         let root_journal_path = temp.clone().unwrap();
 
-        let diags = providers::diagnostics(&session.diagnostic_data, bean_check_cmd, &root_journal_path).await;
+        let diags = providers::diagnostics(
+            &session.diagnostic_data,
+            &session.beancount_data,
+            bean_check_cmd,
+            &root_journal_path,
+        )
+        .await;
         session.diagnostic_data.update(diags.clone());
         for (key, value) in diags {
             session.client()?.publish_diagnostics(key, value, None).await;
