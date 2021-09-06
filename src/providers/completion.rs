@@ -80,6 +80,7 @@ pub async fn completion(
                         debug!("providers::completion - handle node - handle error");
                         debug!("providers::completion - handle node - handle error {}", text);
                         let prefix = text.chars().nth(0).unwrap();
+                        debug!("providers::completion - handle node - prefix {}", prefix);
                         if prefix == '"' {
                             complete_txn_string(&session.beancount_data)
                         } else {
@@ -87,8 +88,18 @@ pub async fn completion(
                         }
                     },
                     "identifier" => {
-                        if parent_parent_node.is_some() && parent_parent_node.unwrap().kind() == "posting_or_kv_list" {
-                            complete_account(&session.beancount_data)
+                        debug!("providers::completion - handle node - handle identifier");
+                        // if parent_parent_node.is_some() && parent_parent_node.unwrap().kind() == "posting_or_kv_list"
+                        // {
+                        complete_account(&session.beancount_data)
+                        //} else {
+                        //    Ok(None)
+                        //}
+                    },
+                    "string" => {
+                        debug!("providers::completion - handle node - handle string");
+                        if parent_node.is_some() && parent_node.unwrap().kind() == "txn_strings" {
+                            complete_txn_string(&session.beancount_data)
                         } else {
                             Ok(None)
                         }
