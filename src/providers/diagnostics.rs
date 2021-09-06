@@ -64,6 +64,7 @@ pub async fn diagnostics(
                         end: position,
                     },
                     message: caps[3].trim().to_string(),
+                    severity: Some(lsp::DiagnosticSeverity::Error),
                     ..lsp::Diagnostic::default()
                 };
                 if map.contains_key(&file_url) {
@@ -97,7 +98,6 @@ pub async fn diagnostics(
                 }
             }
         }
-
         map
     } else {
         DashMap::new()
