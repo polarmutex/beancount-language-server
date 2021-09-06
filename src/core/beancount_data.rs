@@ -3,16 +3,33 @@ use dashmap::DashMap;
 use log::debug;
 use lspower::lsp;
 
+pub struct FlaggedEntry {
+    file: String,
+    pub line: u32,
+}
+
+impl FlaggedEntry {
+    pub fn new(file: String, line: u32) -> Self {
+        Self { file, line }
+    }
+}
+
 pub struct BeancountData {
     accounts: DashMap<lsp::Url, Vec<String>>,
     txn_strings: DashMap<lsp::Url, Vec<String>>,
+    pub flagged_entries: DashMap<lsp::Url, Vec<FlaggedEntry>>,
 }
 
 impl BeancountData {
     pub fn new() -> Self {
         let accounts = DashMap::new();
         let txn_strings = DashMap::new();
-        Self { accounts, txn_strings }
+        let flagged_entries = DashMap::new();
+        Self {
+            accounts,
+            txn_strings,
+            flagged_entries,
+        }
     }
 
     pub fn update_data(&self, uri: lsp::Url, tree: &tree_sitter::Tree, content: &ropey::Rope) {
@@ -79,6 +96,44 @@ impl BeancountData {
                 self.txn_strings.get_mut(&uri).unwrap().push(txn_string);
             }
         }
+
+        // Update flagged entries
+        debug!("beancount_data:: update flagged entries");
+        let flagged_nodes = tree
+            .root_node()
+            .children(&mut cursor)
+            .filter(|c| {
+                let txn_node = c.child_by_field_name("txn");
+                if txn_node.is_some() {
+                    let txn_child_node = txn_node.unwrap().child(0);
+                    if txn_child_node.is_some() && txn_child_node.unwrap().kind() == "flag" {
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            })
+            .collect::<Vec<_>>();
+        if self.flagged_entries.contains_key(&uri) {
+            self.flagged_entries.get_mut(&uri).unwrap().clear();
+        } else {
+            self.flagged_entries.insert(uri.clone(), Vec::new());
+        }
+        flagged_nodes.into_iter().for_each(|node| {
+            let txn_node = node.children(&mut cursor).find(|c| c.kind() == "txn");
+            if txn_node.is_some() {
+                let flag_node = txn_node.unwrap().children(&mut cursor).find(|c| c.kind() == "flag");
+                if let Some(flag) = flag_node {
+                    debug!("addind flag entry: {:?}", flag);
+                    self.flagged_entries.get_mut(&uri).unwrap().push(FlaggedEntry {
+                        file: "".to_string(),
+                        line: flag.start_position().row as u32,
+                    });
+                }
+            }
+        });
     }
 
     pub fn get_accounts(&self) -> Vec<String> {
