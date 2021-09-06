@@ -2,11 +2,30 @@ use crate::core;
 use dashmap::DashMap;
 use log::debug;
 use lspower::lsp;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 use tokio::process::Command;
+
+pub struct DiagnosticData {
+    current_diagnostics: DashMap<lsp::Url, Vec<lsp::Diagnostic>>,
+}
+impl DiagnosticData {
+    pub fn new() -> Self {
+        Self {
+            current_diagnostics: DashMap::new(),
+        }
+    }
+
+    pub fn update(&self, data: DashMap<lsp::Url, Vec<lsp::Diagnostic>>) {
+        self.current_diagnostics.clear();
+        for it in data.iter() {
+            self.current_diagnostics.insert(it.key().clone(), it.value().clone());
+        }
+    }
+}
 
 /// Provider function for LSP `textDocument/publishDiagnostics`.
 pub async fn diagnostics(
+    previous_diagnostics: &DiagnosticData,
     bean_check_cmd: &PathBuf,
     root_journal_file: &PathBuf,
 ) -> DashMap<lsp::Url, Vec<lsp::Diagnostic>> {
@@ -25,6 +44,9 @@ pub async fn diagnostics(
         let output = std::str::from_utf8(&output.stderr).map_err(core::Error::from);
 
         let map: DashMap<lsp::Url, Vec<lsp::Diagnostic>> = DashMap::new();
+        for it in previous_diagnostics.current_diagnostics.iter() {
+            map.insert(it.key().clone(), vec![]);
+        }
         for line in output.unwrap().lines() {
             debug!("line: {}", line);
             if let Some(caps) = error_line_regexp.captures(line) {
