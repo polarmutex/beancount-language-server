@@ -1,4 +1,4 @@
-use crate::{core, server};
+use crate::{core, providers, server};
 use dashmap::{
     mapref::one::{Ref, RefMut},
     DashMap,
@@ -35,6 +35,7 @@ pub struct Session {
     pub root_journal_path: RwLock<Option<PathBuf>>,
     pub bean_check_path: Option<PathBuf>,
     pub beancount_data: core::BeancountData,
+    pub diagnostic_data: providers::DiagnosticData,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -51,6 +52,7 @@ impl Session {
         let parsers = DashMap::new();
         let forest = DashMap::new();
         let beancount_data = core::BeancountData::new();
+        let diagnostic_data = providers::DiagnosticData::new();
 
         let bean_check_path = env::var_os("PATH").and_then(|paths| {
             env::split_paths(&paths).find_map(|p| {
@@ -72,6 +74,7 @@ impl Session {
             root_journal_path,
             bean_check_path,
             beancount_data,
+            diagnostic_data,
         })
     }
 
