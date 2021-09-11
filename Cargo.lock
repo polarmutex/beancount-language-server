@@ -92,7 +92,7 @@ dependencies = [
  "shellexpand",
  "thiserror",
  "tokio",
- "tree-sitter 0.19.5",
+ "tree-sitter",
  "tree-sitter-beancount",
 ]
 
@@ -987,22 +987,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63ec02a07a782abef91279b72fe8fd2bee4c168a22112cedec5d3b0d49b9e4f9"
-dependencies = [
- "cc",
- "regex",
-]
-
-[[package]]
 name = "tree-sitter-beancount"
 version = "0.0.1"
 source = "git+https://github.com/polarmutex/tree-sitter-beancount#79ae7c1f2654a2a6936b0f37bf754e5ff59c9186"
 dependencies = [
  "cc",
- "tree-sitter 0.20.0",
+ "tree-sitter",
 ]
 
 [[package]]
