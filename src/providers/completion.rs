@@ -75,36 +75,43 @@ pub async fn completion(
                 }
             } else {
                 debug!("providers::completion - handle node");
-                match node.kind() {
-                    "ERROR" => {
-                        debug!("providers::completion - handle node - handle error");
-                        debug!("providers::completion - handle node - handle error {}", text);
-                        let prefix = text.chars().nth(0).unwrap();
-                        debug!("providers::completion - handle node - prefix {}", prefix);
-                        if prefix == '"' {
-                            complete_txn_string(&session.beancount_data)
-                        } else {
-                            Ok(None)
-                        }
-                    },
-                    "identifier" => {
-                        debug!("providers::completion - handle node - handle identifier");
-                        // if parent_parent_node.is_some() && parent_parent_node.unwrap().kind() == "posting_or_kv_list"
-                        // {
-                        complete_account(&session.beancount_data)
-                        //} else {
-                        //    Ok(None)
-                        //}
-                    },
-                    "string" => {
-                        debug!("providers::completion - handle node - handle string");
-                        if parent_node.is_some() && parent_node.unwrap().kind() == "txn_strings" {
-                            complete_txn_string(&session.beancount_data)
-                        } else {
-                            Ok(None)
-                        }
-                    },
-                    _ => Ok(None),
+                if parent_parent_node.is_some()
+                    && parent_parent_node.unwrap().kind() == "posting_or_kv_list"
+                    && char < 10
+                {
+                    complete_account(&session.beancount_data)
+                } else {
+                    match node.kind() {
+                        "ERROR" => {
+                            debug!("providers::completion - handle node - handle error");
+                            debug!("providers::completion - handle node - handle error {}", text);
+                            let prefix = text.chars().nth(0).unwrap();
+                            debug!("providers::completion - handle node - prefix {}", prefix);
+                            if prefix == '"' {
+                                complete_txn_string(&session.beancount_data)
+                            } else {
+                                Ok(None)
+                            }
+                        },
+                        "identifier" => {
+                            debug!("providers::completion - handle node - handle identifier");
+                            // if parent_parent_node.is_some() && parent_parent_node.unwrap().kind() ==
+                            // "posting_or_kv_list" {
+                            complete_account(&session.beancount_data)
+                            //} else {
+                            //    Ok(None)
+                            //}
+                        },
+                        "string" => {
+                            debug!("providers::completion - handle node - handle string");
+                            if parent_node.is_some() && parent_node.unwrap().kind() == "txn_strings" {
+                                complete_txn_string(&session.beancount_data)
+                            } else {
+                                Ok(None)
+                            }
+                        },
+                        _ => Ok(None),
+                    }
                 }
             }
         },
@@ -116,9 +123,13 @@ fn complete_date() -> anyhow::Result<Option<lsp::CompletionResponse>> {
     debug!("providers::completion::date");
     let today = chrono::offset::Local::now().naive_local().date();
     let prev_month = sub_one_month(today).format("%Y-%m-").to_string();
+    debug!("providers::completion::date {}", prev_month);
     let cur_month = today.format("%Y-%m-").to_string();
+    debug!("providers::completion::date {}", cur_month);
     let next_month = add_one_month(today).format("%Y-%m-").to_string();
+    debug!("providers::completion::date {}", next_month);
     let today = today.format("%Y-%m-%d").to_string();
+    debug!("providers::completion::date {}", today);
     Ok(Some(lsp::CompletionResponse::Array(vec![
         lsp::CompletionItem::new_simple(today, "today".to_string()),
         lsp::CompletionItem::new_simple(cur_month, "this month".to_string()),
@@ -148,7 +159,7 @@ fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
         year -= 1;
         month = 12;
     } else {
-        month += 1;
+        month -= 1;
     }
     chrono::NaiveDate::from_ymd(year, month, day)
 }
