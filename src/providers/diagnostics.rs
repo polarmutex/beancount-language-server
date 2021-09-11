@@ -42,12 +42,11 @@ pub async fn diagnostics(
     debug!("bean-check outupt {:?}", output);
 
     let diags = if !output.status.success() {
+        debug!("bean-check generating diags");
         let output = std::str::from_utf8(&output.stderr).map_err(core::Error::from);
 
         let map: DashMap<lsp::Url, Vec<lsp::Diagnostic>> = DashMap::new();
-        for it in previous_diagnostics.current_diagnostics.iter() {
-            map.insert(it.key().clone(), vec![]);
-        }
+
         for line in output.unwrap().lines() {
             debug!("line: {}", line);
             if let Some(caps) = error_line_regexp.captures(line) {
@@ -74,33 +73,50 @@ pub async fn diagnostics(
                 }
             }
         }
-
-        // add flagged entries
-        for uri in beancount_data.flagged_entries.iter() {
-            for entry in uri.value().iter() {
-                let position = lsp::Position {
-                    line: entry.line,
-                    character: 0,
-                };
-                let diag = lsp::Diagnostic {
-                    range: lsp::Range {
-                        start: position,
-                        end: position,
-                    },
-                    message: "Flagged".to_string(),
-                    severity: Some(lsp::DiagnosticSeverity::Warning),
-                    ..lsp::Diagnostic::default()
-                };
-                if map.contains_key(&uri.key()) {
-                    map.get_mut(&uri.key()).unwrap().push(diag);
-                } else {
-                    map.insert(uri.key().clone(), vec![diag]);
-                }
-            }
-        }
         map
     } else {
+        debug!("bean-check return empty");
         DashMap::new()
     };
-    diags
+
+    let ret: DashMap<lsp::Url, Vec<lsp::Diagnostic>> = DashMap::new();
+
+    // Add previous urls to clear out if neccessary
+    for it in previous_diagnostics.current_diagnostics.iter() {
+        ret.insert(it.key().clone(), vec![]);
+    }
+    // add bean-check errors
+    for url in diags.iter() {
+        for diag in url.value().iter() {
+            if ret.contains_key(&url.key()) {
+                ret.get_mut(&url.key()).unwrap().push(diag.clone());
+            } else {
+                ret.insert(url.key().clone(), vec![diag.clone()]);
+            }
+        }
+    }
+    // add flagged entries
+    for uri in beancount_data.flagged_entries.iter() {
+        for entry in uri.value().iter() {
+            let position = lsp::Position {
+                line: entry.line,
+                character: 0,
+            };
+            let diag = lsp::Diagnostic {
+                range: lsp::Range {
+                    start: position,
+                    end: position,
+                },
+                message: "Flagged".to_string(),
+                severity: Some(lsp::DiagnosticSeverity::Warning),
+                ..lsp::Diagnostic::default()
+            };
+            if ret.contains_key(&uri.key()) {
+                ret.get_mut(&uri.key()).unwrap().push(diag);
+            } else {
+                ret.insert(uri.key().clone(), vec![diag]);
+            }
+        }
+    }
+    ret
 }
