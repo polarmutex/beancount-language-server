@@ -37,6 +37,32 @@ const QUERY_STR: &'static str = r#"
             )
 "#;
 
+// Adapter to convert rope chunks to bytes
+struct ChunksBytes<'a> {
+    chunks: ropey::iter::Chunks<'a>,
+}
+impl<'a> Iterator for ChunksBytes<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.chunks.next().map(str::as_bytes)
+    }
+}
+
+struct RopeProvider<'a>(ropey::RopeSlice<'a>);
+impl<'a> tree_sitter::TextProvider<'a> for RopeProvider<'a> {
+    type I = ChunksBytes<'a>;
+
+    fn text(&mut self, node: tree_sitter::Node) -> Self::I {
+        let start_char = self.0.byte_to_char(node.start_byte());
+        let end_char = self.0.byte_to_char(node.end_byte());
+        let fragment = self.0.slice(start_char .. end_char);
+        ChunksBytes {
+            chunks: fragment.chunks(),
+        }
+    }
+}
+
 /// Provider function for LSP ``.
 pub async fn formatting(
     session: Arc<core::Session>,
@@ -52,7 +78,11 @@ pub async fn formatting(
 
     let query = tree_sitter::Query::new(tree.language(), QUERY_STR).unwrap();
     let mut query_cursor = tree_sitter::QueryCursor::new();
-    let matches = query_cursor.matches(&query, tree.root_node(), |_| &[]);
+    let matches = query_cursor.matches(
+        &query,
+        tree.root_node(),
+        RopeProvider(doc.content.get_slice(..).unwrap()),
+    );
 
     let mut match_pairs: Vec<Match> = Vec::new();
     for matched in matches {
