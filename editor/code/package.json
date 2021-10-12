@@ -1,0 +1,84 @@
+{
+  "name": "beancount-langserver",
+  "description": "beancount language server",
+  "author": "Brian Ryall",
+  "license": "MIT",
+  "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/polarmutex/vscode-beancount-langserver"
+  },
+  "publisher": "polarmutex",
+  "categories": [],
+  "keywords": [
+    "beancount",
+    "plaintext",
+    "accounting"
+  ],
+  "engines": {
+    "vscode": "^1.43.0"
+  },
+  "activationEvents": [
+    "onLanguage:beancount"
+  ],
+  "main": "./client/out/extension",
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "Beancount Language Server Configuration",
+      "properties": {
+        "beancountLangServer.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server."
+        },
+        "beancountLangServer.journalFile": {
+          "scope": "resource",
+          "type": "string",
+          "default": "",
+          "description": "Path to the beancount journal"
+        },
+        "beancountLangServer.pythonPath": {
+          "scope": "resource",
+          "type": "string",
+          "default": "python3",
+          "description": "Path to python exe where beancount is installed"
+        }
+      }
+    },
+    "languages": [
+      {
+        "id": "beancount",
+        "extensions": [
+          ".beancount",
+          ".bean"
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -b",
+    "watch": "tsc -b -w",
+    "postinstall": "cd client && npm install && cd ../server && npm install && cd .."
+  },
+  "devDependencies": {
+    "@types/mocha": "^8.0.3",
+    "mocha": "^8.1.1",
+    "@types/node": "^12.12.0",
+    "eslint": "^6.4.0",
+    "@typescript-eslint/parser": "^2.3.0",
+    "typescript": "^4.0.2"
+  },
+  "__metadata": {
+    "id": "b3caba90-f41e-4698-adf5-23463f6daba3",
+    "publisherDisplayName": "polarmutex",
+    "publisherId": "3205ea90-ca1b-4274-bc5b-0a1721811b70"
+  }
+}
