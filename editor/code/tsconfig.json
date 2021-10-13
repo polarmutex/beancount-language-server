@@ -2,12 +2,18 @@
   "compilerOptions": {
     "module": "commonjs",
     "target": "es2019",
-    "lib": ["ES2019"],
     "outDir": "out",
+    "lib": ["es2019"],
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "sourceMap": true,
     "rootDir": "src",
-    "sourceMap": true
+    "strict": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "newLine": "LF"
   },
-  "include": ["src"],
-  "exclude": ["node_modules", ".vscode-test"],
-  "references": [{ "path": "./client" }, { "path": "./server" }]
+  "exclude": ["node_modules"]
 }

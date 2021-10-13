@@ -1,73 +1,43 @@
-import * as path from "path";
 import * as vscode from "vscode";
+import * as os from "os";
+import { Config } from "./config";
 
 import {
+  Executable,
   LanguageClient,
   LanguageClientOptions,
-  ServerOptions,
-  TransportKind,
 } from "vscode-languageclient/node";
 
-import { SemanticTokensProvider, buildLegend } from "./semanticToken";
+import { SemanticTokensProvider, buildLegend } from "./semantic_tokens";
 
 let client: LanguageClient;
-let logger = vscode.window.createOutputChannel("Beancount-LangServer");
-
-export interface IClientSettings {
-  journalFile: string;
-  pythonPath: string;
-}
-
-const config = vscode.workspace
-  .getConfiguration()
-  .get<IClientSettings>("beancountLangServer");
-
-function getSettings(config: IClientSettings) {
-  return config
-    ? {
-        journalFile: config.journalFile,
-        pythonPath: config.pythonPath,
-      }
-    : {};
-}
 
 export async function activate(context: vscode.ExtensionContext) {
-  // The server is implemented in node
-  let serverModule = context.asAbsolutePath(
-    path.join("server", "out", "cli.js")
-  );
-  // The debug options for the server
-  // --inspect=6009: runs the server in Node's Inspector mode so VS Code can attach to the server for debugging
-  let debugOptions = { execArgv: ["--nolazy", `--inspect=6009`] };
-
-  // If the extension is launched in debug mode then the debug server options are used
-  // Otherwise the run options are used
-  let serverOptions: ServerOptions = {
-    run: { module: serverModule, transport: TransportKind.ipc },
-    debug: {
-      module: serverModule,
-      transport: TransportKind.stdio,
-      options: debugOptions,
-    },
+  const config = new Config(context);
+  let server_path = config.serverPath;
+  if (server_path.startsWith("~/")) {
+    server_path = os.homedir() + server_path.slice("~".length);
+  }
+  const server_options: Executable = {
+    command: server_path,
   };
 
-  // Options to control the language client
-  let clientOptions: LanguageClientOptions = {
-    // Register the server for plain text documents
-    documentSelector: [{ language: "beancount" }],
+  const client_options: LanguageClientOptions = {
+    documentSelector: [{ scheme: "file", language: "beancount" }],
     synchronize: {
       // Notify the server about file changes to '.clientrc files contained in the workspace
       fileEvents: vscode.workspace.createFileSystemWatcher("**/.beancount"),
     },
-    initializationOptions: getSettings(config),
+    initializationOptions: {
+      journal_file: config.journalFile,
+    },
   };
 
-  // Create the language client and start the client.
   client = new LanguageClient(
     "beancountLangServer",
     "Beancount Language Server",
-    serverOptions,
-    clientOptions
+    server_options,
+    client_options
   );
 
   // Start the client. This will also launch the server
@@ -76,10 +46,6 @@ export async function activate(context: vscode.ExtensionContext) {
   const legend = buildLegend();
   const tokenProvider = new SemanticTokensProvider(legend);
   await tokenProvider.ast.init();
-
-  const enabledLangs: string[] = vscode.workspace
-    .getConfiguration("syntax")
-    .get("highlightLanguages");
 
   context.subscriptions.push(
     vscode.languages.registerDocumentSemanticTokensProvider(
