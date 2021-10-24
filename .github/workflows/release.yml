@@ -1,0 +1,78 @@
+name: release
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+
+jobs:
+  create_release:
+    name: Create release entry
+    if: startsWith(github.ref, 'refs/tags')
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Create GitHub release entry
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+  deploy_release:
+    name: Deploy release asset for ${{ matrix.os }}
+    needs: create_release
+    if: startsWith(github.ref, 'refs/tags')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        name: [linux, windows, macos]
+        include:
+          - name: linux
+            os: ubuntu-latest
+            artifact_name: beancount-lsp
+            asset_name: beancount-lsp-linux
+          - name: windows
+            os: windows-latest
+            artifact_name: beancount-lsp.exe
+            asset_name: beancount-lsp-windows
+          - name: macos
+            os: macos-latest
+            artifact_name: beancount-lsp
+            asset_name: beancount-lsp-macos
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+      - name: Run cargo xtask init
+        uses: actions-rs/cargo@v1
+        with:
+          command: xtask
+          args: init --with-corpus
+      - name: Run cargo xtask build
+        uses: actions-rs/cargo@v1
+        with:
+          command: xtask
+          args: build -- --release
+      - name: Create release asset
+        run: Compress-Archive -DestinationPath ${{ matrix.asset_name }}.zip -Path target/release/${{ matrix.artifact_name }}
+        shell: pwsh
+      - name: Deploy release asset to GitHub
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create_release.outputs.upload_url }}
+          asset_path: ./${{ matrix.asset_name }}.zip
+          asset_name: ${{ matrix.asset_name }}.zip
+          asset_content_type: application/zip
