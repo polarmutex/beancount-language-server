@@ -1,4 +1,3 @@
-use crate::core::RopeExt;
 use lspower::lsp;
 
 #[derive(Clone)]

@@ -1,10 +1,8 @@
 use crate::{core, core::RopeExt};
-use chrono::{Datelike, NaiveDate};
-use dashmap::DashMap;
+use chrono::Datelike;
 use log::debug;
 use lspower::lsp;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Provider function for LSP ``.
 pub async fn completion(

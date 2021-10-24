@@ -12,7 +12,6 @@ pub mod text_document {
 
         let document = core::Document::open(params);
         // let tree = document.tree.clone();
-        let text = document.text();
         debug!("handlers::did_open - adding {}", uri);
         session.insert_document(uri.clone(), document)?;
 
@@ -29,9 +28,8 @@ pub mod text_document {
     }
 
     /// handler for `textDocument/didSave`.
-    pub async fn did_save(session: Arc<core::Session>, params: lsp::DidSaveTextDocumentParams) -> anyhow::Result<()> {
+    pub async fn did_save(session: Arc<core::Session>, _params: lsp::DidSaveTextDocumentParams) -> anyhow::Result<()> {
         debug!("handlers::did_save");
-        let uri = params.text_document.uri.clone();
 
         if let Err(err) = check_beancont(&session).await {
             debug!("handlers::did_save -- Error finding diagnostics {}", err.to_string());
