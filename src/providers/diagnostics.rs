@@ -2,7 +2,7 @@ use crate::core;
 use dashmap::DashMap;
 use log::debug;
 use lspower::lsp;
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 use tokio::process::Command;
 
 pub struct DiagnosticData {

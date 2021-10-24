@@ -1,10 +1,7 @@
-use crate::{core, core::RopeExt};
-use chrono::{Datelike, NaiveDate};
-use dashmap::DashMap;
+use crate::core;
 use log::debug;
 use lspower::lsp;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 struct TSRange {
     pub start: tree_sitter::Point,
@@ -16,7 +13,7 @@ struct Match {
     number: Option<TSRange>,
 }
 
-const QUERY_STR: &'static str = r#"
+const QUERY_STR: &str = r#"
  ( posting
                 (account) @prefix
                 amount: (incomplete_amount
@@ -74,7 +71,6 @@ pub async fn formatting(
     let tree = session.get_mut_tree(&uri).await?;
     let tree = tree.lock().await;
     let doc = session.get_document(&uri).await?;
-    let content = doc.clone().content;
 
     let query = tree_sitter::Query::new(tree.language(), QUERY_STR).unwrap();
     let mut query_cursor = tree_sitter::QueryCursor::new();
