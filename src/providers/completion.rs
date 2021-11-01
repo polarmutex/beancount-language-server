@@ -139,27 +139,25 @@ fn complete_date() -> anyhow::Result<Option<lsp::CompletionResponse>> {
 fn add_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     let mut year = date.year();
     let mut month = date.month();
-    let day = date.day();
     if month == 12 {
         year += 1;
         month = 1;
     } else {
         month += 1;
     }
-    chrono::NaiveDate::from_ymd(year, month, day)
+    chrono::NaiveDate::from_ymd(year, month, 1)
 }
 
 fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     let mut year = date.year();
     let mut month = date.month();
-    let day = date.day();
     if month == 1 {
         year -= 1;
         month = 12;
     } else {
         month -= 1;
     }
-    chrono::NaiveDate::from_ymd(year, month, day)
+    chrono::NaiveDate::from_ymd(year, month, 1)
 }
 
 fn complete_txn_string(data: &core::BeancountData) -> anyhow::Result<Option<lsp::CompletionResponse>> {
