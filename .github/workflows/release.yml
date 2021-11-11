@@ -5,74 +5,107 @@ on:
     branches:
       - master
     tags:
-      - "v*"
+      - "v*.*.*"
 
 jobs:
-  create_release:
-    name: Create release entry
-    if: startsWith(github.ref, 'refs/tags')
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-    steps:
-      - name: Create GitHub release entry
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
-
-  deploy_release:
-    name: Deploy release asset for ${{ matrix.os }}
-    needs: create_release
-    if: startsWith(github.ref, 'refs/tags')
+  publish:
+    name: Publishing for ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        name: [linux, windows, macos]
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        rust: [stable]
         include:
-          - name: linux
-            os: ubuntu-latest
-            artifact_name: beancount-lsp
-            asset_name: beancount-lsp-linux
-          - name: windows
-            os: windows-latest
-            artifact_name: beancount-lsp.exe
-            asset_name: beancount-lsp-windows
-          - name: macos
-            os: macos-latest
-            artifact_name: beancount-lsp
-            asset_name: beancount-lsp-macos
+          - os: macos-latest
+            artifact_prefix: macos
+            target: x86_64-apple-darwin
+            binary_postfix: ""
+          - os: ubuntu-latest
+            artifact_prefix: linux
+            target: x86_64-unknown-linux-gnu
+            binary_postfix: ""
+          - os: windows-latest
+            artifact_prefix: windows
+            target: x86_64-pc-windows-msvc
+            binary_postfix: ".exe"
+
     steps:
-      - uses: actions/checkout@v2
-      - name: Install Rust toolchain
+      - name: Installing Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
-          profile: minimal
-      - name: Run cargo xtask init
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - name: Installing needed macOS dependencies
+        if: matrix.os == 'macos-latest'
+        run: brew install openssl@1.1
+      - name: Installing needed Ubuntu dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y -qq pkg-config libssl-dev
+      - name: Checking out sources
+        uses: actions/checkout@v1
+      - name: Cache Cargo
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-cd-${{ hashFiles('**/Cargo.lock') }}
+      - name: Running cargo build
         uses: actions-rs/cargo@v1
         with:
-          command: xtask
-          args: init --with-corpus
-      - name: Run cargo xtask build
-        uses: actions-rs/cargo@v1
+          command: build
+          toolchain: ${{ matrix.rust }}
+          args: --release --target ${{ matrix.target }}
+      - name: Packaging final binary
+        shell: bash
+        run: |
+          cd target/${{ matrix.target }}/release
+          BINARY_NAME=beancount-lsp-${{ matrix.binary_postfix }}
+          RELEASE_NAME=beancount-lsp-${{ matrix.artifact_prefix }}${{ matrix.binary_postfix }}
+          strip $BINARY_NAME
+          cp $BINARY_NAME $RELEASE_NAME
+          if [[ ${{ runner.os }} == 'Windows' ]]; then
+            certutil -hashfile $RELEASE_NAME sha256 | grep -E [A-Fa-f0-9]{64} > $RELEASE_NAME.sha256
+          else
+            shasum -a 256 $RELEASE_NAME > $RELEASE_NAME.sha256
+          fi
+      - name: Releasing assets
+        uses: softprops/action-gh-release@v1
         with:
-          command: xtask
-          args: build -- --release
-      - name: Create release asset
-        run: Compress-Archive -DestinationPath ${{ matrix.asset_name }}.zip -Path target/release/${{ matrix.artifact_name }}
-        shell: pwsh
-      - name: Deploy release asset to GitHub
-        id: upload-release-asset
-        uses: actions/upload-release-asset@v1
+          files: |
+            target/${{ matrix.target }}/release/beancount-lsp-${{ matrix.artifact_prefix }}${{ matrix.binary_postfix }}
+            target/${{ matrix.target }}/release/beancount-lsp-${{ matrix.artifact_prefix }}${{ matrix.binary_postfix }}.sha256
         env:
-          GITHUB_TOKEN: ${{ secrets.TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+  publish-cargo:
+    name: Publish Crate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Installing Rust toolchain
+        uses: actions-rs/toolchain@v1
         with:
-          upload_url: ${{ needs.create_release.outputs.upload_url }}
-          asset_path: ./${{ matrix.asset_name }}.zip
-          asset_name: ${{ matrix.asset_name }}.zip
-          asset_content_type: application/zip
+          toolchain: stable
+          profile: minimal
+          override: true
+      - name: Checking out sources
+        uses: actions/checkout@v1
+      - name: Cache Cargo
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-publish-${{ hashFiles('**/Cargo.lock') }}
+      - name: Installing dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y -qq pkg-config libssl-dev
+      - uses: actions-rs/cargo@v1
+        with:
+          command: publish
+          args: --token ${{ secrets.CARGO_API_KEY }} --allow-dirty
