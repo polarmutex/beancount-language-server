@@ -1,6 +1,6 @@
 {
   "name": "beancount-langserver",
-  "description": "beancount language server",
+  "description": "A language server for the beancount language",
   "author": "Brian Ryall",
   "license": "MIT",
   "version": "1.1.0",
@@ -9,13 +9,14 @@
   "bugs": "https://github.com/polarmutex/beancount-language-server/issues",
   "publisher": "polarmutex",
   "categories": [],
+  "icon": "icon.png",
   "keywords": [
     "beancount",
     "plaintext",
     "accounting"
   ],
   "engines": {
-    "vscode": "^1.43.0"
+    "vscode": "^1.52.0"
   },
   "activationEvents": [
     "onLanguage:beancount"
@@ -63,7 +64,7 @@
   },
   "scripts": {
     "vscode:prepublish": "tsc && rollup -c",
-    "package": "vsce package -o clarity-lsp.vsix",
+    "package": "vsce package -o beancount-language-server.vsix",
     "compile": "tsc -b",
     "build": "tsc",
     "watch": "tsc --watch",
@@ -77,8 +78,8 @@
   },
   "devDependencies": {
     "@types/mocha": "^8.2.3",
-    "@types/node": "^12.20.29",
-    "@types/vscode": "^1.61.0",
+    "@types/node": "^12.20.37",
+    "@types/vscode": "^1.62.0",
     "@typescript-eslint/eslint-plugin": "^2.34.0",
     "@typescript-eslint/parser": "^2.34.0",
     "eslint": "^6.8.0",
