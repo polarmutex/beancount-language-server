@@ -988,8 +988,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-beancount"
-version = "0.0.1"
-source = "git+https://github.com/polarmutex/tree-sitter-beancount#79ae7c1f2654a2a6936b0f37bf754e5ff59c9186"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a9bbff1d80f6310d8571b3fd87cf741ecd371aa34177fce3c80d5f82cc30043"
 dependencies = [
  "cc",
  "tree-sitter",
