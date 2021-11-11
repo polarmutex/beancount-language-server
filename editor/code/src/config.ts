@@ -1,5 +1,4 @@
 import * as vscode from "vscode";
-import { log } from "./util";
 
 export class Config {
   readonly extensionId = "polarmutex.beancountLangServer";
@@ -20,24 +19,11 @@ export class Config {
       this,
       ctx.subscriptions
     );
-    this.refreshLogging();
-  }
-
-  private refreshLogging() {
-    log.setEnabled(this.traceExtension);
-    log.debug(
-      "Extension version:",
-      this.package.version,
-      "using configuration:",
-      this.cfg
-    );
   }
 
   private async onDidChangeConfiguration(
     event: vscode.ConfigurationChangeEvent
   ) {
-    this.refreshLogging();
-
     const requiresReloadOpt = this.requiresReloadOpts.find((opt) =>
       event.affectsConfiguration(opt)
     );
@@ -60,9 +46,6 @@ export class Config {
 
   get traceExtension() {
     return this.cfg.get<boolean>("trace.extension")!;
-  }
-  get serverPath() {
-    return this.cfg.get<null | string>("serverPath")!;
   }
   get journalFile() {
     return this.cfg.get<null | string>("journalFile")!;

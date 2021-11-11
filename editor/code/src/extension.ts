@@ -1,28 +1,33 @@
 import * as vscode from "vscode";
-import * as os from "os";
 import { Config } from "./config";
-
-import {
-  Executable,
-  LanguageClient,
-  LanguageClientOptions,
-} from "vscode-languageclient/node";
-
+import { getServerOrDownload } from "./download";
+import * as lsp from "vscode-languageclient/node";
 import { SemanticTokensProvider, buildLegend } from "./semantic_tokens";
+import { log } from './util';
 
-let client: LanguageClient;
+const TAG = "v1.0.0";
+
+let client: lsp.LanguageClient;
 
 export async function activate(context: vscode.ExtensionContext) {
+log.error('test 1 2 3');
   const config = new Config(context);
-  let server_path = config.serverPath;
-  if (server_path.startsWith("~/")) {
-    server_path = os.homedir() + server_path.slice("~".length);
-  }
-  const server_options: Executable = {
+
+  const server_path = await getServerOrDownload(context, TAG);
+  const server_executable: lsp.Executable = {
     command: server_path,
+    args: ["--stdio"],
+    options: {
+      env: { RUST_LOG: "warn" },
+    },
   };
 
-  const client_options: LanguageClientOptions = {
+  const server_options: lsp.ServerOptions = {
+    run: server_executable,
+    debug: server_executable,
+  };
+
+  const client_options: lsp.LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "beancount" }],
     synchronize: {
       // Notify the server about file changes to '.clientrc files contained in the workspace
@@ -33,7 +38,7 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   };
 
-  client = new LanguageClient(
+  client = new lsp.LanguageClient(
     "beancountLangServer",
     "Beancount Language Server",
     server_options,
@@ -56,9 +61,8 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 }
 
-export function deactivate(): Thenable<void> | undefined {
-  if (!client) {
-    return undefined;
+export async function deactivate(): Promise<void> {
+  if (client) {
+    await client.stop();
   }
-  return client.stop();
 }

@@ -16,7 +16,7 @@
     "accounting"
   ],
   "engines": {
-    "vscode": "^1.52.0"
+    "vscode": "^1.62.0"
   },
   "activationEvents": [
     "onLanguage:beancount"
@@ -63,7 +63,7 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "tsc && rollup -c",
+    "vscode:prepublish": "tsc -b",
     "package": "vsce package -o beancount-language-server.vsix",
     "compile": "tsc -b",
     "build": "tsc",
@@ -72,8 +72,10 @@
     "fix": "eslint -c .eslintrc.js --ext ts ./src --fix"
   },
   "dependencies": {
+    "got": "^11.8.2",
     "tree-sitter": "^0.20.0",
     "tree-sitter-beancount": "^2.0.0",
+    "vsce": "^2.3.0",
     "vscode-languageclient": "7.0.0"
   },
   "devDependencies": {
