@@ -61,8 +61,8 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          BINARY_NAME=beancount-lsp-${{ matrix.binary_postfix }}
-          RELEASE_NAME=beancount-lsp-${{ matrix.artifact_prefix }}${{ matrix.binary_postfix }}
+          BINARY_NAME=beancount-language-server${{ matrix.binary_postfix }}
+          RELEASE_NAME=beancount-language-server-${{ matrix.artifact_prefix }}${{ matrix.binary_postfix }}
           strip $BINARY_NAME
           cp $BINARY_NAME $RELEASE_NAME
           if [[ ${{ runner.os }} == 'Windows' ]]; then
@@ -74,8 +74,8 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            target/${{ matrix.target }}/release/beancount-lsp-${{ matrix.artifact_prefix }}${{ matrix.binary_postfix }}
-            target/${{ matrix.target }}/release/beancount-lsp-${{ matrix.artifact_prefix }}${{ matrix.binary_postfix }}.sha256
+            target/${{ matrix.target }}/release/beancount-language-server-${{ matrix.artifact_prefix }}${{ matrix.binary_postfix }}
+            target/${{ matrix.target }}/release/beancount-language-server-${{ matrix.artifact_prefix }}${{ matrix.binary_postfix }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
 
