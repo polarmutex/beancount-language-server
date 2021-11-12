@@ -1,0 +1,38 @@
+{
+  "name": "beancount-language-server",
+  "version": "1.0.0",
+  "description": "",
+  "commitlint": {
+    "extends": [
+      "@commitlint/config-conventional"
+    ]
+  },
+  "husky": {
+    "hooks": {
+      "commit-msg": "commitlint -E HUSKY_GIT_PARAMS"
+    }
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@commitlint/cli": "^14.1.0",
+    "@commitlint/config-conventional": "^14.1.0",
+    "husky": "^7.0.4"
+  },
+  "scripts": {
+    "prepare": "husky install"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/polarmutex/beancount-language-server.git"
+  },
+  "keywords": [
+    "beancount",
+    "tree-sitter"
+  ],
+  "author": "Brian Ryall",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/polarmutex/beancount-language-server/issues"
+  },
+  "homepage": "https://github.com/polarmutex/beancount-language-server#readme"
+}
