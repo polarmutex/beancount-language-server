@@ -12,6 +12,47 @@
       "commit-msg": "commitlint -E HUSKY_GIT_PARAMS"
     }
   },
+  "release": {
+    "branches": [
+      {
+        "name": "develop",
+        "prerelease": true
+      },
+      "master"
+    ],
+    "plugins": [
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator",
+      [
+        "@semantic-release/exec",
+        {
+          "prepareCmd": "sed -i -e '1h;2,$H;$!d;g' -e 's@name = \"beancount-language-server\"\\nversion = \"[^\"]*\"@name = \"beancount-language-server\"\\nversion = \"${nextRelease.version}\"@g' Cargo.toml Cargo.lock"
+        }
+      ],
+      [
+        "@semantic-release/npm",
+        {
+          "pkgRoot": "editors/code",
+          "npmPublish": false
+        }
+      ],
+      "@semantic-release/github",
+      "@semantic-release/changelog",
+      [
+        "@semantic-release/git",
+        {
+          "message": "chore(release): ${nextRelease.version}\n\n${nextRelease.notes}",
+          "assets": [
+            "CHANGELOG.md",
+            "Cargo.toml",
+            "Cargo.lock",
+            "editors/code/package.json",
+            "editors/code/package-lock.json"
+          ]
+        }
+      ]
+    ]
+  },
   "dependencies": {},
   "devDependencies": {
     "@commitlint/cli": "^14.1.0",
