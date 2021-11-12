@@ -1,6 +1,5 @@
 {
   "name": "beancount-language-server",
-  "version": "1.0.0",
   "description": "",
   "commitlint": {
     "extends": [
@@ -29,13 +28,6 @@
           "prepareCmd": "sed -i -e '1h;2,$H;$!d;g' -e 's@name = \"beancount-language-server\"\\nversion = \"[^\"]*\"@name = \"beancount-language-server\"\\nversion = \"${nextRelease.version}\"@g' Cargo.toml Cargo.lock"
         }
       ],
-      [
-        "@semantic-release/npm",
-        {
-          "pkgRoot": "editors/code",
-          "npmPublish": false
-        }
-      ],
       "@semantic-release/github",
       "@semantic-release/changelog",
       [
@@ -45,9 +37,7 @@
           "assets": [
             "CHANGELOG.md",
             "Cargo.toml",
-            "Cargo.lock",
-            "editors/code/package.json",
-            "editors/code/package-lock.json"
+            "Cargo.lock"
           ]
         }
       ]
