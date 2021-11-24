@@ -63,7 +63,7 @@ pub async fn diagnostics(
                         end: position,
                     },
                     message: caps[3].trim().to_string(),
-                    severity: Some(lsp::DiagnosticSeverity::Error),
+                    severity: Some(lsp::DiagnosticSeverity::ERROR),
                     ..lsp::Diagnostic::default()
                 };
                 if map.contains_key(&file_url) {
@@ -108,7 +108,7 @@ pub async fn diagnostics(
                     end: position,
                 },
                 message: "Flagged".to_string(),
-                severity: Some(lsp::DiagnosticSeverity::Warning),
+                severity: Some(lsp::DiagnosticSeverity::WARNING),
                 ..lsp::Diagnostic::default()
             };
             if ret.contains_key(&uri.key()) {

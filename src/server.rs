@@ -19,7 +19,7 @@ pub fn capabilities() -> lsp::ServerCapabilities {
     let text_document_sync = {
         let options = lsp::TextDocumentSyncOptions {
             open_close: Some(true),
-            change: Some(lsp::TextDocumentSyncKind::Incremental),
+            change: Some(lsp::TextDocumentSyncKind::INCREMENTAL),
             will_save: Some(true),
             will_save_wait_until: Some(false),
             save: Some(lsp::TextDocumentSyncSaveOptions::SaveOptions(lsp::SaveOptions {
@@ -54,7 +54,7 @@ pub fn capabilities() -> lsp::ServerCapabilities {
 impl LanguageServer for Server {
     async fn initialize(&self, params: lsp::InitializeParams) -> jsonrpc::Result<lsp::InitializeResult> {
         self.client
-            .log_message(lsp::MessageType::Error, "Beancount Server initializing")
+            .log_message(lsp::MessageType::ERROR, "Beancount Server initializing")
             .await;
 
         *self.session.client_capabilities.write().await = Some(params.capabilities);
@@ -82,7 +82,7 @@ impl LanguageServer for Server {
     }
 
     async fn initialized(&self, _: lsp::InitializedParams) {
-        let typ = lsp::MessageType::Info;
+        let typ = lsp::MessageType::INFO;
         let message = "beancount language server initialized!";
         self.client.log_message(typ, message).await;
     }
