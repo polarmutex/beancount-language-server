@@ -20,7 +20,7 @@ pub mod text_document {
             session
                 .as_ref()
                 .client()?
-                .log_message(lsp::MessageType::Error, err.to_string())
+                .log_message(lsp::MessageType::ERROR, err.to_string())
                 .await;
         }
 
@@ -36,7 +36,7 @@ pub mod text_document {
             session
                 .as_ref()
                 .client()?
-                .log_message(lsp::MessageType::Error, err.to_string())
+                .log_message(lsp::MessageType::ERROR, err.to_string())
                 .await;
         }
 
