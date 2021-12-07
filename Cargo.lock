@@ -462,9 +462,9 @@ dependencies = [
 
 [[package]]
 name = "lspower"
-version = "1.4.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c713fbfa0f03f0b8286a1e250281350aa07dee40e6ef5c0a4d5a2801146d7a54"
+checksum = "cc2242d4cb4071c7b9ae53001c8c658402b55bb8c3669a70d3ce9565f1144b30"
 dependencies = [
  "anyhow",
  "async-trait",
