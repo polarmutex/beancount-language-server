@@ -43,9 +43,14 @@ pub fn capabilities() -> lsp::ServerCapabilities {
         Some(options)
     };
 
+    let document_formatting_provider = {
+        Some(lsp::OneOf::Left(true))
+    };
+
     lsp::ServerCapabilities {
         text_document_sync,
         completion_provider,
+        document_formatting_provider,
         ..Default::default()
     }
 }
