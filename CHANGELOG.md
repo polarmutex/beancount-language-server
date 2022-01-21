@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/polarmutex/beancount-language-server/compare/v1.0.0...v1.0.1) (2022-01-21)
+
+
+### Bug Fixes
+
+* activate document formatting by default ([0f82147](https://github.com/polarmutex/beancount-language-server/commit/0f821474e0216aaa1018c1fc451903b024089d12))
+
 # 1.0.0 (2021-11-12)
 
 
