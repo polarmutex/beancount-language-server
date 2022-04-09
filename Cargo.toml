@@ -1,7 +1,8 @@
 [package]
-edition = "2018"
 name = "beancount-language-server"
 version = "1.0.1"
+rust-version = "1.59"
+edition = "2021"
 authors = ["Brian Ryall <polarmutex@users.noreply.github.com>"]
 license = "MIT"
 readme = "README.md"
@@ -10,9 +11,6 @@ keywords = ["beancount", "lsp"]
 description = """
 A language server for the beancount language
 """
-
-[badges]
-maintenance = { status = "experimental" }
 
 [dependencies]
 anyhow = "1.0"
@@ -33,3 +31,6 @@ linked-list = "0.0.3"
 tokio = { version = "1.17", features = ["io-std", "macros", "process", "sync", "rt-multi-thread"]}
 tree-sitter = "0.20"
 tree-sitter-beancount = "2.0.0"
+
+[package.metadata.release]
+tag = true
