@@ -1,0 +1,119 @@
+name: build
+
+on:
+  push:
+    branches:
+      - master
+
+  pull_request:
+  workflow_dispatch:
+
+env:
+  RUST_VERSION: 1.59.0
+  RUSTFLAGS: "-D warnings"
+  RUSTDOCFLAGS: "-D warnings"
+
+jobs:
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      matrix:
+        crate:
+          - '.'
+
+    defaults:
+      run:
+        working-directory: ${{ matrix.crate }}
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1.0.7
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          profile: minimal
+          override: true
+      - run: cargo test --no-default-features
+      - run: cargo test
+      - run: cargo test --all-features
+      - run: cargo test --no-default-features
+
+  code-style:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install rust toolchain
+        uses: actions-rs/toolchain@v1.0.7
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          override: true
+          components: clippy, rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-features --workspace
+
+  documentation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install rust toolchain
+        uses: actions-rs/toolchain@v1.0.7
+        with:
+          toolchain: nightly
+          override: true
+          profile: minimal
+      - run: cargo doc --all-features --no-deps --workspace
+
+  unwanted-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1.0.7
+        with:
+          toolchain: stable
+          override: true
+          profile: minimal
+      - run: cargo install cargo-deny --locked
+      - run: cargo deny check
+
+  unused-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1.0.7
+        with:
+          toolchain: nightly
+          override: true
+          profile: minimal
+      - run: cargo install cargo-udeps --locked
+      - run: cargo udeps --workspace --all-features
+
+  release-pr:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.release_please.outputs.pr }}
+    steps:
+      - uses: google-github-actions/release-please-action@v3
+        id: release_please
+        with:
+          release-type: rust
+          command: release-pr
+          changelog-types: '[{"type":"feat","section":"Features","hidden":false},{"type":"fix","section":"Bug Fixes","hidden":false},{"type":"perf","section":"Performance","hidden":false},{"type":"docs","section":"Documentation","hidden":false}]'
+          extra-files: |
+            README.md
+  release:
+    needs: [test, documentation, release-pr]
+    runs-on: ubuntu-latest
+    if: ${{ !needs.release-pr.outputs.pr }}
+
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+
+    steps:
+      - uses: google-github-actions/release-please-action@v3.1
+        id: release
+        with:
+          release-type: rust
+          command: github-release
