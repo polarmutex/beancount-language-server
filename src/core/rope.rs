@@ -62,7 +62,7 @@ impl ChunkWalker {
             }
 
             let bytes = self.cursor_chunk.as_bytes();
-            let bytes = &bytes[start_index - self.cursor ..];
+            let bytes = &bytes[start_index - self.cursor..];
             Bytes::from_static(bytes)
         }
     }
@@ -89,7 +89,7 @@ pub trait RopeExt {
 
 impl RopeExt for Rope {
     fn apply_edit(&mut self, edit: &TextEdit) {
-        self.remove(edit.start_char_idx .. edit.end_char_idx);
+        self.remove(edit.start_char_idx..edit.end_char_idx);
         if !edit.text.is_empty() {
             self.insert(edit.start_char_idx, &edit.text);
         }
@@ -250,7 +250,7 @@ impl RopeExt for Rope {
     fn utf8_text_for_tree_sitter_node<'rope, 'tree>(&'rope self, node: &tree_sitter::Node<'tree>) -> Cow<'rope, str> {
         let start = self.byte_to_char(node.start_byte() as usize);
         let end = self.byte_to_char(node.end_byte() as usize);
-        let slice = self.slice(start .. end);
+        let slice = self.slice(start..end);
         slice.into()
     }
 }

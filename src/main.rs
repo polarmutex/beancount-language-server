@@ -17,7 +17,9 @@ async fn main() -> anyhow::Result<()> {
     cli();
 
     let mut logger = Logger::new().unwrap();
-    logger.set_path(Some(PathBuf::from("beancount-langserver.log"))).expect("Could not open log file");
+    logger
+        .set_path(Some(PathBuf::from("beancount-langserver.log")))
+        .expect("Could not open log file");
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();

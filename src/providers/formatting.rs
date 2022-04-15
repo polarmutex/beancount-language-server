@@ -53,7 +53,7 @@ impl<'a> tree_sitter::TextProvider<'a> for RopeProvider<'a> {
     fn text(&mut self, node: tree_sitter::Node) -> Self::I {
         let start_char = self.0.byte_to_char(node.start_byte());
         let end_char = self.0.byte_to_char(node.end_byte());
-        let fragment = self.0.slice(start_char .. end_char);
+        let fragment = self.0.slice(start_char..end_char);
         ChunksBytes {
             chunks: fragment.chunks(),
         }

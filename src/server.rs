@@ -43,9 +43,7 @@ pub fn capabilities() -> lsp::ServerCapabilities {
         Some(options)
     };
 
-    let document_formatting_provider = {
-        Some(lsp::OneOf::Left(true))
-    };
+    let document_formatting_provider = { Some(lsp::OneOf::Left(true)) };
 
     lsp::ServerCapabilities {
         text_document_sync,
@@ -77,7 +75,7 @@ impl LanguageServer for Server {
         *self.session.root_journal_path.write().await =
             Some(PathBuf::from(beancount_lsp_settings.journal_file.clone()));
 
-            let journal_file = lsp::Url::from_file_path(beancount_lsp_settings.journal_file).unwrap();
+        let journal_file = lsp::Url::from_file_path(beancount_lsp_settings.journal_file).unwrap();
         Some(self.session.parse_initial_forest(journal_file).await);
         Ok(lsp::InitializeResult {
             capabilities,

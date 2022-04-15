@@ -58,7 +58,11 @@ impl Session {
             env::split_paths(&paths).find_map(|p| {
                 let full_path = p.join("bean-check");
 
-                if full_path.is_file() { Some(full_path) } else { None }
+                if full_path.is_file() {
+                    Some(full_path)
+                } else {
+                    None
+                }
             })
         });
 
