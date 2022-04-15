@@ -4,15 +4,15 @@ use log::debug;
 use lspower::lsp;
 
 pub struct FlaggedEntry {
-    file: String,
+    _file: String,
     pub line: u32,
 }
 
-impl FlaggedEntry {
-    pub fn new(file: String, line: u32) -> Self {
-        Self { file, line }
-    }
-}
+//impl FlaggedEntry {
+//    pub fn new(file: String, line: u32) -> Self {
+//        Self { file, line }
+//    }
+//}
 
 pub struct BeancountData {
     accounts: DashMap<lsp::Url, Vec<String>>,
@@ -128,7 +128,7 @@ impl BeancountData {
                 if let Some(flag) = flag_node {
                     debug!("addind flag entry: {:?}", flag);
                     self.flagged_entries.get_mut(&uri).unwrap().push(FlaggedEntry {
-                        file: "".to_string(),
+                        _file: "".to_string(),
                         line: flag.start_position().row as u32,
                     });
                 }

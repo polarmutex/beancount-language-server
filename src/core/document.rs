@@ -13,7 +13,7 @@ impl Document {
         Self { content }
     }
 
-    pub fn text(&self) -> ropey::Rope {
-        self.content.clone()
-    }
+    //pub fn text(&self) -> ropey::Rope {
+    //    self.content.clone()
+    //}
 }

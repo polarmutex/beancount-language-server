@@ -30,17 +30,8 @@ pub enum Error {
     #[error("Language error")]
     LanguageError(#[from] tree_sitter::LanguageError),
 
-    #[error("Trie is empty")]
-    TrieEmpty,
-
     #[error("Cannot convert URI to file path")]
     UriToPathConversion,
-
-    #[error("Unexpected format error")]
-    UnexpectedFormat,
-
-    #[error("Invalid state")]
-    InvalidState,
 }
 
 /// Wrapper struct for converting [`anyhow::Error`] into [`lspower::jsonrpc::Error`].

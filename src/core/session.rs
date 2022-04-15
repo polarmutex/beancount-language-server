@@ -140,13 +140,13 @@ impl Session {
     }
 
     /// Get a reference to the [`tree_sitter::Tree`] for a [`core::Document`] in the [`Session`].
-    pub async fn get_tree(&self, uri: &lsp::Url) -> anyhow::Result<Ref<'_, lsp::Url, Mutex<tree_sitter::Tree>>> {
-        self.forest.get(uri).ok_or_else(|| {
-            let kind = SessionResourceKind::Tree;
-            let uri = uri.clone();
-            core::Error::SessionResourceNotFound { kind, uri }.into()
-        })
-    }
+    //pub async fn get_tree(&self, uri: &lsp::Url) -> anyhow::Result<Ref<'_, lsp::Url, Mutex<tree_sitter::Tree>>> {
+    //    self.forest.get(uri).ok_or_else(|| {
+    //        let kind = SessionResourceKind::Tree;
+    //        let uri = uri.clone();
+    //        core::Error::SessionResourceNotFound { kind, uri }.into()
+    //    })
+    //}
 
     /// Get a mutable reference to the [`tree_sitter::Tree`] for a [`core::Document`] in the
     /// [`Session`].

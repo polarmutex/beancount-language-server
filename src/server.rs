@@ -77,9 +77,8 @@ impl LanguageServer for Server {
         *self.session.root_journal_path.write().await =
             Some(PathBuf::from(beancount_lsp_settings.journal_file.clone()));
 
-        self.session
-            .parse_initial_forest(lsp::Url::from_file_path(beancount_lsp_settings.journal_file).unwrap())
-            .await;
+            let journal_file = lsp::Url::from_file_path(beancount_lsp_settings.journal_file).unwrap();
+        Some(self.session.parse_initial_forest(journal_file).await);
         Ok(lsp::InitializeResult {
             capabilities,
             ..lsp::InitializeResult::default()

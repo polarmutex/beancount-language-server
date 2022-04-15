@@ -15,17 +15,17 @@ pub struct TextEdit<'a> {
     pub text: &'a str,
 }
 
-impl<'a> TextEdit<'a> {
-    pub fn range(&self) -> tree_sitter::Range {
-        let start_byte = self.input_edit.start_byte;
-        let end_byte = self.input_edit.new_end_byte;
-        let start_point = self.input_edit.start_position;
-        let end_point = self.input_edit.new_end_position;
-        tree_sitter::Range {
-            start_byte,
-            end_byte,
-            start_point,
-            end_point,
-        }
-    }
-}
+//impl<'a> TextEdit<'a> {
+//    pub fn range(&self) -> tree_sitter::Range {
+//        let start_byte = self.input_edit.start_byte;
+//        let end_byte = self.input_edit.new_end_byte;
+//        let start_point = self.input_edit.start_position;
+//        let end_point = self.input_edit.new_end_position;
+//        tree_sitter::Range {
+//            start_byte,
+//            end_byte,
+//            start_point,
+//            end_point,
+//        }
+//    }
+//}

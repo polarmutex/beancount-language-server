@@ -24,20 +24,20 @@ impl Logger {
         Ok(Logger { path, level, handle })
     }
 
-    pub fn update_settings(&mut self, level: LevelFilter, path: Option<PathBuf>) -> Result<()> {
-        let config = create_config(&path, level)?;
-        self.handle.set_config(config);
-        self.level = level;
-        self.path = path;
-        Ok(())
-    }
+    //pub fn update_settings(&mut self, level: LevelFilter, path: Option<PathBuf>) -> Result<()> {
+    //    let config = create_config(&path, level)?;
+    //    self.handle.set_config(config);
+    //    self.level = level;
+    //    self.path = path;
+    //    Ok(())
+    //}
 
-    pub fn set_level(&mut self, level: LevelFilter) -> Result<()> {
-        let config = create_config(&self.path, level)?;
-        self.handle.set_config(config);
-        self.level = level;
-        Ok(())
-    }
+    //pub fn set_level(&mut self, level: LevelFilter) -> Result<()> {
+    //    let config = create_config(&self.path, level)?;
+    //    self.handle.set_config(config);
+    //    self.level = level;
+    //    Ok(())
+    //}
 
     #[allow(dead_code)]
     pub fn set_path(&mut self, path: Option<PathBuf>) -> Result<()> {

@@ -1,4 +1,4 @@
-use clap::App;
+use clap::Command;
 use lspower::{LspService, Server};
 mod core;
 mod handlers;
@@ -9,7 +9,7 @@ use crate::core::logger::Logger;
 use std::path::PathBuf;
 
 fn cli() {
-    App::new("beancount-language-server").get_matches();
+    Command::new("beancount-language-server").get_matches();
 }
 
 #[tokio::main]
@@ -17,7 +17,7 @@ async fn main() -> anyhow::Result<()> {
     cli();
 
     let mut logger = Logger::new().unwrap();
-    logger.set_path(Some(PathBuf::from("beancount-langserver.log")));
+    logger.set_path(Some(PathBuf::from("beancount-langserver.log"))).expect("Could not open log file");
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
