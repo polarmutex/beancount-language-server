@@ -107,7 +107,7 @@ impl Session {
         Ok(())
     }
 
-    /// Get a reference to the [`core::Text`] for a [`core::Document`] in the [`Session`].
+    /// Get a reference to the [`core::Document`] in the [`Session`].
     pub async fn get_document(&self, uri: &lsp::Url) -> anyhow::Result<Ref<'_, lsp::Url, core::Document>> {
         self.documents.get(uri).ok_or_else(|| {
             let kind = SessionResourceKind::Document;
@@ -116,7 +116,7 @@ impl Session {
         })
     }
 
-    /// Get a mutable reference to the [`core::Text`] for a [`core::Document`] in the [`Session`].
+    /// Get a mutable reference to the [`core::Document`] in the [`Session`].
     pub async fn get_mut_document(&self, uri: &lsp::Url) -> anyhow::Result<RefMut<'_, lsp::Url, core::Document>> {
         self.documents.get_mut(uri).ok_or_else(|| {
             let kind = SessionResourceKind::Document;
