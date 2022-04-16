@@ -1,0 +1,24 @@
+[advisories]
+vulnerability = "warn"
+unmaintained = "warn"
+yanked = "warn"
+notice = "warn"
+ignore = []
+
+[licenses]
+default = "allow"
+copyleft = "deny"
+deny = [
+]
+
+[[licenses.clarify]]
+name = "stretch"
+expression = "MIT"
+license-files = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+
+[bans]
+multiple-versions = "allow"
