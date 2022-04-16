@@ -25,7 +25,6 @@ pub fn capabilities() -> lsp::ServerCapabilities {
             save: Some(lsp::TextDocumentSyncSaveOptions::SaveOptions(lsp::SaveOptions {
                 include_text: Some(true),
             })),
-            ..Default::default()
         };
         Some(lsp::TextDocumentSyncCapability::Options(options))
     };
@@ -63,20 +62,21 @@ impl LanguageServer for Server {
         *self.session.client_capabilities.write().await = Some(params.capabilities);
         let capabilities = capabilities();
 
-        let beancount_lsp_settings: core::BeancountLspOptions;
-        if let Some(json) = params.initialization_options {
-            beancount_lsp_settings = serde_json::from_value(json).unwrap();
+        let beancount_lsp_settings: core::BeancountLspOptions = if let Some(json) = params.initialization_options {
+            serde_json::from_value(json).unwrap()
         } else {
-            beancount_lsp_settings = core::BeancountLspOptions {
+            core::BeancountLspOptions {
                 journal_file: String::from(""),
-            };
-        }
+            }
+        };
         // TODO need error if it does not exist
         *self.session.root_journal_path.write().await =
             Some(PathBuf::from(beancount_lsp_settings.journal_file.clone()));
 
         let journal_file = lsp::Url::from_file_path(beancount_lsp_settings.journal_file).unwrap();
-        Some(self.session.parse_initial_forest(journal_file).await);
+
+        if (self.session.parse_initial_forest(journal_file).await).is_ok() {};
+
         Ok(lsp::InitializeResult {
             capabilities,
             ..lsp::InitializeResult::default()

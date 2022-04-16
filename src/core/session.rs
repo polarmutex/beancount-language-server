@@ -91,7 +91,7 @@ impl Session {
 
     /// Insert a [`core::Document`] into the [`Session`].
     pub fn insert_document(&self, uri: lsp::Url, document: core::Document) -> anyhow::Result<()> {
-        let result = self.documents.insert(uri.clone(), document);
+        let result = self.documents.insert(uri, document);
         debug_assert!(result.is_none());
         // let result = self.parsers.insert(uri.clone(), Mutex::new(document.parser));
         // debug_assert!(result.is_none());
@@ -201,34 +201,33 @@ impl Session {
             debug!("updating beancount data");
             self.beancount_data.update_data(file.clone(), &tree, &content);
 
-            let include_nodes = tree
+            let include_filenames = tree
                 .root_node()
                 .children(&mut cursor)
                 .filter(|c| c.kind() == "include")
-                .collect::<Vec<_>>();
+                .filter_map(|include_node| {
+                    let mut node_cursor = include_node.walk();
+                    let node = include_node.children(&mut node_cursor).find(|c| c.kind() == "string")?;
 
-            let include_filenames = include_nodes.into_iter().filter_map(|include_node| {
-                let node = include_node.children(&mut cursor).find(|c| c.kind() == "string")?;
+                    let filename = node
+                        .utf8_text(bytes)
+                        .unwrap()
+                        .trim_start_matches('"')
+                        .trim_end_matches('"');
 
-                let filename = node
-                    .utf8_text(bytes)
-                    .unwrap()
-                    .trim_start_matches('"')
-                    .trim_end_matches('"');
+                    let path = Path::new(filename);
 
-                let path = Path::new(filename);
+                    let path = if path.is_absolute() {
+                        path.to_path_buf()
+                    } else if file_path.is_absolute() {
+                        file_path.parent().unwrap().join(path)
+                    } else {
+                        path.to_path_buf()
+                    };
+                    let path_url = lsp::Url::from_file_path(path).unwrap();
 
-                let path = if path.is_absolute() {
-                    path.to_path_buf()
-                } else if file_path.is_absolute() {
-                    file_path.parent().unwrap().join(path)
-                } else {
-                    path.to_path_buf()
-                };
-                let path_url = lsp::Url::from_file_path(path).unwrap();
-
-                Some(path_url)
-            });
+                    Some(path_url)
+                });
 
             // This could get in an infinite loop if there is a loop wtth the include files
             // TODO see if I can prevent this

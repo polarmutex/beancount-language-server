@@ -83,7 +83,7 @@ pub async fn completion(
                         "ERROR" => {
                             debug!("providers::completion - handle node - handle error");
                             debug!("providers::completion - handle node - handle error {}", text);
-                            let prefix = text.chars().nth(0).unwrap();
+                            let prefix = text.chars().next().unwrap();
                             debug!("providers::completion - handle node - prefix {}", prefix);
                             if prefix == '"' {
                                 complete_txn_string(&session.beancount_data)

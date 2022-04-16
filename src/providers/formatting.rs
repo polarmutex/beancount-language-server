@@ -1,6 +1,7 @@
 use crate::core;
 use log::debug;
 use lspower::lsp;
+use std::cmp::Ordering;
 use std::sync::Arc;
 
 struct TSRange {
@@ -140,33 +141,35 @@ pub async fn formatting(
                 character: prefix.end.column as u32,
             };
 
-            if new_num_pos > num_col_pos {
-                // Insert Spaces
-                let edit = lsp::TextEdit {
-                    range: lsp::Range {
-                        start: insert_pos,
-                        end: insert_pos,
-                    },
-                    new_text: std::iter::repeat(" ")
-                        .take(new_num_pos - num_col_pos)
-                        .collect::<String>(),
-                };
-                text_edits.push(edit)
-            } else if num_col_pos > new_num_pos {
-                // remove spaces
-                // TODO conform text will not be deleted
-                let end_pos = lsp::Position {
-                    line: insert_pos.line,
-                    character: insert_pos.character + (num_col_pos - new_num_pos) as u32,
-                };
-                let edit = lsp::TextEdit {
-                    range: lsp::Range {
-                        start: insert_pos,
-                        end: end_pos,
-                    },
-                    new_text: "".to_string(),
-                };
-                text_edits.push(edit)
+            match new_num_pos.cmp(&num_col_pos) {
+                Ordering::Greater => {
+                    // Insert Spaces
+                    let edit = lsp::TextEdit {
+                        range: lsp::Range {
+                            start: insert_pos,
+                            end: insert_pos,
+                        },
+                        new_text: " ".repeat(new_num_pos - num_col_pos),
+                    };
+                    text_edits.push(edit)
+                },
+                Ordering::Less => {
+                    // remove spaces
+                    // TODO conform text will not be deleted
+                    let end_pos = lsp::Position {
+                        line: insert_pos.line,
+                        character: insert_pos.character + (num_col_pos - new_num_pos) as u32,
+                    };
+                    let edit = lsp::TextEdit {
+                        range: lsp::Range {
+                            start: insert_pos,
+                            end: end_pos,
+                        },
+                        new_text: "".to_string(),
+                    };
+                    text_edits.push(edit)
+                },
+                Ordering::Equal => {},
             }
         }
     }

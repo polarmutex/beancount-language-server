@@ -91,7 +91,7 @@ impl RopeExt for Rope {
     fn apply_edit(&mut self, edit: &TextEdit) {
         self.remove(edit.start_char_idx..edit.end_char_idx);
         if !edit.text.is_empty() {
-            self.insert(edit.start_char_idx, &edit.text);
+            self.insert(edit.start_char_idx, edit.text);
         }
     }
 
@@ -117,8 +117,8 @@ impl RopeExt for Rope {
             if new_end_byte >= self.len_bytes() {
                 let line_idx = text.lines().count();
                 let line_byte_idx = ropey::str_utils::line_to_byte_idx(text, line_idx);
-                let row = usize::try_from(self.len_lines() + line_idx).unwrap();
-                let column = usize::try_from(text_end_byte_idx - line_byte_idx)?;
+                let row = self.len_lines() + line_idx;
+                let column = text_end_byte_idx - line_byte_idx;
                 Ok(tree_sitter::Point::new(row, column))
             } else {
                 self.byte_to_tree_sitter_point(new_end_byte)
@@ -171,8 +171,8 @@ impl RopeExt for Rope {
     fn byte_to_tree_sitter_point(&self, byte_idx: usize) -> anyhow::Result<tree_sitter::Point> {
         let line_idx = self.byte_to_line(byte_idx);
         let line_byte_idx = self.line_to_byte(line_idx);
-        let row = usize::try_from(line_idx).unwrap();
-        let column = usize::try_from(byte_idx - line_byte_idx)?;
+        let row = line_idx;
+        let column = byte_idx - line_byte_idx;
         Ok(tree_sitter::Point::new(row, column))
     }
 
@@ -206,14 +206,14 @@ impl RopeExt for Rope {
 
         let point = {
             let row = position.line as usize;
-            let col = usize::try_from(col_byte_idx)?;
+            let col = col_byte_idx;
             tree_sitter::Point::new(row, col)
         };
 
         Ok(TextPosition {
-            char: usize::try_from(row_char_idx + col_char_idx)?,
-            byte: usize::try_from(row_byte_idx + col_byte_idx)?,
-            code: usize::try_from(row_code_idx + col_code_idx)?,
+            char: row_char_idx + col_char_idx,
+            byte: row_byte_idx + col_byte_idx,
+            code: row_code_idx + col_code_idx,
             point,
         })
     }

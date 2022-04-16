@@ -9,7 +9,7 @@ pub struct Document {
 impl Document {
     pub fn open(params: lsp::DidOpenTextDocumentParams) -> Self {
         let content = ropey::Rope::from(params.text_document.text);
-        let content = content.clone();
+        let content = content;
         Self { content }
     }
 

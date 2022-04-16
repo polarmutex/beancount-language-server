@@ -2,7 +2,7 @@ use crate::core;
 use dashmap::DashMap;
 use log::debug;
 use lspower::lsp;
-use std::path::PathBuf;
+use std::path::Path;
 use tokio::process::Command;
 
 pub struct DiagnosticData {
@@ -27,8 +27,8 @@ impl DiagnosticData {
 pub async fn diagnostics(
     previous_diagnostics: &DiagnosticData,
     beancount_data: &core::BeancountData,
-    bean_check_cmd: &PathBuf,
-    root_journal_file: &PathBuf,
+    bean_check_cmd: &Path,
+    root_journal_file: &Path,
 ) -> DashMap<lsp::Url, Vec<lsp::Diagnostic>> {
     let error_line_regexp = regex::Regex::new(r"^([^:]+):(\d+):\s*(.*)$").unwrap();
 
@@ -56,7 +56,7 @@ pub async fn diagnostics(
                     character: 0,
                 };
 
-                let file_url = lsp::Url::from_file_path(caps[1].to_string()).unwrap();
+                let file_url = lsp::Url::from_file_path(&caps[1]).unwrap();
                 let diag = lsp::Diagnostic {
                     range: lsp::Range {
                         start: position,
@@ -88,8 +88,8 @@ pub async fn diagnostics(
     // add bean-check errors
     for url in diags.iter() {
         for diag in url.value().iter() {
-            if ret.contains_key(&url.key()) {
-                ret.get_mut(&url.key()).unwrap().push(diag.clone());
+            if ret.contains_key(url.key()) {
+                ret.get_mut(url.key()).unwrap().push(diag.clone());
             } else {
                 ret.insert(url.key().clone(), vec![diag.clone()]);
             }
@@ -111,8 +111,8 @@ pub async fn diagnostics(
                 severity: Some(lsp::DiagnosticSeverity::WARNING),
                 ..lsp::Diagnostic::default()
             };
-            if ret.contains_key(&uri.key()) {
-                ret.get_mut(&uri.key()).unwrap().push(diag);
+            if ret.contains_key(uri.key()) {
+                ret.get_mut(uri.key()).unwrap().push(diag);
             } else {
                 ret.insert(uri.key().clone(), vec![diag]);
             }

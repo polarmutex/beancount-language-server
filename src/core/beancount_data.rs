@@ -2,6 +2,7 @@ use crate::core::RopeExt;
 use dashmap::DashMap;
 use log::debug;
 use lspower::lsp;
+use std::collections::HashSet;
 
 pub struct FlaggedEntry {
     _file: String,
@@ -37,18 +38,17 @@ impl BeancountData {
 
         // Update account opens
         debug!("beancount_data:: get account nodes");
-        let accounts_nodes = tree
+        debug!("beancount_data:: get account strings");
+        let account_strings = tree
             .root_node()
             .children(&mut cursor)
             .filter(|c| c.kind() == "open")
-            .collect::<Vec<_>>();
-
-        debug!("beancount_data:: get account strings");
-        let account_strings = accounts_nodes.into_iter().filter_map(|node| {
-            let account_node = node.children(&mut cursor).find(|c| c.kind() == "account")?;
-            let account = content.utf8_text_for_tree_sitter_node(&account_node).to_string();
-            Some(account)
-        });
+            .filter_map(|node| {
+                let mut node_cursor = node.walk();
+                let account_node = node.children(&mut node_cursor).find(|c| c.kind() == "account")?;
+                let account = content.utf8_text_for_tree_sitter_node(&account_node).to_string();
+                Some(account)
+            });
 
         debug!("beancount_data:: update accounts");
         if self.accounts.contains_key(&uri) {
@@ -63,26 +63,22 @@ impl BeancountData {
 
         // Update account opens
         debug!("beancount_data:: get txn_strings nodes");
-        let transaction_nodes = tree
+        debug!("beancount_data:: get account strings");
+        let transactions = tree
             .root_node()
             .children(&mut cursor)
             .filter(|c| c.kind() == "transaction")
             .collect::<Vec<_>>();
 
-        debug!("beancount_data:: get account strings");
-        let txn_string_strings = transaction_nodes.into_iter().filter_map(|node| {
-            let txn_strings_node = node.children(&mut cursor).find(|c| c.kind() == "txn_strings")?;
-            if let Some(txn_string_node) = txn_strings_node.children(&mut cursor).next() {
-                Some(
-                    content
-                        .utf8_text_for_tree_sitter_node(&txn_string_node)
-                        .trim()
-                        .to_string(),
-                )
-            } else {
-                None
+        //TODO: consider doing something silimar with others around
+        let mut txn_string_strings: HashSet<String> = HashSet::new();
+        for transaction in transactions {
+            if let Some(txn_strings) = transaction.child_by_field_name("txn_strings") {
+                if let Some(payee) = txn_strings.children(&mut cursor).next() {
+                    txn_string_strings.insert(content.utf8_text_for_tree_sitter_node(&payee).trim().to_string());
+                }
             }
-        });
+        }
 
         debug!("beancount_data:: update txn_strings");
         if self.txn_strings.contains_key(&uri) {
@@ -99,41 +95,38 @@ impl BeancountData {
 
         // Update flagged entries
         debug!("beancount_data:: update flagged entries");
-        let flagged_nodes = tree
-            .root_node()
-            .children(&mut cursor)
-            .filter(|c| {
-                let txn_node = c.child_by_field_name("txn");
-                if txn_node.is_some() {
-                    let txn_child_node = txn_node.unwrap().child(0);
-                    if txn_child_node.is_some() && txn_child_node.unwrap().kind() == "flag" {
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            })
-            .collect::<Vec<_>>();
         if self.flagged_entries.contains_key(&uri) {
             self.flagged_entries.get_mut(&uri).unwrap().clear();
         } else {
             self.flagged_entries.insert(uri.clone(), Vec::new());
         }
-        flagged_nodes.into_iter().for_each(|node| {
-            let txn_node = node.children(&mut cursor).find(|c| c.kind() == "txn");
-            if txn_node.is_some() {
-                let flag_node = txn_node.unwrap().children(&mut cursor).find(|c| c.kind() == "flag");
-                if let Some(flag) = flag_node {
-                    debug!("addind flag entry: {:?}", flag);
-                    self.flagged_entries.get_mut(&uri).unwrap().push(FlaggedEntry {
-                        _file: "".to_string(),
-                        line: flag.start_position().row as u32,
-                    });
+
+        tree.root_node()
+            .children(&mut cursor)
+            .filter(|c| {
+                let txn_node = c.child_by_field_name("txn");
+                if let Some(txn_node) = txn_node {
+                    let txn_child_node = txn_node.child(0);
+                    txn_child_node.is_some() && txn_child_node.unwrap().kind() == "flag"
+                } else {
+                    false
                 }
-            }
-        });
+            })
+            .for_each(|node| {
+                let mut node_cursor = node.walk();
+                let txn_node = node.children(&mut node_cursor).find(|c| c.kind() == "txn");
+                if let Some(txn_node) = txn_node {
+                    let mut flag_cursor = txn_node.walk();
+                    let flag_node = txn_node.children(&mut flag_cursor).find(|c| c.kind() == "flag");
+                    if let Some(flag) = flag_node {
+                        debug!("addind flag entry: {:?}", flag);
+                        self.flagged_entries.get_mut(&uri).unwrap().push(FlaggedEntry {
+                            _file: "".to_string(),
+                            line: flag.start_position().row as u32,
+                        });
+                    }
+                }
+            });
     }
 
     pub fn get_accounts(&self) -> Vec<String> {
