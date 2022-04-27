@@ -1,14 +1,14 @@
 use crate::{core, core::RopeExt};
 use chrono::Datelike;
 use log::debug;
-use lspower::lsp;
 use std::sync::Arc;
+use tower_lsp::lsp_types;
 
 /// Provider function for LSP ``.
-pub async fn completion(
+pub(crate) async fn completion(
     session: Arc<core::Session>,
-    params: lsp::CompletionParams,
-) -> anyhow::Result<Option<lsp::CompletionResponse>> {
+    params: lsp_types::CompletionParams,
+) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
     debug!("providers::completion");
 
     let uri = params.text_document_position.text_document.uri;
@@ -117,7 +117,7 @@ pub async fn completion(
     }
 }
 
-fn complete_date() -> anyhow::Result<Option<lsp::CompletionResponse>> {
+fn complete_date() -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
     debug!("providers::completion::date");
     let today = chrono::offset::Local::now().naive_local().date();
     let prev_month = sub_one_month(today).format("%Y-%m-").to_string();
@@ -128,11 +128,11 @@ fn complete_date() -> anyhow::Result<Option<lsp::CompletionResponse>> {
     debug!("providers::completion::date {}", next_month);
     let today = today.format("%Y-%m-%d").to_string();
     debug!("providers::completion::date {}", today);
-    Ok(Some(lsp::CompletionResponse::Array(vec![
-        lsp::CompletionItem::new_simple(today, "today".to_string()),
-        lsp::CompletionItem::new_simple(cur_month, "this month".to_string()),
-        lsp::CompletionItem::new_simple(prev_month, "prev month".to_string()),
-        lsp::CompletionItem::new_simple(next_month, "next month".to_string()),
+    Ok(Some(lsp_types::CompletionResponse::Array(vec![
+        lsp_types::CompletionItem::new_simple(today, "today".to_string()),
+        lsp_types::CompletionItem::new_simple(cur_month, "this month".to_string()),
+        lsp_types::CompletionItem::new_simple(prev_month, "prev month".to_string()),
+        lsp_types::CompletionItem::new_simple(next_month, "next month".to_string()),
     ])))
 }
 
@@ -160,23 +160,23 @@ fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd(year, month, 1)
 }
 
-fn complete_txn_string(data: &core::BeancountData) -> anyhow::Result<Option<lsp::CompletionResponse>> {
+fn complete_txn_string(data: &core::BeancountData) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
     debug!("providers::completion::account");
     let mut completions = Vec::new();
     for txn_string in data.get_txn_strings() {
-        completions.push(lsp::CompletionItem::new_simple(txn_string, "".to_string()));
+        completions.push(lsp_types::CompletionItem::new_simple(txn_string, "".to_string()));
     }
-    Ok(Some(lsp::CompletionResponse::Array(completions)))
+    Ok(Some(lsp_types::CompletionResponse::Array(completions)))
 }
 
-fn complete_account(data: &core::BeancountData) -> anyhow::Result<Option<lsp::CompletionResponse>> {
+fn complete_account(data: &core::BeancountData) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
     debug!("providers::completion::account");
     let mut completions = Vec::new();
     for account in data.get_accounts() {
-        completions.push(lsp::CompletionItem::new_simple(
+        completions.push(lsp_types::CompletionItem::new_simple(
             account,
             "Beancount Account".to_string(),
         ));
     }
-    Ok(Some(lsp::CompletionResponse::Array(completions)))
+    Ok(Some(lsp_types::CompletionResponse::Array(completions)))
 }
