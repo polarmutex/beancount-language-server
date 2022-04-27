@@ -1,9 +1,9 @@
 // USED FORM https://github.com/silvanshade/lsp-text
 use crate::core::{TextEdit, TextPosition};
 use bytes::Bytes;
-use lspower::lsp;
 use ropey::{iter::Chunks, Rope};
 use std::{convert::TryFrom, sync::Arc};
+use tower_lsp::lsp_types;
 
 use std::borrow::Cow;
 
@@ -76,14 +76,14 @@ impl ChunkWalker {
 
 pub trait RopeExt {
     fn apply_edit(&mut self, edit: &TextEdit);
-    fn build_edit<'a>(&self, change: &'a lsp::TextDocumentContentChangeEvent) -> anyhow::Result<TextEdit<'a>>;
-    fn byte_to_lsp_position(&self, offset: usize) -> lsp::Position;
+    fn build_edit<'a>(&self, change: &'a lsp_types::TextDocumentContentChangeEvent) -> anyhow::Result<TextEdit<'a>>;
+    fn byte_to_lsp_position(&self, offset: usize) -> lsp_types::Position;
     fn byte_to_tree_sitter_point(&self, offset: usize) -> anyhow::Result<tree_sitter::Point>;
     fn chunk_walker(self, byte_idx: usize) -> ChunkWalker;
-    fn lsp_position_to_core(&self, position: lsp::Position) -> anyhow::Result<TextPosition>;
-    fn lsp_position_to_utf16_cu(&self, position: lsp::Position) -> anyhow::Result<u32>;
-    fn lsp_range_to_tree_sitter_range(&self, range: lsp::Range) -> anyhow::Result<tree_sitter::Range>;
-    fn tree_sitter_range_to_lsp_range(&self, range: tree_sitter::Range) -> lsp::Range;
+    fn lsp_position_to_core(&self, position: lsp_types::Position) -> anyhow::Result<TextPosition>;
+    fn lsp_position_to_utf16_cu(&self, position: lsp_types::Position) -> anyhow::Result<u32>;
+    fn lsp_range_to_tree_sitter_range(&self, range: lsp_types::Range) -> anyhow::Result<tree_sitter::Range>;
+    fn tree_sitter_range_to_lsp_range(&self, range: tree_sitter::Range) -> lsp_types::Range;
     fn utf8_text_for_tree_sitter_node<'rope, 'tree>(&'rope self, node: &tree_sitter::Node<'tree>) -> Cow<'rope, str>;
 }
 
@@ -95,7 +95,7 @@ impl RopeExt for Rope {
         }
     }
 
-    fn build_edit<'a>(&self, change: &'a lsp::TextDocumentContentChangeEvent) -> anyhow::Result<TextEdit<'a>> {
+    fn build_edit<'a>(&self, change: &'a lsp_types::TextDocumentContentChangeEvent) -> anyhow::Result<TextEdit<'a>> {
         let text = change.text.as_str();
         let text_bytes = text.as_bytes();
         let text_end_byte_idx = text_bytes.len();
@@ -105,7 +105,7 @@ impl RopeExt for Rope {
         } else {
             let start = self.byte_to_lsp_position(0);
             let end = self.byte_to_lsp_position(text_end_byte_idx);
-            lsp::Range { start, end }
+            lsp_types::Range { start, end }
         };
 
         let start = self.lsp_position_to_core(range.start)?;
@@ -149,7 +149,7 @@ impl RopeExt for Rope {
         })
     }
 
-    fn byte_to_lsp_position(&self, byte_idx: usize) -> lsp::Position {
+    fn byte_to_lsp_position(&self, byte_idx: usize) -> lsp_types::Position {
         let line_idx = self.byte_to_line(byte_idx);
 
         let line_utf16_cu_idx = {
@@ -165,7 +165,7 @@ impl RopeExt for Rope {
         let line = line_idx;
         let character = character_utf16_cu_idx - line_utf16_cu_idx;
 
-        lsp::Position::new(line as u32, character as u32)
+        lsp_types::Position::new(line as u32, character as u32)
     }
 
     fn byte_to_tree_sitter_point(&self, byte_idx: usize) -> anyhow::Result<tree_sitter::Point> {
@@ -191,7 +191,7 @@ impl RopeExt for Rope {
         }
     }
 
-    fn lsp_position_to_core(&self, position: lsp::Position) -> anyhow::Result<TextPosition> {
+    fn lsp_position_to_core(&self, position: lsp_types::Position) -> anyhow::Result<TextPosition> {
         let row_idx = position.line as usize;
 
         let col_code_idx = position.character as usize;
@@ -218,7 +218,7 @@ impl RopeExt for Rope {
         })
     }
 
-    fn lsp_position_to_utf16_cu(&self, position: lsp::Position) -> anyhow::Result<u32> {
+    fn lsp_position_to_utf16_cu(&self, position: lsp_types::Position) -> anyhow::Result<u32> {
         let line_idx = position.line as usize;
         let line_utf16_cu_idx = {
             let char_idx = self.line_to_char(line_idx);
@@ -229,7 +229,7 @@ impl RopeExt for Rope {
         Ok(result)
     }
 
-    fn lsp_range_to_tree_sitter_range(&self, range: lsp::Range) -> anyhow::Result<tree_sitter::Range> {
+    fn lsp_range_to_tree_sitter_range(&self, range: lsp_types::Range) -> anyhow::Result<tree_sitter::Range> {
         let start = self.lsp_position_to_core(range.start)?;
         let end = self.lsp_position_to_core(range.end)?;
         let range = tree_sitter::Range {
@@ -241,10 +241,10 @@ impl RopeExt for Rope {
         Ok(range)
     }
 
-    fn tree_sitter_range_to_lsp_range(&self, range: tree_sitter::Range) -> lsp::Range {
+    fn tree_sitter_range_to_lsp_range(&self, range: tree_sitter::Range) -> lsp_types::Range {
         let start = self.byte_to_lsp_position(range.start_byte as usize);
         let end = self.byte_to_lsp_position(range.end_byte as usize);
-        lsp::Range::new(start, end)
+        lsp_types::Range::new(start, end)
     }
 
     fn utf8_text_for_tree_sitter_node<'rope, 'tree>(&'rope self, node: &tree_sitter::Node<'tree>) -> Cow<'rope, str> {

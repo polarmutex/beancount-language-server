@@ -1,8 +1,8 @@
 use crate::core::RopeExt;
 use dashmap::DashMap;
 use log::debug;
-use lspower::lsp;
 use std::collections::HashSet;
+use tower_lsp::lsp_types;
 
 pub struct FlaggedEntry {
     _file: String,
@@ -16,9 +16,9 @@ pub struct FlaggedEntry {
 //}
 
 pub struct BeancountData {
-    accounts: DashMap<lsp::Url, Vec<String>>,
-    txn_strings: DashMap<lsp::Url, Vec<String>>,
-    pub flagged_entries: DashMap<lsp::Url, Vec<FlaggedEntry>>,
+    accounts: DashMap<lsp_types::Url, Vec<String>>,
+    txn_strings: DashMap<lsp_types::Url, Vec<String>>,
+    pub flagged_entries: DashMap<lsp_types::Url, Vec<FlaggedEntry>>,
 }
 
 impl BeancountData {
@@ -33,7 +33,7 @@ impl BeancountData {
         }
     }
 
-    pub fn update_data(&self, uri: lsp::Url, tree: &tree_sitter::Tree, content: &ropey::Rope) {
+    pub fn update_data(&self, uri: lsp_types::Url, tree: &tree_sitter::Tree, content: &ropey::Rope) {
         let mut cursor = tree.root_node().walk();
 
         // Update account opens

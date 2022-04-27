@@ -1,8 +1,8 @@
 use crate::core;
 use log::debug;
-use lspower::lsp;
 use std::cmp::Ordering;
 use std::sync::Arc;
+use tower_lsp::lsp_types;
 
 struct TSRange {
     pub start: tree_sitter::Point,
@@ -62,10 +62,10 @@ impl<'a> tree_sitter::TextProvider<'a> for RopeProvider<'a> {
 }
 
 /// Provider function for LSP ``.
-pub async fn formatting(
+pub(crate) async fn formatting(
     session: Arc<core::Session>,
-    params: lsp::DocumentFormattingParams,
-) -> anyhow::Result<Option<Vec<lsp::TextEdit>>> {
+    params: lsp_types::DocumentFormattingParams,
+) -> anyhow::Result<Option<Vec<lsp_types::TextEdit>>> {
     debug!("providers::completion");
 
     let uri = params.text_document.uri;
@@ -136,7 +136,7 @@ pub async fn formatting(
             let num_col_pos = number.start.column;
             let new_num_pos = correct_number_placement + (max_number_width - num_len);
 
-            let insert_pos = lsp::Position {
+            let insert_pos = lsp_types::Position {
                 line: prefix.end.row as u32,
                 character: prefix.end.column as u32,
             };
@@ -144,8 +144,8 @@ pub async fn formatting(
             match new_num_pos.cmp(&num_col_pos) {
                 Ordering::Greater => {
                     // Insert Spaces
-                    let edit = lsp::TextEdit {
-                        range: lsp::Range {
+                    let edit = lsp_types::TextEdit {
+                        range: lsp_types::Range {
                             start: insert_pos,
                             end: insert_pos,
                         },
@@ -156,12 +156,12 @@ pub async fn formatting(
                 Ordering::Less => {
                     // remove spaces
                     // TODO conform text will not be deleted
-                    let end_pos = lsp::Position {
+                    let end_pos = lsp_types::Position {
                         line: insert_pos.line,
                         character: insert_pos.character + (num_col_pos - new_num_pos) as u32,
                     };
-                    let edit = lsp::TextEdit {
-                        range: lsp::Range {
+                    let edit = lsp_types::TextEdit {
+                        range: lsp_types::Range {
                             start: insert_pos,
                             end: end_pos,
                         },

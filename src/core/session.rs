@@ -1,18 +1,18 @@
-use crate::{core, providers, server};
+use crate::{core, providers};
 use dashmap::{
     mapref::one::{Ref, RefMut},
     DashMap,
 };
 use linked_list::LinkedList;
 use log::debug;
-use lspower::lsp;
+use providers::diagnostics;
 use serde::{Deserialize, Serialize};
 use std::{
-    env,
     fs::read_to_string,
     path::{Path, PathBuf},
 };
 use tokio::sync::{Mutex, RwLock};
+use tower_lsp::lsp_types;
 
 /// A tag representing of the kinds of session resource.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,17 +25,17 @@ pub enum SessionResourceKind {
     Tree,
 }
 
-pub struct Session {
-    pub server_capabilities: RwLock<lsp::ServerCapabilities>,
-    pub client_capabilities: RwLock<Option<lsp::ClientCapabilities>>,
-    client: Option<lspower::Client>,
-    documents: DashMap<lsp::Url, core::Document>,
-    parsers: DashMap<lsp::Url, Mutex<tree_sitter::Parser>>,
-    pub forest: DashMap<lsp::Url, Mutex<tree_sitter::Tree>>,
-    pub root_journal_path: RwLock<Option<PathBuf>>,
-    pub bean_check_path: Option<PathBuf>,
-    pub beancount_data: core::BeancountData,
-    pub diagnostic_data: providers::DiagnosticData,
+pub(crate) struct Session {
+    //pub(crate) server_capabilities: RwLock<lsp_types::ServerCapabilities>,
+    pub(crate) client_capabilities: RwLock<Option<lsp_types::ClientCapabilities>>,
+    pub(crate) client: tower_lsp::Client,
+    documents: DashMap<lsp_types::Url, core::Document>,
+    parsers: DashMap<lsp_types::Url, Mutex<tree_sitter::Parser>>,
+    pub(crate) forest: DashMap<lsp_types::Url, Mutex<tree_sitter::Tree>>,
+    pub(crate) root_journal_path: RwLock<Option<PathBuf>>,
+    //pub(crate) bean_check_path: Option<PathBuf>,
+    pub(crate) beancount_data: core::BeancountData,
+    pub(crate) diagnostic_data: diagnostics::DiagnosticData,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -45,52 +45,45 @@ pub struct BeancountLspOptions {
 
 impl Session {
     /// Create a new [`Session`].
-    pub fn new(client: Option<lspower::Client>) -> anyhow::Result<Self> {
-        let server_capabilities = RwLock::new(server::capabilities());
+    pub fn new(client: tower_lsp::Client) -> Self {
+        //let server_capabilities = RwLock::new(server::capabilities());
         let client_capabilities = RwLock::new(Default::default());
         let documents = DashMap::new();
         let parsers = DashMap::new();
         let forest = DashMap::new();
         let beancount_data = core::BeancountData::new();
-        let diagnostic_data = providers::DiagnosticData::new();
+        let diagnostic_data = diagnostics::DiagnosticData::new();
 
-        let bean_check_path = env::var_os("PATH").and_then(|paths| {
-            env::split_paths(&paths).find_map(|p| {
-                let full_path = p.join("bean-check");
+        //let bean_check_path = env::var_os("PATH").and_then(|paths| {
+        //    env::split_paths(&paths).find_map(|p| {
+        //        let full_path = p.join("bean-check");
 
-                if full_path.is_file() {
-                    Some(full_path)
-                } else {
-                    None
-                }
-            })
-        });
+        //        if full_path.is_file() {
+        //            Some(full_path)
+        //        } else {
+        //            None
+        //        }
+        //    })
+        //});
 
         let root_journal_path = RwLock::new(None);
 
-        Ok(Session {
-            server_capabilities,
+        Self {
+            //server_capabilities,
             client_capabilities,
             client,
             documents,
             parsers,
             forest,
             root_journal_path,
-            bean_check_path,
+            //bean_check_path,
             beancount_data,
             diagnostic_data,
-        })
-    }
-
-    /// Retrieve the handle for the LSP client.
-    pub fn client(&self) -> anyhow::Result<&lspower::Client> {
-        self.client
-            .as_ref()
-            .ok_or_else(|| core::Error::ClientNotInitialized.into())
+        }
     }
 
     /// Insert a [`core::Document`] into the [`Session`].
-    pub fn insert_document(&self, uri: lsp::Url, document: core::Document) -> anyhow::Result<()> {
+    pub fn insert_document(&self, uri: lsp_types::Url, document: core::Document) -> anyhow::Result<()> {
         let result = self.documents.insert(uri, document);
         debug_assert!(result.is_none());
         // let result = self.parsers.insert(uri.clone(), Mutex::new(document.parser));
@@ -101,7 +94,7 @@ impl Session {
     }
 
     /// Remove a [`core::Document`] from the [`Session`].
-    pub fn remove_document(&self, uri: &lsp::Url) -> anyhow::Result<()> {
+    pub fn remove_document(&self, uri: &lsp_types::Url) -> anyhow::Result<()> {
         let result = self.documents.remove(uri);
         debug_assert!(result.is_some());
         // let result = self.parsers.remove(uri);
@@ -112,7 +105,7 @@ impl Session {
     }
 
     /// Get a reference to the [`core::Document`] in the [`Session`].
-    pub async fn get_document(&self, uri: &lsp::Url) -> anyhow::Result<Ref<'_, lsp::Url, core::Document>> {
+    pub async fn get_document(&self, uri: &lsp_types::Url) -> anyhow::Result<Ref<'_, lsp_types::Url, core::Document>> {
         self.documents.get(uri).ok_or_else(|| {
             let kind = SessionResourceKind::Document;
             let uri = uri.clone();
@@ -121,7 +114,10 @@ impl Session {
     }
 
     /// Get a mutable reference to the [`core::Document`] in the [`Session`].
-    pub async fn get_mut_document(&self, uri: &lsp::Url) -> anyhow::Result<RefMut<'_, lsp::Url, core::Document>> {
+    pub async fn get_mut_document(
+        &self,
+        uri: &lsp_types::Url,
+    ) -> anyhow::Result<RefMut<'_, lsp_types::Url, core::Document>> {
         self.documents.get_mut(uri).ok_or_else(|| {
             let kind = SessionResourceKind::Document;
             let uri = uri.clone();
@@ -131,8 +127,8 @@ impl Session {
 
     pub async fn get_mut_parser(
         &self,
-        uri: &lsp::Url,
-    ) -> anyhow::Result<RefMut<'_, lsp::Url, Mutex<tree_sitter::Parser>>> {
+        uri: &lsp_types::Url,
+    ) -> anyhow::Result<RefMut<'_, lsp_types::Url, Mutex<tree_sitter::Parser>>> {
         debug!("getting mutable parser {}", uri);
         debug!("parser contains key {}", self.parsers.contains_key(uri));
         self.parsers.get_mut(uri).ok_or_else(|| {
@@ -154,7 +150,10 @@ impl Session {
 
     /// Get a mutable reference to the [`tree_sitter::Tree`] for a [`core::Document`] in the
     /// [`Session`].
-    pub async fn get_mut_tree(&self, uri: &lsp::Url) -> anyhow::Result<RefMut<'_, lsp::Url, Mutex<tree_sitter::Tree>>> {
+    pub async fn get_mut_tree(
+        &self,
+        uri: &lsp_types::Url,
+    ) -> anyhow::Result<RefMut<'_, lsp_types::Url, Mutex<tree_sitter::Tree>>> {
         self.forest.get_mut(uri).ok_or_else(|| {
             let kind = SessionResourceKind::Tree;
             let uri = uri.clone();
@@ -164,7 +163,7 @@ impl Session {
 
     // Issus to look at if running into issues with this
     // https://github.com/silvanshade/lspower/issues/8
-    pub async fn parse_initial_forest(&self, root_url: lsp::Url) -> anyhow::Result<bool, anyhow::Error> {
+    pub async fn parse_initial_forest(&self, root_url: lsp_types::Url) -> anyhow::Result<bool, anyhow::Error> {
         let mut seen_files = LinkedList::new();
         // let root_pathbuf: String = self.root_journal_path.into_inner().unwrap().as_ref().as_os_str();
         // let temp = self.root_journal_path.read().await;
@@ -224,7 +223,7 @@ impl Session {
                     } else {
                         path.to_path_buf()
                     };
-                    let path_url = lsp::Url::from_file_path(path).unwrap();
+                    let path_url = lsp_types::Url::from_file_path(path).unwrap();
 
                     Some(path_url)
                 });
