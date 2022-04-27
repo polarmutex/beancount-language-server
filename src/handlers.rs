@@ -1,12 +1,18 @@
 pub mod text_document {
     use crate::{core, core::RopeExt, providers};
     use log::debug;
-    use lspower::lsp;
+    use providers::completion;
+    use providers::diagnostics;
+    use providers::formatting;
     use std::{path::PathBuf, sync::Arc};
     use tokio::sync::Mutex;
+    use tower_lsp::lsp_types;
 
     /// handler for `textDocument/didOpen`.
-    pub async fn did_open(session: Arc<core::Session>, params: lsp::DidOpenTextDocumentParams) -> anyhow::Result<()> {
+    pub(crate) async fn did_open(
+        session: Arc<core::Session>,
+        params: lsp_types::DidOpenTextDocumentParams,
+    ) -> anyhow::Result<()> {
         debug!("handlers::did_open");
         let uri = params.text_document.uri.clone();
 
@@ -18,9 +24,8 @@ pub mod text_document {
         if let Err(err) = check_beancont(&session).await {
             debug!("handlers::did_open -- Error finding diagnostics {}", err.to_string());
             session
-                .as_ref()
-                .client()?
-                .log_message(lsp::MessageType::ERROR, err.to_string())
+                .client
+                .log_message(lsp_types::MessageType::ERROR, err.to_string())
                 .await;
         }
 
@@ -28,15 +33,17 @@ pub mod text_document {
     }
 
     /// handler for `textDocument/didSave`.
-    pub async fn did_save(session: Arc<core::Session>, _params: lsp::DidSaveTextDocumentParams) -> anyhow::Result<()> {
+    pub(crate) async fn did_save(
+        session: Arc<core::Session>,
+        _params: lsp_types::DidSaveTextDocumentParams,
+    ) -> anyhow::Result<()> {
         debug!("handlers::did_save");
 
         if let Err(err) = check_beancont(&session).await {
             debug!("handlers::did_save -- Error finding diagnostics {}", err.to_string());
             session
-                .as_ref()
-                .client()?
-                .log_message(lsp::MessageType::ERROR, err.to_string())
+                .client
+                .log_message(lsp_types::MessageType::ERROR, err.to_string())
                 .await;
         }
 
@@ -44,7 +51,10 @@ pub mod text_document {
     }
 
     // handler for `textDocument/didClose`.
-    pub async fn did_close(session: Arc<core::Session>, params: lsp::DidCloseTextDocumentParams) -> anyhow::Result<()> {
+    pub(crate) async fn did_close(
+        session: Arc<core::Session>,
+        params: lsp_types::DidCloseTextDocumentParams,
+    ) -> anyhow::Result<()> {
         debug!("handlers::did_close");
         let uri = params.text_document.uri;
         session.remove_document(&uri)?;
@@ -53,9 +63,9 @@ pub mod text_document {
     }
 
     // handler for `textDocument/didChange`.
-    pub async fn did_change(
+    pub(crate) async fn did_change(
         session: Arc<core::Session>,
-        params: lsp::DidChangeTextDocumentParams,
+        params: lsp_types::DidChangeTextDocumentParams,
     ) -> anyhow::Result<()> {
         debug!("handlers::did_change");
         let uri = &params.text_document.uri;
@@ -105,18 +115,18 @@ pub mod text_document {
         Ok(())
     }
 
-    pub async fn completion(
+    pub(crate) async fn completion(
         session: Arc<core::Session>,
-        params: lsp::CompletionParams,
-    ) -> anyhow::Result<Option<lsp::CompletionResponse>> {
-        providers::completion(session, params).await
+        params: lsp_types::CompletionParams,
+    ) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
+        completion::completion(session, params).await
     }
 
-    pub async fn formatting(
+    pub(crate) async fn formatting(
         session: Arc<core::Session>,
-        params: lsp::DocumentFormattingParams,
-    ) -> anyhow::Result<Option<Vec<lsp::TextEdit>>> {
-        providers::formatting(session, params).await
+        params: lsp_types::DocumentFormattingParams,
+    ) -> anyhow::Result<Option<Vec<lsp_types::TextEdit>>> {
+        formatting::formatting(session, params).await
     }
 
     async fn check_beancont(session: &Arc<core::Session>) -> anyhow::Result<()> {
@@ -129,7 +139,7 @@ pub mod text_document {
         let temp = session.root_journal_path.read().await;
         let root_journal_path = temp.clone().unwrap();
 
-        let diags = providers::diagnostics(
+        let diags = diagnostics::diagnostics(
             &session.diagnostic_data,
             &session.beancount_data,
             bean_check_cmd,
@@ -138,7 +148,7 @@ pub mod text_document {
         .await;
         session.diagnostic_data.update(diags.clone());
         for (key, value) in diags {
-            session.client()?.publish_diagnostics(key, value, None).await;
+            session.client.publish_diagnostics(key, value, None).await;
         }
         Ok(())
     }
