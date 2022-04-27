@@ -1,15 +1,15 @@
 use clap::{Arg, Command};
-use lspower::{LspService, Server};
 mod core;
 mod handlers;
 mod providers;
 mod server;
 
 use crate::core::logger::Logger;
+use server::run_server;
 use std::path::PathBuf;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let matches = Command::new("beancount-language-server")
         .arg(Arg::new("stdio").long("stdio").help("use std io for lang server"))
         //TODO let the user specify the file
@@ -26,7 +26,5 @@ async fn main() -> anyhow::Result<()> {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
-    let (service, messages) = LspService::new(|client| server::Server::new(client).unwrap());
-    Server::new(stdin, stdout).interleave(messages).serve(service).await;
-    Ok(())
+    run_server(stdin, stdout).await
 }
