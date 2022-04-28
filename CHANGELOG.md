@@ -1,12 +1,12 @@
-## [1.0.1](https://github.com/polarmutex/beancount-language-server/compare/v1.0.0...v1.0.1) (2022-01-21)
+# Changelog
 
+### [1.0.1](https://github.com/polarmutex/beancount-language-server/compare/v1.0.0...v1.0.1) (2022-01-21)
 
 ### Bug Fixes
 
 * activate document formatting by default ([0f82147](https://github.com/polarmutex/beancount-language-server/commit/0f821474e0216aaa1018c1fc451903b024089d12))
 
-# 1.0.0 (2021-11-12)
-
+### 1.0.0 (2021-11-12)
 
 ### Bug Fixes
 
@@ -20,7 +20,6 @@
 * some clippy warnings ([b814eaa](https://github.com/polarmutex/beancount-language-server/commit/b814eaa250d515ef54520b7b97e3b096393ded39))
 * tree-sitter v0.20 fix ([9dcef83](https://github.com/polarmutex/beancount-language-server/commit/9dcef83274b60324a4ca986be6b812649ce150b1))
 * txn_string completion ([81b5ded](https://github.com/polarmutex/beancount-language-server/commit/81b5ded4c98ca1a280d930d046f3ef15111da131))
-
 
 ### Features
 
