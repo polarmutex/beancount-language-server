@@ -13,17 +13,17 @@
       in
       rec {
         # `nix build`
-        packages.hello-world = naersk-lib.buildPackage {
-          pname = "hello-world";
+        packages.beancount-language-server = naersk-lib.buildPackage {
+          pname = "beancount-language-server";
           root = ./.;
         };
-        defaultPackage = packages.hello-world;
+        defaultPackage = packages.beancount-language-server;
 
         # `nix run`
-        apps.hello-world = flake-utils.lib.mkApp {
-          drv = packages.hello-world;
+        apps.beancount-language-server = flake-utils.lib.mkApp {
+          drv = packages.beancount-language-server;
         };
-        defaultApp = apps.hello-world;
+        defaultApp = apps.beancount-language-server;
 
         # `nix develop`
         devShell = pkgs.mkShell {
