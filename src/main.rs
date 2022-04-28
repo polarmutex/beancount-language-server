@@ -1,4 +1,4 @@
-use clap::Command;
+use clap::{Arg, Command};
 use lspower::{LspService, Server};
 mod core;
 mod handlers;
@@ -9,7 +9,9 @@ use crate::core::logger::Logger;
 use std::path::PathBuf;
 
 fn cli() {
-    Command::new("beancount-language-server").get_matches();
+    Command::new("beancount-language-server")
+        .arg(Arg::new("stdio").long("stdio"))
+        .get_matches();
 }
 
 #[tokio::main]
