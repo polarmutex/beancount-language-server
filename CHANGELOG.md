@@ -1,5 +1,18 @@
 # Changelog
 
+### [1.0.2](https://github.com/polarmutex/beancount-language-server/compare/v1.0.1...v1.0.2) (2022-04-28)
+
+
+### Bug Fixes
+
+* cargo deny errors ([4ccef65](https://github.com/polarmutex/beancount-language-server/commit/4ccef655934b6a5df55c1a34e1d4a36f728c9814))
+* cargo doc warnings ([7604072](https://github.com/polarmutex/beancount-language-server/commit/76040720849a0b1326fd19eef0cf884801828d35))
+* clippy warnings ([8bf3cb8](https://github.com/polarmutex/beancount-language-server/commit/8bf3cb881ac0f92b59bf5c7655ab363d2ddb0dba))
+* fixes [#143](https://github.com/polarmutex/beancount-language-server/issues/143) - add stdio option to keep options silimar to typescript ([32c3441](https://github.com/polarmutex/beancount-language-server/commit/32c34417056283e9d1ed6997942dfce169f45180))
+* fixes [#53](https://github.com/polarmutex/beancount-language-server/issues/53) only log with specified as an option ([e755ce6](https://github.com/polarmutex/beancount-language-server/commit/e755ce6de820da8ed101778d78b5457a9f58ad0e))
+* formatting errors ([1467afb](https://github.com/polarmutex/beancount-language-server/commit/1467afbe91df87ad33c88dfc18a713588965f68a))
+* rust compiler warnings ([0c86d6c](https://github.com/polarmutex/beancount-language-server/commit/0c86d6c0d36d2fb9cfd463dca10ad428893b5d24))
+
 ### [1.0.1](https://github.com/polarmutex/beancount-language-server/compare/v1.0.0...v1.0.1) (2022-01-21)
 
 ### Bug Fixes
