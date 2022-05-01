@@ -5,13 +5,13 @@
 The server can be installed via `cargo` (or from source).
 
 ```sh
-cargo install beancount-langserver-server
+cargo install beancount-language-server
 ```
 
 Then, you should be able to run the language server with the following command:
 
 ```sh
-beancount-langserver --stdio
+beancount-language-server --stdio
 ```
 
 Follow the instructions below to integrate the language server into your editor.
@@ -21,8 +21,8 @@ Follow the instructions below to integrate the language server into your editor.
 First, clone this repo and compile it.
 
 ```sh
-git clone git@github.com/polarmutex/beancount-langserver.git
-cd beancount-langserver
+git clone git@github.com/polarmutex/beancount-language-server.git
+cd beancount-language-server
 cargo build
 ```
 
