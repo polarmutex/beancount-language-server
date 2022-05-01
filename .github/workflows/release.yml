@@ -1,4 +1,4 @@
-name: build
+name: release
 
 on:
   push:
@@ -119,7 +119,7 @@ jobs:
    # Create GitHub release with Rust build targets and release notes
   upload_artifacts:
     name: Add Build Artifacts to Release
-    needs: [release, github_build]
+    needs: [release-pr, release, github_build]
     runs-on: ubuntu-latest
     steps:
       - name: Setup | Checkout
@@ -137,7 +137,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: beancount-language-server-*/beancount-language-server-*
-          tag_name: ${{ needs.release.outputs.tag_name }}
+          tag_name: ${{ needs.release-pr.outputs.tag_name }}
 
   publish:
     needs: release
