@@ -1,5 +1,13 @@
 # Changelog
 
+### [1.0.3](https://github.com/polarmutex/beancount-language-server/compare/v1.0.2...v1.0.3) (2022-05-01)
+
+
+### Bug Fixes
+
+* github release binaries hopefully ([146124b](https://github.com/polarmutex/beancount-language-server/commit/146124bd820f04465919fa7211e6003e4ff5e73b))
+* update nix flake to build lsp ([00e97af](https://github.com/polarmutex/beancount-language-server/commit/00e97af413103a240fe6bdcbdad52bd8a4db170a))
+
 ### [1.0.2](https://github.com/polarmutex/beancount-language-server/compare/v1.0.1...v1.0.2) (2022-04-28)
 
 
