@@ -29,6 +29,7 @@ jobs:
           command: release-pr
           extra-files: |
             README.md
+
   release:
     needs: [release-pr]
     runs-on: ubuntu-latest
