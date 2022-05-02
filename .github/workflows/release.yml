@@ -5,9 +5,6 @@ on:
     branches:
       - master
 
-  pull_request:
-  workflow_dispatch:
-
 env:
   RUST_VERSION: 1.59.0
   RUSTFLAGS: "-D warnings"
