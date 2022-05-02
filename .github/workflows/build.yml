@@ -2,6 +2,8 @@ name: build
 
 on:
   push:
+    branches:
+      - master
     paths-ignore:
       - "**.md"
   pull_request:
@@ -15,7 +17,6 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
-
   # Run the `rustfmt` code formatter
   rustfmt:
     name: Rustfmt [Formatter]
