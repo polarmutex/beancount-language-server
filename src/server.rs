@@ -141,3 +141,65 @@ pub async fn run_server(stdin: Stdin, stdout: Stdout) {
     let (service, messages) = LspService::build(LspServer::new).finish();
     Server::new(stdin, stdout, messages).serve(service).await;
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use serde_json;
+
+    use super::LspServer;
+    use tower_lsp::jsonrpc;
+    use tower_lsp::LspService;
+    use tower_test::mock::Spawn;
+
+    fn spawn() -> jsonrpc::Result<Spawn<tower_lsp::LspService<LspServer>>> {
+        let (service, _) = LspService::new(|client| LspServer::new(client));
+        Ok(Spawn::new(service))
+    }
+
+    async fn send(
+        service: &mut Spawn<LspService<LspServer>>,
+        request: &serde_json::Value,
+    ) -> Result<Option<serde_json::Value>, tower_lsp::ExitedError> {
+        let request = serde_json::from_value(request.clone()).unwrap();
+        let response = service.call(request).await?;
+        let response = response.and_then(|x| serde_json::to_value(x).ok());
+        Ok(response)
+    }
+
+    fn initialize_request(id: i64) -> jsonrpc::Request {
+        jsonrpc::Request::build("initialize")
+            .params(serde_json::json!({"capabilities":{}}))
+            .id(id)
+            .finish()
+    }
+
+    pub fn request() -> serde_json::Value {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "params": {
+                "capabilities":{},
+            },
+            "id": 1,
+        })
+    }
+    pub fn response() -> serde_json::Value {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "result": {
+                "capabilities": {},
+            },
+            "id": 1,
+        })
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn initializes_only_once() {
+        let mut service = spawn().unwrap();
+
+        assert_eq!(service.poll_ready(), std::task::Poll::Ready(Ok(())));
+        let request = &request();
+        let response = Some(response());
+        assert_eq!(send(&mut service, request).await, Ok(response));
+    }
+}
