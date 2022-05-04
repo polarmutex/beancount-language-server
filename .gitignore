@@ -12,3 +12,5 @@ pyproject.toml
 # Added by cargo
 
 /target
+
+.direnv
