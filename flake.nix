@@ -5,35 +5,53 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, naersk }:
-    flake-utils.lib.eachDefaultSystem (
-      system:
-      let
-        pkgs = nixpkgs.legacyPackages."${system}";
-        naersk-lib = naersk.lib."${system}";
-      in
-      rec {
-        # `nix build`
-        packages.beancount-language-server = naersk-lib.buildPackage {
-          pname = "beancount-language-server";
-          root = ./.;
-        };
-        defaultPackage = packages.beancount-language-server;
+    {
+      overlay = final: prev: {
+        inherit (self.packages.${final.system})
+          beancount-language-server-git;
+      };
+    } //
+    flake-utils.lib.eachDefaultSystem
+      (
+        system:
+        let
+          pkgs = import nixpkgs {
+            inherit system;
+            allowBroken = true;
+            allowUnfree = true;
+            overlays = [ ];
+          };
 
-        # `nix run`
-        apps.beancount-language-server = flake-utils.lib.mkApp {
-          drv = packages.beancount-language-server;
-        };
-        defaultApp = apps.beancount-language-server;
+          naersk-lib = naersk.lib."${system}";
+        in
+        {
+          # `nix build`
+          packages = {
+            beancount-language-server-git = naersk-lib.buildPackage {
+              pname = "beancount-language-server-git";
+              version = "master";
+              root = ./.;
+            };
+          };
 
-        # `nix develop`
-        devShell = pkgs.mkShell {
-          nativeBuildInputs = with pkgs; [
-            rustc
-            cargo
-            rustfmt
-            clippy
-          ];
-        };
-      }
-    );
+          #defaultPackage = packages.beancount-language-server-git;
+
+          # `nix run`
+          #apps.beancount-language-server = flake-utils.lib.mkApp {
+          #  drv = packages.beancount-language-server-git;
+          #};
+
+          #defaultApp = apps.beancount-language-server;
+
+          # `nix develop`
+          devShell = pkgs.mkShell {
+            nativeBuildInputs = with pkgs; [
+              rustc
+              cargo
+              rustfmt
+              clippy
+            ];
+          };
+        }
+      );
 }
