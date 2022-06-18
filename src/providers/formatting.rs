@@ -66,7 +66,7 @@ pub(crate) async fn formatting(
     session: Arc<core::Session>,
     params: lsp_types::DocumentFormattingParams,
 ) -> anyhow::Result<Option<Vec<lsp_types::TextEdit>>> {
-    debug!("providers::completion");
+    debug!("providers::formatting");
 
     let uri = params.text_document.uri;
     let tree = session.get_mut_tree(&uri).await?;
@@ -174,5 +174,6 @@ pub(crate) async fn formatting(
         }
     }
 
+    debug!("providers::formatting done");
     Ok(Some(text_edits))
 }

@@ -3,8 +3,9 @@ use dashmap::{
     mapref::one::{Ref, RefMut},
     DashMap,
 };
+use glob::glob;
 use linked_list::LinkedList;
-use log::debug;
+use log::{debug, error};
 use providers::diagnostics;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -221,6 +222,7 @@ impl Session {
                     } else if file_path.is_absolute() {
                         file_path.parent().unwrap().join(path)
                     } else {
+                        // we should never get here right?
                         path.to_path_buf()
                     };
                     let path_url = lsp_types::Url::from_file_path(path).unwrap();
@@ -231,8 +233,17 @@ impl Session {
             // This could get in an infinite loop if there is a loop wtth the include files
             // TODO see if I can prevent this
             for include_url in include_filenames {
-                if !self.forest.contains_key(&include_url) {
-                    ll_cursor.insert(include_url);
+                for entry in glob(include_url.path()).expect("Failed to read glob") {
+                    match entry {
+                        Ok(path) => {
+                            let url = lsp_types::Url::from_file_path(path).unwrap();
+                            if !self.forest.contains_key(&url) {
+                                debug!("adding include file: {}", url);
+                                ll_cursor.insert(url);
+                            }
+                        },
+                        Err(e) => error!("{:?}", e),
+                    }
                 }
             }
         }
