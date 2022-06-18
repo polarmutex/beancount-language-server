@@ -1,20 +1,22 @@
 {
-  "label": "autorelease/pending",
-  "release-label": "autorelease/tagged",
-  "draft": false,
-  "prerelease": false,
-  "bumpMinorPreMajor": false,
-  "bumpPatchForMinorPreMajor": false,
-  "versioning": "default",
-
   "packages": {
     ".": {
       "releaseType": "rust",
-      "changelogPath": "CHANGELOG.md"
+      "draft": false,
+      "prerelease": false,
+      "bumpMinorPreMajor": false,
+      "bumpPatchForMinorPreMajor": false,
+      "changelogPath": "CHANGELOG.md",
+      "versioning": "default"
     },
     "vscode": {
       "releaseType": "node",
-      "changelogPath": "CHANGELOG.md"
+      "draft": false,
+      "prerelease": false,
+      "bumpMinorPreMajor": false,
+      "bumpPatchForMinorPreMajor": false,
+      "changelogPath": "CHANGELOG.md",
+      "versioning": "default"
     }
   }
 }
