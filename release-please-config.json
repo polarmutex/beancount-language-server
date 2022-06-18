@@ -1,13 +1,20 @@
 {
+  "label": "autorelease/pending",
+  "release-label": "autorelease/tagged",
+  "draft": false,
+  "prerelease": false,
+  "bumpMinorPreMajor": false,
+  "bumpPatchForMinorPreMajor": false,
+  "versioning": "default",
+
   "packages": {
     ".": {
       "releaseType": "rust",
-      "draft": false,
-      "prerelease": false,
-      "bumpMinorPreMajor": false,
-      "bumpPatchForMinorPreMajor": false,
-      "changelogPath": "CHANGELOG.md",
-      "versioning": "default"
+      "changelogPath": "CHANGELOG.md"
+    },
+    "vscode": {
+      "releaseType": "node",
+      "changelogPath": "CHANGELOG.md"
     }
   }
 }
