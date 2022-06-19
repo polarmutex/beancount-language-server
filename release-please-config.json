@@ -1,6 +1,7 @@
 {
+  "bootstrap-sha": "e57a8491fbd0605ce81b6f0d70446d18467bfcf7",
   "release-type": "rust",
-  "pull-request-title-pattern": "chore${scope}: release${component} ${version}",
+  "pull-request-title-pattern": "chore${scope}: release ${version}",
   "extra-files": [
     {
       "type": "json",
@@ -8,6 +9,11 @@
       "jsonpath": "$.version"
     }
   ],
+  "packages": {
+    ".": {
+      "package-name": "beancount-language-server"
+    }
+  },
   "changelog-sections": [
     { "type": "feat", "section": "Features ✨" },
     { "type": "feature", "section": "Features ✨" },
