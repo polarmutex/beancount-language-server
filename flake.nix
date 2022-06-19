@@ -50,6 +50,8 @@
               cargo
               rustfmt
               clippy
+              nodejs-16_x
+              python310
             ];
           };
         }
