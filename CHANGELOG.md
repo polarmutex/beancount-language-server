@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.2](https://github.com/polarmutex/beancount-language-server/compare/beancount-language-server-v1.1.1...beancount-language-server-v1.1.2) (2022-06-19)
+
+
+### Bug Fixes 🐛
+
+* link README and CHANGELOG to vscode ext ([69c8c4d](https://github.com/polarmutex/beancount-language-server/commit/69c8c4df5973cc9e4cb2be32b3c5c595c0174699))
+* make release artifacts uncompressed ([8ef6ea7](https://github.com/polarmutex/beancount-language-server/commit/8ef6ea75537af0fb7f5198c86ed5e85fcae40caf))
+* release-please manifest ([5b40c84](https://github.com/polarmutex/beancount-language-server/commit/5b40c84df6456d487caa241741b8f33f96be55d1))
+* vscode version sync ([3e76e6d](https://github.com/polarmutex/beancount-language-server/commit/3e76e6d6ca5dc3c3159e858447021dd6c75276d7))
+
 ### [1.1.1](https://github.com/polarmutex/beancount-language-server/compare/v1.1.0...v1.1.1) (2022-05-02)
 
 
