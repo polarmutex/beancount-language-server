@@ -1,0 +1,38 @@
+{
+  "include-component-in-tag": true,
+  "pull-request-title-pattern": "chore${scope}: release ${version}",
+  "plugins": [
+    {
+      "type": "linked-versions",
+      "groupName": "BeancountLanguageServer",
+      "components": [
+        "beancount-language-server",
+        "vscode-beancount-language-server"
+      ]
+    }
+  ],
+  "packages": {
+    ".": {
+      "component": "beancount-language-server",
+      "release-type": "rust"
+    },
+    "vscode": {
+      "component": "vscode-beancount-language-server"
+    }
+  },
+  "changelog-sections": [
+    { "type": "feat", "section": "Features ✨" },
+    { "type": "feature", "section": "Features ✨" },
+    { "type": "fix", "section": "Bug Fixes \uD83D\uDC1B" },
+    { "type": "perf", "section": "Performance Improvements ⚡️" },
+    { "type": "tweak", "section": "Changes to Existing Features \uD83D\uDD27" },
+    { "type": "revert", "section": "Reverts ⏪️" },
+    { "type": "docs", "section": "Documentation", "hidden": true },
+    { "type": "style", "section": "Styles", "hidden": true },
+    { "type": "chore", "section": "Miscellaneous Chores", "hidden": true },
+    { "type": "refactor", "section": "Code Refactoring", "hidden": true },
+    { "type": "test", "section": "Tests", "hidden": true },
+    { "type": "build", "section": "Build System", "hidden": true },
+    { "type": "ci", "section": "Continuous Integration", "hidden": true }
+  ]
+}

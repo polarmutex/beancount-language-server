@@ -22,8 +22,8 @@ jobs:
       - uses: google-github-actions/release-please-action@v3
         id: release
         with:
-          token: ${{ secrets.GH_TOKEN }}
-          release-type: rust
+          token: ${{ secrets.GITHUB_TOKEN }}
+          command: manifest
 
     # Build sources for every OS
   github_build:
