@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/polarmutex/beancount-language-server/compare/v1.1.1...v1.2.0) (2022-06-19)
+
+
+### Features
+
+* include glob support ([2d7cf6b](https://github.com/polarmutex/beancount-language-server/commit/2d7cf6b04e473ed10bb84395695720bb406f04a3))
+
 ### [1.1.1](https://github.com/polarmutex/beancount-language-server/compare/v1.1.0...v1.1.1) (2022-05-02)
 
 
