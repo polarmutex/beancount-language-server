@@ -24,6 +24,7 @@ jobs:
         with:
           token: ${{ secrets.GH_TOKEN }}
           release-type: rust
+          extra-files: vscode/package.json
 
     # Build sources for every OS
   github_build:
