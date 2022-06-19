@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/polarmutex/beancount-language-server/compare/v1.1.1...v1.1.2) (2022-06-19)
+
+
+### Bug Fixes
+
+* vscode version sync ([6820303](https://github.com/polarmutex/beancount-language-server/commit/682030382749fda62a402b74b720c1c10f771ea4))
+
 ### [1.1.1](https://github.com/polarmutex/beancount-language-server/compare/v1.1.0...v1.1.1) (2022-05-02)
 
 
