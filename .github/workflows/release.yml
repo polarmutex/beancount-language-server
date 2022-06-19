@@ -22,43 +22,42 @@ jobs:
       - uses: google-github-actions/release-please-action@v3
         id: release
         with:
-          token: ${{ secrets.GH_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           command: manifest
 
     # Build sources for every OS
-  github_build:
+  build:
     name: Build release binaries
     needs: release_please
     if: ${{ needs.release_please.outputs.release_created == 'true' }}
     strategy:
       fail-fast: false
       matrix:
+        name:
+          - linux-x86-64-gnu
+          - mac-x86-64
         include:
-          - target: x86_64-unknown-linux-gnu
+          - name: linux-x86-64-gnu
             os: ubuntu-latest
-            name: beancount-language-server-x86_64-linux-gnu.tar.gz
-
-          - target: x86_64-apple-darwin
-            os: macOS-11
-            name: beancount-language-server-x86_64-apple-darwin.tar.gz
-
-          - target: aarch64-apple-darwin
-            os: macOS-11
-            name: beancount-language-server-aarch64-apple-darwin.tar.gz
-
-          - target: x86_64-pc-windows-msvc
+            target: x86_64-unknown-linux-gnu
+          - name: mac-x86-64
+            os: macos-10.15
+            target: x86_64-apple-darwin
+          - name: win-x86-64
             os: windows-latest
-            name: beancount-language-server-x86_64-pc-windows-msvc.zip
-
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-            name: beancount-language-server-aarch64-pc-windows-msvc.zip
+            target: x86_64-pc-windows-msvc
 
     runs-on: ${{ matrix.os }}
     continue-on-error: true
     steps:
       - name: Setup | Checkout
         uses: actions/checkout@v3
+
+      - name: Setup | Cache
+        uses: actions/cache@v2
+        with:
+          path: ~/.cargo
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
 
       - name: Setup | Rust
         uses: actions-rs/toolchain@v1.0.7
@@ -68,55 +67,24 @@ jobs:
           profile: minimal
           target: ${{ matrix.target }}
 
+      - name: Setup | Rust-Cache
+        uses: Swatinem/rust-cache@v1
+
       - name: Build | Build
         uses: actions-rs/cargo@v1.0.3
         with:
           command: build
           args: --release --locked --target ${{ matrix.target }}
-          use-cross: ${{ matrix.os == 'ubuntu-latest' }}
 
-      - name: Post Build | Prepare artifacts [Windows]
-        if: matrix.os == 'windows-latest'
+      - name: Post Build | Rename artifacts
         run: |
-          cd target/${{ matrix.target }}/release
-          strip beancount-language-server.exe
-          7z a ../../../${{ matrix.name }} beancount-language-server.exe
-          cd -
-      - name: Post Build | Prepare artifacts [-nix]
-        if: matrix.os != 'windows-latest'
-        run: |
-          cd target/${{ matrix.target }}/release
-          # TODO: investigate better cross platform stripping
-          strip beancount-language-server || true
-          tar czvf ../../../${{ matrix.name }} beancount-language-server
-          cd -
-      - name: Deploy | Upload artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ matrix.name }}
-          path: ${{ matrix.name }}
+          mkdir artifacts
+          mv target/${{ matrix.target }}/release/beancount-language-server artifacts/beancount-language-server-${{ matrix.target }}
 
-    # Create GitHub release with Rust build targets and release notes
-  upload_artifacts:
-    name: Add Build Artifacts to Release
-    needs: [release_please, github_build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Setup | Checkout
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-
-      - name: Setup | Artifacts
-        uses: actions/download-artifact@v3
-
-      - name: Setup | Checksums
-        run: for file in beancount-language-server-*/beancount-language-server-*; do openssl dgst -sha256 -r "$file" | awk '{print $1}' > "${file}.sha256"; done
-
-      - name: Build | Add Artifacts to Release
+      - name: Post Build | Add Artifacts to Release
         uses: softprops/action-gh-release@v1
         with:
-          files: beancount-language-server-*/beancount-language-server-*
+          files: artifacts/*
           tag_name: ${{ needs.release_please.outputs.tag_name }}
 
   publish:
