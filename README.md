@@ -1,5 +1,7 @@
 # ![nixos](https://socialify.git.ci/polarmutex/beancount-language-server/image?description=1&font=Source%20Code%20Pro&owner=1&pattern=Circuit%20Board&stargazers=1&theme=Dark)
 
+Thank you to the [Twemoji project](https://github.com/twitter/twemoji) for the usage of their emoji for the icon.
+
 ## Installation
 
 The server can be installed via `cargo` (or from source).
@@ -42,19 +44,19 @@ TODO
 
 Supports Beancount v2
 
-| Feature          | Description                                               |
-| ---------------- | ----------------------------------------------------------|
-| diagnostics      | Provided via `beancount`                                  |
-| formatting       | Should generate edits silimar to `bean-format`            |
-| completions      | Show completions for Payees, Accounts, Date               |
-| definitions      | Planned for future release                                |
-| folding          | Planned for future release                                |
-| hover            | Planned for future release                                |
-| rename           | Planned for future release                                |
+| Feature     | Description                                    |
+| ----------- | ---------------------------------------------- |
+| diagnostics | Provided via `beancount`                       |
+| formatting  | Should generate edits silimar to `bean-format` |
+| completions | Show completions for Payees, Accounts, Date    |
+| definitions | Planned for future release                     |
+| folding     | Planned for future release                     |
+| hover       | Planned for future release                     |
+| rename      | Planned for future release                     |
 
 ### Future
 
-* updated vscode extension to use the rust version
+- updated vscode extension to use the rust version
 
 ## Editor Support
 
@@ -64,23 +66,24 @@ The settings for the language server are in the lspconfig repo
 
 1. Install the beancount language server
 
-    ```sh
-    cargo install beancount-language-server
-    ```
+   ```sh
+   cargo install beancount-language-server
+   ```
 
-    However you install it, you need to remember how to access the binary
+   However you install it, you need to remember how to access the binary
 
 2. Create a lua lspconfig for the beancount LSP [example in my dotfiles](https://github.com/polarmutex/dotfiles/blob/master/neovim/lua/polarmutex/lsp/beancount.lua)
-    * add the following code to your lspconfig
 
-    ```lua
-    local lspconfig = require 'lspconfig'
-    lspconfig.beancount.setup= {
-        init_options = {
-            journal_file = "<path to journal file>",
-        };
-    };
-    ```
+   - add the following code to your lspconfig
+
+   ```lua
+   local lspconfig = require 'lspconfig'
+   lspconfig.beancount.setup= {
+       init_options = {
+           journal_file = "<path to journal file>",
+       };
+   };
+   ```
 
 3. Open a beancount file and verify LSP connected with the LSPInfo command
 

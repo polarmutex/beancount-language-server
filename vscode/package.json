@@ -15,6 +15,7 @@
     "plaintext",
     "accounting"
   ],
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.66.0"
   },
@@ -76,12 +77,6 @@
           "type": "string",
           "default": "",
           "description": "Path to the beancount journal"
-        },
-        "beancountLangServer.pythonPath": {
-          "scope": "resource",
-          "type": "string",
-          "default": "python3",
-          "description": "Path to python exe where beancount is installed"
         }
       }
     },

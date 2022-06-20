@@ -40,8 +40,7 @@ export async function activate(
     debug: server_executable,
   };
 
-  const config = vscode.workspace.getConfiguration();
-  util.log.info(config.get("journalFile"));
+  const config = vscode.workspace.getConfiguration("beancountLangServer");
   const client_options: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "beancount" }],
     //synchronize: {
