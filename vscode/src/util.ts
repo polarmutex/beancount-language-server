@@ -1,20 +1,35 @@
+import { inspect } from "util";
+import { window } from "vscode";
+
 export const log = new (class {
-  private enabled = true;
+  private readonly output = window.createOutputChannel(
+    "beancount-language-server"
+  );
 
-  setEnabled(yes: boolean): void {
-    log.enabled = yes;
+  info(...msg: [unknown, ...unknown[]]): void {
+    log.write("INFO", ...msg);
   }
 
-  debug(message?: any, ...optionalParams: any[]): void {
-    if (!log.enabled) return;
-    // eslint-disable-next-line no-console
-    console.log(message, ...optionalParams);
+  debug(...msg: [unknown, ...unknown[]]): void {
+    log.write("DEBUG", ...msg);
   }
 
-  error(message?: any, ...optionalParams: any[]): void {
-    if (!log.enabled) return;
-    debugger;
-    // eslint-disable-next-line no-console
-    console.error(message, ...optionalParams);
+  error(...msg: [unknown, ...unknown[]]): void {
+    log.write("ERROR", ...msg);
+    log.output.show(true);
+  }
+
+  private write(label: string, ...messageParts: unknown[]): void {
+    const message = messageParts.map(log.stringify).join(" ");
+    const dateTime = new Date().toLocaleString();
+    log.output.appendLine(`${label} [${dateTime}]: ${message}`);
+  }
+
+  private stringify(val: unknown): string {
+    if (typeof val === "string") return val;
+    return inspect(val, {
+      colors: false,
+      depth: 6, // heuristic
+    });
   }
 })();

@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { log } from "./util";
+import * as package_json from "../package.json";
 
 export class Config {
   readonly extensionId = "polarmutex.beancountLangServer";
@@ -8,11 +9,6 @@ export class Config {
   private readonly requiresReloadOpts = ["serverPath", "journalFile"].map(
     (opt) => `${this.rootSection}.${opt}`
   );
-
-  readonly package: {
-    version: string;
-    releaseTag: string | null;
-  } = vscode.extensions.getExtension(this.extensionId)!.packageJSON;
 
   constructor(ctx: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeConfiguration(
@@ -24,10 +20,9 @@ export class Config {
   }
 
   private refreshLogging() {
-    log.setEnabled(this.traceExtension);
     log.debug(
       "Extension version:",
-      this.package.version,
+      package_json.version,
       "using configuration:",
       this.cfg
     );
@@ -58,13 +53,10 @@ export class Config {
     return vscode.workspace.getConfiguration(this.rootSection);
   }
 
-  get traceExtension() {
-    return this.cfg.get<boolean>("trace.extension")!;
-  }
   get serverPath() {
-    return this.cfg.get<null | string>("serverPath")!;
+    return this.cfg.get<null | string>("serverPath");
   }
   get journalFile() {
-    return this.cfg.get<null | string>("journalFile")!;
+    return this.cfg.get<null | string>("journalFile");
   }
 }

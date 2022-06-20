@@ -1,16 +1,6 @@
-
-node_modules
-out
+.direnv
 coverage
 .DS_Store
 
-tsconfig.tsbuildinfo
-poetry.lock
-pyproject.toml
-
-
 # Added by cargo
-
 /target
-
-.direnv
