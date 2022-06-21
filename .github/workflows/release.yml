@@ -93,12 +93,14 @@ jobs:
         with:
           command: build
           args: --release --locked --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: copy cli binary
         if: matrix.os == 'windows-latest'
         run: |
           mkdir dist
-          mkdir vsode/server
+          mkdir vscode/server
           cp target/${{ matrix.target }}/release/beancount-language-server.exe ./dist/beancount-language-server-${{ matrix.code-target }}.exe
           cp target/${{ matrix.target }}/release/beancount-language-server.exe ./vscode/servers/beancount-language-server.exe
 
@@ -106,7 +108,7 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           mkdir dist
-          mkdir vsode/server
+          mkdir vscode/server
           cp target/${{ matrix.target }}/release/beancount-language-server ./dist/beancount-language-server-${{ matrix.code-target }}
           cp target/${{ matrix.target }}/release/beancount-language-server ./vscode/beancount-language-server
 
