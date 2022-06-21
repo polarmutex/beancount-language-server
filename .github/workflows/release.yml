@@ -27,39 +27,57 @@ jobs:
 
     # Build sources for every OS
   build:
-    name: Build release binaries
     needs: release_please
     if: ${{ needs.release_please.outputs.release_created == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        name:
-          - linux-x86-64-gnu
-          - mac-x86-64
         include:
-          - name: linux-x86-64-gnu
-            os: ubuntu-latest
+          - os: ubuntu-20.04
             target: x86_64-unknown-linux-gnu
-          - name: mac-x86-64
-            os: macos-10.15
+            code-target: linux-x64
+          - os: ubuntu-20.04
+            target: aarch64-unknown-linux-gnu
+            code-target: linux-arm64
+          - os: macos-11
             target: x86_64-apple-darwin
-          - name: win-x86-64
-            os: windows-latest
+            code-target: darwin-x64
+          - os: macos-11
+            target: aarch64-apple-darwin
+            code-target: darwin-arm64
+          - os: windows-latest
             target: x86_64-pc-windows-msvc
+            code-target: win32-x64
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            code-target: win32-arm64
 
+    name: package ${{ matrix.code-target }}
     runs-on: ${{ matrix.os }}
     continue-on-error: true
+
     steps:
-      - name: Setup | Checkout
+      - name: checkout repository
         uses: actions/checkout@v3
 
-      - name: Setup | Cache
+      - name: install node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16.x
+
+      - name: install arm64 toolchain
+        if: matrix.code-target == 'linux-arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: setup cache
         uses: actions/cache@v3
         with:
           path: ~/.cargo
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
 
-      - name: Setup | Rust
+      - name: setup rust
         uses: actions-rs/toolchain@v1.0.7
         with:
           toolchain: stable
@@ -67,35 +85,74 @@ jobs:
           profile: minimal
           target: ${{ matrix.target }}
 
-      - name: Setup | Rust-Cache
+      - name: setup rust-cache
         uses: Swatinem/rust-cache@v1
 
-      - name: Build | Build
+      - name: build
         uses: actions-rs/cargo@v1.0.3
         with:
           command: build
           args: --release --locked --target ${{ matrix.target }}
 
-      - name: Post Build | Rename artifacts
+      - name: copy cli binary
+        if: matrix.os == 'windows-latest'
         run: |
-          mkdir artifacts
-          mv target/${{ matrix.target }}/release/beancount-language-server artifacts/beancount-language-server-${{ matrix.target }}
+          mkdir dist
+          mkdir vsode/server
+          cp target/${{ matrix.target }}/release/beancount-language-server.exe ./dist/beancount-language-server-${{ matrix.code-target }}.exe
+          cp target/${{ matrix.target }}/release/beancount-language-server.exe ./vscode/servers/beancount-language-server.exe
 
-      - name: Post Build | Add Artifacts to Release
-        uses: softprops/action-gh-release@v1
+      - name: copy cli binary
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir dist
+          mkdir vsode/server
+          cp target/${{ matrix.target }}/release/beancount-language-server ./dist/beancount-language-server-${{ matrix.code-target }}
+          cp target/${{ matrix.target }}/release/beancount-language-server ./vscode/beancount-language-server
+
+      - name: package extension
+        run: |
+          npm ci
+          npm run package
+          npx vsce package -o "../dist/beancount-language-server-${{ matrix.code-target }}.vsix" --target ${{ matrix.code-target }}
+        working-directory: vscode
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v3
         with:
-          files: artifacts/*
-          tag_name: ${{ needs.release_please.outputs.tag_name }}
+          name: lsp
+          path: ./dist/*
+          files: dist/*
+          if-no-files-found: error
 
   publish:
     name: Publish Cargo Package
-    needs: release_please
+    needs: [release_please, build]
     runs-on: ubuntu-latest
     if: ${{ needs.release_please.outputs.release_created == 'true' }}
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_API_KEY }}
     steps:
       - uses: actions/checkout@v3
+
+      - name: download extension artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: lsp
+          path: artifacts
+
+      - name: install node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16.x
+          registry-url: "https://registry.npmjs.org"
+
+      - name: publish extension
+        run: npx vsce publish --packagePath artifacts/beancount-language-server-*.vsix
+        if: needs.build.outputs.prerelease != 'true'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
       - uses: actions-rs/toolchain@v1.0.7
         with:
           toolchain: stable
@@ -104,3 +161,9 @@ jobs:
 
       - name: Publish beancount-language-server
         run: cargo publish
+
+      - name: Post Build | Add Artifacts to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*
+          tag_name: ${{ needs.release_please.outputs.tag_name }}
