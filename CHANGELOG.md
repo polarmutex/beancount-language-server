@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.2](https://github.com/polarmutex/beancount-language-server/compare/beancount-language-server-v1.2.1...beancount-language-server-v1.2.2) (2022-06-21)
+
+
+### Bug Fixes 🐛
+
+* vsce publish error ([cf738c1](https://github.com/polarmutex/beancount-language-server/commit/cf738c1562895cb9aa8aa26c3e64e9d689bacae4))
+* windows github workflow error on release ([ae3cb9d](https://github.com/polarmutex/beancount-language-server/commit/ae3cb9dd539648022decd40f3c4066d141afa577))
+
 ## [1.2.1](https://github.com/polarmutex/beancount-language-server/compare/beancount-language-server-v1.2.0...beancount-language-server-v1.2.1) (2022-06-21)
 
 
