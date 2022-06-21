@@ -101,8 +101,11 @@ jobs:
         run: |
           mkdir dist
           mkdir vscode/server
-          cp target/${{ matrix.target }}/release/beancount-language-server dist/beancount-language-server-${{ matrix.code-target }}.exe
-          cp target/${{ matrix.target }}/release/beancount-language-server vscode/server/beancount-language-server.exe
+          ls target
+          ls target/${{ matrix.target }}
+          ls target/${{ matrix.target }}/release
+          cp target/${{ matrix.target }}/release/beancount-language-server.exe dist/beancount-language-server-${{ matrix.code-target }}.exe
+          cp target/${{ matrix.target }}/release/beancount-language-server.exe vscode/server/beancount-language-server.exe
 
       - name: copy cli binary
         if: matrix.os != 'windows-latest'
@@ -137,6 +140,15 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - uses: actions-rs/toolchain@v1.0.7
+        with:
+          toolchain: stable
+          override: true
+          profile: minimal
+
+      - name: Publish beancount-language-server
+        run: cargo publish
+
       - name: download extension artifacts
         uses: actions/download-artifact@v3
         with:
@@ -156,15 +168,6 @@ jobs:
         if: needs.build.outputs.prerelease != 'true'
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-
-      - uses: actions-rs/toolchain@v1.0.7
-        with:
-          toolchain: stable
-          override: true
-          profile: minimal
-
-      - name: Publish beancount-language-server
-        run: cargo publish
 
       - name: Post Build | Add Artifacts to Release
         uses: softprops/action-gh-release@v1
