@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.0](https://github.com/polarmutex/beancount-language-server/compare/beancount-language-server-v1.1.2...beancount-language-server-v1.2.0) (2022-06-21)
+
+
+### Bug Fixes 🐛
+
+* typo in formatting log ([f46fe90](https://github.com/polarmutex/beancount-language-server/commit/f46fe903bba95b206f34e0b124164f69b5e5e53c))
+
+
+### Features ✨
+
+* initial work on vscode ext ([35f1299](https://github.com/polarmutex/beancount-language-server/commit/35f1299bcf1dfda27f33e9ff46d6876a6240dcd6))
+* reboot vscode ext ([e456e54](https://github.com/polarmutex/beancount-language-server/commit/e456e5480795e099f4ed6d5e6055db9c0a9b819f))
+* support glob in include statements ([dcaf4f4](https://github.com/polarmutex/beancount-language-server/commit/dcaf4f4b52c9684bbdea7f18cfe917aa3856598b))
+
 ## [1.1.2](https://github.com/polarmutex/beancount-language-server/compare/beancount-language-server-v1.1.1...beancount-language-server-v1.1.2) (2022-06-19)
 
 
