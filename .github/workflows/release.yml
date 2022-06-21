@@ -101,8 +101,8 @@ jobs:
         run: |
           mkdir dist
           mkdir vscode/server
-          cp target/${{ matrix.target }}/release/beancount-language-server.exe dist/beancount-language-server-${{ matrix.code-target }}.exe
-          cp target/${{ matrix.target }}/release/beancount-language-server.exe vscode/servers/beancount-language-server.exe
+          cp target/${{ matrix.target }}/release/beancount-language-server dist/beancount-language-server-${{ matrix.code-target }}.exe
+          cp target/${{ matrix.target }}/release/beancount-language-server vscode/servers/beancount-language-server.exe
 
       - name: copy cli binary
         if: matrix.os != 'windows-latest'
@@ -150,7 +150,9 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: publish extension
-        run: npx vsce publish --packagePath artifacts/beancount-language-server-*.vsix
+        run: |
+          npm ci
+          npx vsce publish --packagePath artifacts/beancount-language-server-*.vsix
         if: needs.build.outputs.prerelease != 'true'
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
