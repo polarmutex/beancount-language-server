@@ -19,7 +19,6 @@
   "engines": {
     "vscode": "^1.66.0"
   },
-  "enabledApiProposals": [],
   "scripts": {
     "vscode:prepublish": "npm run build-base -- --minify",
     "package": "vsce package -o beancount-language-server.vsix",
