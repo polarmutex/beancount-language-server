@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/polarmutex/beancount-language-server/compare/beancount-language-server-v1.2.2...beancount-language-server-v1.2.3) (2022-06-21)
+
+
+### Bug Fixes 🐛
+
+* release workflow errors ([9537c92](https://github.com/polarmutex/beancount-language-server/commit/9537c92fa3ddc976c8e570109e8762d6b8d5aa0b))
+
 ## [1.2.2](https://github.com/polarmutex/beancount-language-server/compare/beancount-language-server-v1.2.1...beancount-language-server-v1.2.2) (2022-06-21)
 
 
