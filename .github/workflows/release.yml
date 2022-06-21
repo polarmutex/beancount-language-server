@@ -102,7 +102,7 @@ jobs:
           mkdir dist
           mkdir vscode/server
           cp target/${{ matrix.target }}/release/beancount-language-server dist/beancount-language-server-${{ matrix.code-target }}.exe
-          cp target/${{ matrix.target }}/release/beancount-language-server vscode/servers/beancount-language-server.exe
+          cp target/${{ matrix.target }}/release/beancount-language-server vscode/server/beancount-language-server.exe
 
       - name: copy cli binary
         if: matrix.os != 'windows-latest'
@@ -110,7 +110,7 @@ jobs:
           mkdir dist
           mkdir vscode/server
           cp target/${{ matrix.target }}/release/beancount-language-server dist/beancount-language-server-${{ matrix.code-target }}
-          cp target/${{ matrix.target }}/release/beancount-language-server vscode/beancount-language-server
+          cp target/${{ matrix.target }}/release/beancount-language-server vscode/server/beancount-language-server
 
       - name: package extension
         run: |
