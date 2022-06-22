@@ -6,9 +6,6 @@ use tower_lsp::lsp_types;
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Error)]
 pub enum Error {
-    /// Error that occurs when [`core::Session.client`] is accessed and is `None`.
-    //#[error("ClientNotInitialzed")]
-    //ClientNotInitialized,
     /// Error that occurs when a session resource is requested and does not exist.
     #[error("core::SessionResourceNotFound: kind={kind:?}, uri={uri:?}")]
     SessionResourceNotFound {
@@ -17,21 +14,6 @@ pub enum Error {
         /// The URL of the requested session resource.
         uri: lsp_types::Url,
     },
-
-    #[error("I/O error")]
-    IoError(#[from] std::io::Error),
-
-    #[error("UTF8 conversion error")]
-    Utf8Error(#[from] std::str::Utf8Error),
-
-    #[error("ParseInt error")]
-    ParseIntError(#[from] std::num::ParseIntError),
-
-    #[error("Language error")]
-    LanguageError(#[from] tree_sitter::LanguageError),
-
-    #[error("Cannot convert URI to file path")]
-    UriToPathConversion,
 }
 
 /// Wrapper struct for converting [`anyhow::Error`] into [`tower_lsp::jsonrpc::Error`].
