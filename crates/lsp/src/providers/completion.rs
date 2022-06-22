@@ -1,4 +1,4 @@
-use crate::{core, core::RopeExt, session::Session};
+use crate::{beancount_data::BeancountData, core::RopeExt, session::Session};
 use chrono::Datelike;
 use log::debug;
 use tower_lsp::lsp_types;
@@ -159,7 +159,7 @@ fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd(year, month, 1)
 }
 
-fn complete_txn_string(data: &core::BeancountData) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
+fn complete_txn_string(data: &BeancountData) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
     debug!("providers::completion::account");
     let mut completions = Vec::new();
     for txn_string in data.get_txn_strings() {
@@ -168,7 +168,7 @@ fn complete_txn_string(data: &core::BeancountData) -> anyhow::Result<Option<lsp_
     Ok(Some(lsp_types::CompletionResponse::Array(completions)))
 }
 
-fn complete_account(data: &core::BeancountData) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
+fn complete_account(data: &BeancountData) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
     debug!("providers::completion::account");
     let mut completions = Vec::new();
     for account in data.get_accounts() {

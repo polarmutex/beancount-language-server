@@ -1,4 +1,4 @@
-use crate::core;
+use crate::beancount_data::BeancountData;
 use dashmap::DashMap;
 use log::debug;
 use std::path::Path;
@@ -26,7 +26,7 @@ impl DiagnosticData {
 /// Provider function for LSP `textDocument/publishDiagnostics`.
 pub async fn diagnostics(
     previous_diagnostics: &DiagnosticData,
-    beancount_data: &core::BeancountData,
+    beancount_data: &BeancountData,
     bean_check_cmd: &Path,
     root_journal_file: &Path,
 ) -> DashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>> {

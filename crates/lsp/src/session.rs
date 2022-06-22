@@ -1,4 +1,4 @@
-use crate::{core, error::Error, providers};
+use crate::{beancount_data::BeancountData, core, error::Error, providers};
 use dashmap::{
     mapref::one::{Ref, RefMut},
     DashMap,
@@ -35,7 +35,7 @@ pub(crate) struct Session {
     pub(crate) forest: DashMap<lsp_types::Url, Mutex<tree_sitter::Tree>>,
     pub(crate) root_journal_path: RwLock<Option<PathBuf>>,
     //pub(crate) bean_check_path: Option<PathBuf>,
-    pub(crate) beancount_data: core::BeancountData,
+    pub(crate) beancount_data: BeancountData,
     pub(crate) diagnostic_data: diagnostics::DiagnosticData,
 }
 
@@ -52,7 +52,7 @@ impl Session {
         let documents = DashMap::new();
         let parsers = DashMap::new();
         let forest = DashMap::new();
-        let beancount_data = core::BeancountData::new();
+        let beancount_data = BeancountData::new();
         let diagnostic_data = diagnostics::DiagnosticData::new();
 
         //let bean_check_path = env::var_os("PATH").and_then(|paths| {
