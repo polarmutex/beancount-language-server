@@ -37,13 +37,12 @@ pub async fn diagnostics(
         .arg(root_journal_file)
         .output()
         .await
-        .map_err(core::Error::from)
         .unwrap();
     debug!("bean-check outupt {:?}", output);
 
     let diags = if !output.status.success() {
         debug!("bean-check generating diags");
-        let output = std::str::from_utf8(&output.stderr).map_err(core::Error::from);
+        let output = std::str::from_utf8(&output.stderr);
 
         let map: DashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>> = DashMap::new();
 

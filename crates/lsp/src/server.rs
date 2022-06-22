@@ -1,4 +1,4 @@
-use crate::{core, handlers, session::BeancountLspOptions, session::Session};
+use crate::{error, handlers, session::BeancountLspOptions, session::Session};
 use std::path::PathBuf;
 use tokio::io::{Stdin, Stdout};
 use tower_lsp::jsonrpc;
@@ -121,7 +121,7 @@ impl LanguageServer for LspServer {
         params: lsp_types::CompletionParams,
     ) -> jsonrpc::Result<Option<lsp_types::CompletionResponse>> {
         let result = handlers::text_document::completion(&self.session, params).await;
-        Ok(result.map_err(core::IntoJsonRpcError)?)
+        Ok(result.map_err(error::IntoJsonRpcError)?)
     }
 
     async fn formatting(
@@ -129,7 +129,7 @@ impl LanguageServer for LspServer {
         params: lsp_types::DocumentFormattingParams,
     ) -> jsonrpc::Result<Option<Vec<lsp_types::TextEdit>>> {
         let result = handlers::text_document::formatting(&self.session, params).await;
-        Ok(result.map_err(core::IntoJsonRpcError)?)
+        Ok(result.map_err(error::IntoJsonRpcError)?)
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::{core, providers};
+use crate::{core, error::Error, providers};
 use dashmap::{
     mapref::one::{Ref, RefMut},
     DashMap,
@@ -110,7 +110,7 @@ impl Session {
         self.documents.get(uri).ok_or_else(|| {
             let kind = SessionResourceKind::Document;
             let uri = uri.clone();
-            core::Error::SessionResourceNotFound { kind, uri }.into()
+            Error::SessionResourceNotFound { kind, uri }.into()
         })
     }
 
@@ -122,7 +122,7 @@ impl Session {
         self.documents.get_mut(uri).ok_or_else(|| {
             let kind = SessionResourceKind::Document;
             let uri = uri.clone();
-            core::Error::SessionResourceNotFound { kind, uri }.into()
+            Error::SessionResourceNotFound { kind, uri }.into()
         })
     }
 
@@ -136,7 +136,7 @@ impl Session {
             debug!("Error getting mutable parser");
             let kind = SessionResourceKind::Parser;
             let uri = uri.clone();
-            core::Error::SessionResourceNotFound { kind, uri }.into()
+            Error::SessionResourceNotFound { kind, uri }.into()
         })
     }
 
@@ -145,7 +145,7 @@ impl Session {
     //    self.forest.get(uri).ok_or_else(|| {
     //        let kind = SessionResourceKind::Tree;
     //        let uri = uri.clone();
-    //        core::Error::SessionResourceNotFound { kind, uri }.into()
+    //        Error::SessionResourceNotFound { kind, uri }.into()
     //    })
     //}
 
@@ -158,7 +158,7 @@ impl Session {
         self.forest.get_mut(uri).ok_or_else(|| {
             let kind = SessionResourceKind::Tree;
             let uri = uri.clone();
-            core::Error::SessionResourceNotFound { kind, uri }.into()
+            Error::SessionResourceNotFound { kind, uri }.into()
         })
     }
 
@@ -178,11 +178,7 @@ impl Session {
             let file = ll_cursor.next().unwrap();
             debug!("parsing {}", file.as_ref());
 
-            let file_path = file
-                .to_file_path()
-                .map_err(|_| core::Error::UriToPathConversion)
-                .ok()
-                .unwrap();
+            let file_path = file.to_file_path().ok().unwrap();
 
             let text = read_to_string(file_path.clone())?;
             let bytes = text.as_bytes();
