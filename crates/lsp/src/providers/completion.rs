@@ -1,12 +1,11 @@
-use crate::{core, core::RopeExt};
+use crate::{core, core::RopeExt, session::Session};
 use chrono::Datelike;
 use log::debug;
-use std::sync::Arc;
 use tower_lsp::lsp_types;
 
 /// Provider function for LSP ``.
 pub(crate) async fn completion(
-    session: Arc<core::Session>,
+    session: &Session,
     params: lsp_types::CompletionParams,
 ) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
     debug!("providers::completion");
