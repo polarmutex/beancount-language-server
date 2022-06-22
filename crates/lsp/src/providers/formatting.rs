@@ -1,7 +1,6 @@
-use crate::core;
+use crate::session::Session;
 use log::debug;
 use std::cmp::Ordering;
-use std::sync::Arc;
 use tower_lsp::lsp_types;
 
 struct TSRange {
@@ -63,7 +62,7 @@ impl<'a> tree_sitter::TextProvider<'a> for RopeProvider<'a> {
 
 /// Provider function for LSP ``.
 pub(crate) async fn formatting(
-    session: Arc<core::Session>,
+    session: &Session,
     params: lsp_types::DocumentFormattingParams,
 ) -> anyhow::Result<Option<Vec<lsp_types::TextEdit>>> {
     debug!("providers::formatting");

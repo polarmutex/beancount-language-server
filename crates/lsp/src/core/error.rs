@@ -1,4 +1,4 @@
-use crate::core;
+use crate::session;
 use thiserror::Error;
 use tower_lsp::lsp_types;
 
@@ -13,7 +13,7 @@ pub enum Error {
     #[error("core::SessionResourceNotFound: kind={kind:?}, uri={uri:?}")]
     SessionResourceNotFound {
         /// The kind of the requested session resource.
-        kind: core::session::SessionResourceKind,
+        kind: session::SessionResourceKind,
         /// The URL of the requested session resource.
         uri: lsp_types::Url,
     },

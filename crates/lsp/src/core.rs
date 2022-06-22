@@ -8,7 +8,5 @@ pub mod logger;
 pub use logger::*;
 pub mod rope;
 pub use rope::*;
-pub mod session;
-pub use session::*;
 pub mod text_edit;
 pub use text_edit::*;

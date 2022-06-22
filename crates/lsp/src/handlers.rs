@@ -1,16 +1,16 @@
 pub mod text_document {
-    use crate::{core, core::RopeExt, providers};
+    use crate::{core, core::RopeExt, providers, session::Session};
     use log::debug;
     use providers::completion;
     use providers::diagnostics;
     use providers::formatting;
-    use std::{path::PathBuf, sync::Arc};
+    use std::path::PathBuf;
     use tokio::sync::Mutex;
     use tower_lsp::lsp_types;
 
     /// handler for `textDocument/didOpen`.
     pub(crate) async fn did_open(
-        session: Arc<core::Session>,
+        session: &Session,
         params: lsp_types::DidOpenTextDocumentParams,
     ) -> anyhow::Result<()> {
         debug!("handlers::did_open");
@@ -34,7 +34,7 @@ pub mod text_document {
 
     /// handler for `textDocument/didSave`.
     pub(crate) async fn did_save(
-        session: Arc<core::Session>,
+        session: &Session,
         _params: lsp_types::DidSaveTextDocumentParams,
     ) -> anyhow::Result<()> {
         debug!("handlers::did_save");
@@ -52,7 +52,7 @@ pub mod text_document {
 
     // handler for `textDocument/didClose`.
     pub(crate) async fn did_close(
-        session: Arc<core::Session>,
+        session: &Session,
         params: lsp_types::DidCloseTextDocumentParams,
     ) -> anyhow::Result<()> {
         debug!("handlers::did_close");
@@ -64,7 +64,7 @@ pub mod text_document {
 
     // handler for `textDocument/didChange`.
     pub(crate) async fn did_change(
-        session: Arc<core::Session>,
+        session: &Session,
         params: lsp_types::DidChangeTextDocumentParams,
     ) -> anyhow::Result<()> {
         debug!("handlers::did_change");
@@ -116,20 +116,20 @@ pub mod text_document {
     }
 
     pub(crate) async fn completion(
-        session: Arc<core::Session>,
+        session: &Session,
         params: lsp_types::CompletionParams,
     ) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
         completion::completion(session, params).await
     }
 
     pub(crate) async fn formatting(
-        session: Arc<core::Session>,
+        session: &Session,
         params: lsp_types::DocumentFormattingParams,
     ) -> anyhow::Result<Option<Vec<lsp_types::TextEdit>>> {
         formatting::formatting(session, params).await
     }
 
-    async fn check_beancont(session: &Arc<core::Session>) -> anyhow::Result<()> {
+    async fn check_beancont(session: &Session) -> anyhow::Result<()> {
         debug!("handlers::check_beancount");
         let bean_check_cmd = &PathBuf::from("bean-check");
         // session

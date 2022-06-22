@@ -1,5 +1,5 @@
-use crate::{core, handlers};
-use std::{path::PathBuf, sync::Arc};
+use crate::{core, handlers, session::BeancountLspOptions, session::Session};
+use std::path::PathBuf;
 use tokio::io::{Stdin, Stdout};
 use tower_lsp::jsonrpc;
 use tower_lsp::lsp_types;
@@ -7,13 +7,13 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 struct LspServer {
     client: tower_lsp::Client,
-    session: Arc<core::Session>,
+    session: Session,
 }
 
 impl LspServer {
     /// Create a new [`Server`] instance.
     fn new(client: Client) -> Self {
-        let session = Arc::new(core::Session::new(client.clone()));
+        let session = Session::new(client.clone());
         Self { client, session }
     }
 }
@@ -67,10 +67,10 @@ impl LanguageServer for LspServer {
         *self.session.client_capabilities.write().await = Some(params.capabilities);
         let capabilities = capabilities();
 
-        let beancount_lsp_settings: core::BeancountLspOptions = if let Some(json) = params.initialization_options {
+        let beancount_lsp_settings: BeancountLspOptions = if let Some(json) = params.initialization_options {
             serde_json::from_value(json).unwrap()
         } else {
-            core::BeancountLspOptions {
+            BeancountLspOptions {
                 journal_file: String::from(""),
             }
         };
@@ -99,31 +99,28 @@ impl LanguageServer for LspServer {
     }
 
     async fn did_open(&self, params: lsp_types::DidOpenTextDocumentParams) {
-        let session = self.session.clone();
-        handlers::text_document::did_open(session, params).await.unwrap()
+        handlers::text_document::did_open(&self.session, params).await.unwrap()
     }
 
     async fn did_save(&self, params: lsp_types::DidSaveTextDocumentParams) {
-        let session = self.session.clone();
-        handlers::text_document::did_save(session, params).await.unwrap()
+        handlers::text_document::did_save(&self.session, params).await.unwrap()
     }
 
     async fn did_change(&self, params: lsp_types::DidChangeTextDocumentParams) {
-        let session = self.session.clone();
-        handlers::text_document::did_change(session, params).await.unwrap()
+        handlers::text_document::did_change(&self.session, params)
+            .await
+            .unwrap()
     }
 
     async fn did_close(&self, params: lsp_types::DidCloseTextDocumentParams) {
-        let session = self.session.clone();
-        handlers::text_document::did_close(session, params).await.unwrap()
+        handlers::text_document::did_close(&self.session, params).await.unwrap()
     }
 
     async fn completion(
         &self,
         params: lsp_types::CompletionParams,
     ) -> jsonrpc::Result<Option<lsp_types::CompletionResponse>> {
-        let session = self.session.clone();
-        let result = handlers::text_document::completion(session, params).await;
+        let result = handlers::text_document::completion(&self.session, params).await;
         Ok(result.map_err(core::IntoJsonRpcError)?)
     }
 
@@ -131,8 +128,7 @@ impl LanguageServer for LspServer {
         &self,
         params: lsp_types::DocumentFormattingParams,
     ) -> jsonrpc::Result<Option<Vec<lsp_types::TextEdit>>> {
-        let session = self.session.clone();
-        let result = handlers::text_document::formatting(session, params).await;
+        let result = handlers::text_document::formatting(&self.session, params).await;
         Ok(result.map_err(core::IntoJsonRpcError)?)
     }
 }
