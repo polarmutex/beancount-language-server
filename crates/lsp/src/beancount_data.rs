@@ -1,8 +1,8 @@
-use crate::core::RopeExt;
 use dashmap::DashMap;
 use log::debug;
 use std::collections::HashSet;
 use tower_lsp::lsp_types;
+use tree_sitter_utils::node::text_for_tree_sitter_node;
 
 pub struct FlaggedEntry {
     _file: String,
@@ -46,7 +46,7 @@ impl BeancountData {
             .filter_map(|node| {
                 let mut node_cursor = node.walk();
                 let account_node = node.children(&mut node_cursor).find(|c| c.kind() == "account")?;
-                let account = content.utf8_text_for_tree_sitter_node(&account_node).to_string();
+                let account = text_for_tree_sitter_node(&content, &account_node).to_string();
                 Some(account)
             });
 
@@ -75,7 +75,7 @@ impl BeancountData {
         for transaction in transactions {
             if let Some(txn_strings) = transaction.child_by_field_name("txn_strings") {
                 if let Some(payee) = txn_strings.children(&mut cursor).next() {
-                    txn_string_strings.insert(content.utf8_text_for_tree_sitter_node(&payee).trim().to_string());
+                    txn_string_strings.insert(text_for_tree_sitter_node(&content, &payee).trim().to_string());
                 }
             }
         }
