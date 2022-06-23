@@ -1,4 +1,4 @@
-use crate::{beancount_data::BeancountData, core, error::Error, providers};
+use crate::{beancount_data::BeancountData, document::Document, error::Error, providers};
 use dashmap::{
     mapref::one::{Ref, RefMut},
     DashMap,
@@ -18,7 +18,7 @@ use tower_lsp::lsp_types;
 /// A tag representing of the kinds of session resource.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionResourceKind {
-    /// A tag representing a [`core::Document`].
+    /// A tag representing a [`Document`].
     Document,
     /// A tag representing a [`tree_sitter::Parser`].
     Parser,
@@ -30,7 +30,7 @@ pub(crate) struct Session {
     //pub(crate) server_capabilities: RwLock<lsp_types::ServerCapabilities>,
     pub(crate) client_capabilities: RwLock<Option<lsp_types::ClientCapabilities>>,
     pub(crate) client: tower_lsp::Client,
-    documents: DashMap<lsp_types::Url, core::Document>,
+    documents: DashMap<lsp_types::Url, Document>,
     parsers: DashMap<lsp_types::Url, Mutex<tree_sitter::Parser>>,
     pub(crate) forest: DashMap<lsp_types::Url, Mutex<tree_sitter::Tree>>,
     pub(crate) root_journal_path: RwLock<Option<PathBuf>>,
@@ -83,8 +83,8 @@ impl Session {
         }
     }
 
-    /// Insert a [`core::Document`] into the [`Session`].
-    pub fn insert_document(&self, uri: lsp_types::Url, document: core::Document) -> anyhow::Result<()> {
+    /// Insert a [`Document`] into the [`Session`].
+    pub fn insert_document(&self, uri: lsp_types::Url, document: Document) -> anyhow::Result<()> {
         let result = self.documents.insert(uri, document);
         debug_assert!(result.is_none());
         // let result = self.parsers.insert(uri.clone(), Mutex::new(document.parser));
@@ -106,7 +106,7 @@ impl Session {
     }
 
     /// Get a reference to the [`core::Document`] in the [`Session`].
-    pub async fn get_document(&self, uri: &lsp_types::Url) -> anyhow::Result<Ref<'_, lsp_types::Url, core::Document>> {
+    pub async fn get_document(&self, uri: &lsp_types::Url) -> anyhow::Result<Ref<'_, lsp_types::Url, Document>> {
         self.documents.get(uri).ok_or_else(|| {
             let kind = SessionResourceKind::Document;
             let uri = uri.clone();
@@ -115,10 +115,7 @@ impl Session {
     }
 
     /// Get a mutable reference to the [`core::Document`] in the [`Session`].
-    pub async fn get_mut_document(
-        &self,
-        uri: &lsp_types::Url,
-    ) -> anyhow::Result<RefMut<'_, lsp_types::Url, core::Document>> {
+    pub async fn get_mut_document(&self, uri: &lsp_types::Url) -> anyhow::Result<RefMut<'_, lsp_types::Url, Document>> {
         self.documents.get_mut(uri).ok_or_else(|| {
             let kind = SessionResourceKind::Document;
             let uri = uri.clone();
@@ -140,7 +137,7 @@ impl Session {
         })
     }
 
-    /// Get a reference to the [`tree_sitter::Tree`] for a [`core::Document`] in the [`Session`].
+    /// Get a reference to the [`tree_sitter::Tree`] for a [`Document`] in the [`Session`].
     //pub async fn get_tree(&self, uri: &lsp::Url) -> anyhow::Result<Ref<'_, lsp::Url, Mutex<tree_sitter::Tree>>> {
     //    self.forest.get(uri).ok_or_else(|| {
     //        let kind = SessionResourceKind::Tree;
@@ -149,7 +146,7 @@ impl Session {
     //    })
     //}
 
-    /// Get a mutable reference to the [`tree_sitter::Tree`] for a [`core::Document`] in the
+    /// Get a mutable reference to the [`tree_sitter::Tree`] for a [`Document`] in the
     /// [`Session`].
     pub async fn get_mut_tree(
         &self,

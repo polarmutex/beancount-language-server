@@ -1,7 +1,8 @@
-use crate::{beancount_data::BeancountData, core::RopeExt, session::Session};
+use crate::{beancount_data::BeancountData, session::Session};
 use chrono::Datelike;
 use log::debug;
 use tower_lsp::lsp_types;
+use tree_sitter_utils::node::text_for_tree_sitter_node;
 
 /// Provider function for LSP ``.
 pub(crate) async fn completion(
@@ -50,7 +51,7 @@ pub(crate) async fn completion(
 
     match node {
         Some(node) => {
-            let text = &content.utf8_text_for_tree_sitter_node(&node);
+            let text = text_for_tree_sitter_node(&content, &node);
             debug!("providers::completion - text {}", text);
             let parent_node = node.parent();
             debug!("providers::completion - parent node {:?}", parent_node);

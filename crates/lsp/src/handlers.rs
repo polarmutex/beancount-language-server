@@ -1,5 +1,5 @@
 pub mod text_document {
-    use crate::{core, core::RopeExt, providers, session::Session};
+    use crate::{document::Document, providers, session::Session};
     use log::debug;
     use providers::completion;
     use providers::diagnostics;
@@ -7,6 +7,7 @@ pub mod text_document {
     use std::path::PathBuf;
     use tokio::sync::Mutex;
     use tower_lsp::lsp_types;
+    use tree_sitter_utils::lsp_utils::lsp_textdocchange_to_ts_inputedit;
 
     /// handler for `textDocument/didOpen`.
     pub(crate) async fn did_open(
@@ -16,7 +17,7 @@ pub mod text_document {
         debug!("handlers::did_open");
         let uri = params.text_document.uri.clone();
 
-        let document = core::Document::open(params);
+        let document = Document::open(params);
         // let tree = document.tree.clone();
         debug!("handlers::did_open - adding {}", uri);
         session.insert_document(uri.clone(), document)?;
@@ -76,12 +77,38 @@ pub mod text_document {
         let edits = params
             .content_changes
             .iter()
-            .map(|change| doc.content.build_edit(change))
+            .map(|change| lsp_textdocchange_to_ts_inputedit(&doc.content, change))
             .collect::<Result<Vec<_>, _>>()?;
 
         debug!("handlers::did_change - apply edits - document");
-        for edit in &edits {
-            doc.content.apply_edit(edit);
+        for change in &params.content_changes {
+            let text = change.text.as_str();
+            let text_bytes = text.as_bytes();
+            let text_end_byte_idx = text_bytes.len();
+
+            let range = if let Some(range) = change.range {
+                range
+            } else {
+                let start_line_idx = doc.content.byte_to_line(0);
+                let end_line_idx = doc.content.byte_to_line(text_end_byte_idx);
+
+                let start = lsp_types::Position::new(start_line_idx as u32, 0);
+                let end = lsp_types::Position::new(end_line_idx as u32, 0);
+                lsp_types::Range { start, end }
+            };
+
+            let start_row_char_idx = doc.content.line_to_char(range.start.line as usize);
+            let start_col_char_idx = doc.content.utf16_cu_to_char(range.start.character as usize);
+            let end_row_char_idx = doc.content.line_to_char(range.end.line as usize);
+            let end_col_char_idx = doc.content.utf16_cu_to_char(range.end.character as usize);
+
+            let start_char_idx = usize::try_from(start_row_char_idx + start_col_char_idx)?;
+            let end_char_idx = usize::try_from(end_row_char_idx + end_col_char_idx)?;
+            doc.content.remove(start_char_idx..end_char_idx);
+
+            if !change.text.is_empty() {
+                doc.content.insert(start_char_idx, text);
+            }
         }
 
         debug!("handlers::did_change - apply edits - tree");
@@ -93,16 +120,10 @@ pub mod text_document {
             let mut old_tree = old_tree.lock().await;
 
             for edit in &edits {
-                old_tree.edit(&edit.input_edit);
+                old_tree.edit(&edit);
             }
 
-            let mut callback = {
-                let mut content = doc.content.clone();
-                content.shrink_to_fit();
-                let byte_idx = 0;
-                content.chunk_walker(byte_idx).callback_adapter_for_tree_sitter()
-            };
-            parser.parse_with(&mut callback, Some(&*old_tree))
+            parser.parse(doc.text().to_string(), Some(&old_tree))
         };
 
         debug!("handlers::did_change - save tree");
