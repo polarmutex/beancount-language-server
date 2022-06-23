@@ -1,19 +1,18 @@
 {
   "bootstrap-sha": "ca69987f5b7f5c7bdafb1f267008f0b028f3d70d",
   "release-type": "rust",
-  "pull-request-title-pattern": "chore${scope}: release ${version}",
-  "extra-files": [
-    {
-      "type": "json",
-      "path": "vscode/package.json",
-      "jsonpath": "$.version"
-    }
-  ],
-  "include-component-in-tag": false,
+  "plugins": ["cargo-workspace"],
+  "group-pull-request-title-pattern": "chore: release repo",
   "packages": {
-    ".": {
-      "package-name": "beancount-language-server"
-    }
+    "crates/lsp": {
+        "package-name": "beancount-language-server",
+        "extra-files": [{
+            "type": "json",
+            "path": "../../vscode/package.json",
+            "jsonpath": "$.version"
+        }],
+    },
+    "crates/tree-sitter-utils": {}
   },
   "changelog-sections": [
     { "type": "feat", "section": "Features ✨" },
