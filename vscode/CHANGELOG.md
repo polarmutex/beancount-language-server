@@ -1,1 +1,1 @@
-../CHANGELOG.md
+../crates/lsp/CHANGELOG.md
