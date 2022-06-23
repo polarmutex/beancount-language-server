@@ -13,7 +13,7 @@ cargo install beancount-language-server
 Then, you should be able to run the language server with the following command:
 
 ```sh
-beancount-language-server --stdio
+beancount-language-server
 ```
 
 Follow the instructions below to integrate the language server into your editor.
