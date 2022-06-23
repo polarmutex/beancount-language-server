@@ -1,3 +1,4 @@
 {
-  ".": "1.2.5"
+  "crates/lsp": "1.2.5",
+  "crates/tree-sitter-utils": "0.1.0"
 }
