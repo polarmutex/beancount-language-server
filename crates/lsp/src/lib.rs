@@ -1,7 +1,9 @@
 pub mod beancount_data;
 pub mod document;
 pub mod error;
+pub mod forest;
 pub mod handlers;
+pub mod progress;
 pub mod providers;
 pub mod server;
 pub mod session;

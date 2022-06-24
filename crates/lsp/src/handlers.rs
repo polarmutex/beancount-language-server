@@ -1,5 +1,5 @@
 pub mod text_document {
-    use crate::{document::Document, providers, session::Session};
+    use crate::{document::Document, progress, providers, session::Session};
     use log::debug;
     use providers::completion;
     use providers::diagnostics;
@@ -151,14 +151,14 @@ pub mod text_document {
     }
 
     async fn check_beancont(session: &Session) -> anyhow::Result<()> {
+        let progress_token = progress::progress_begin(&session.client, "bean-check").await;
         debug!("handlers::check_beancount");
         let bean_check_cmd = &PathBuf::from("bean-check");
         // session
         //.bean_check_path
         //.as_ref()
         //.ok_or_else(|| core::Error::InvalidState)?;
-        let temp = session.root_journal_path.read().await;
-        let root_journal_path = temp.clone().unwrap();
+        let root_journal_path = &PathBuf::from(session.root_journal_path.read().await.clone().unwrap());
 
         let diags = diagnostics::diagnostics(
             &session.diagnostic_data,
@@ -171,6 +171,7 @@ pub mod text_document {
         for (key, value) in diags {
             session.client.publish_diagnostics(key, value, None).await;
         }
+        progress::progress_end(&session.client, progress_token).await;
         Ok(())
     }
 }

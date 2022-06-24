@@ -1,4 +1,4 @@
-use crate::{error, handlers, session::BeancountLspOptions, session::Session};
+use crate::{error, forest, handlers, session::BeancountLspOptions, session::Session};
 use std::path::PathBuf;
 use tokio::io::{Stdin, Stdout};
 use tower_lsp::jsonrpc;
@@ -78,10 +78,6 @@ impl LanguageServer for LspServer {
         *self.session.root_journal_path.write().await =
             Some(PathBuf::from(beancount_lsp_settings.journal_file.clone()));
 
-        let journal_file = lsp_types::Url::from_file_path(beancount_lsp_settings.journal_file).unwrap();
-
-        if (self.session.parse_initial_forest(journal_file).await).is_ok() {};
-
         Ok(lsp_types::InitializeResult {
             capabilities,
             ..lsp_types::InitializeResult::default()
@@ -89,9 +85,14 @@ impl LanguageServer for LspServer {
     }
 
     async fn initialized(&self, _: lsp_types::InitializedParams) {
-        //let typ = lsp_types::MessageType::INFO;
-        //let message = "beancount language server initialized!";
-        //self.client.log_message(typ, message).await;
+        if self.session.root_journal_path.read().await.is_some() {
+            forest::parse_initial_forest(
+                &self.session,
+                lsp_types::Url::from_file_path(self.session.root_journal_path.read().await.clone().unwrap()).unwrap(),
+            )
+            .await
+            .unwrap();
+        }
     }
 
     async fn shutdown(&self) -> jsonrpc::Result<()> {

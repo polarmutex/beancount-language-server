@@ -3,15 +3,10 @@ use dashmap::{
     mapref::one::{Ref, RefMut},
     DashMap,
 };
-use glob::glob;
-use linked_list::LinkedList;
-use log::{debug, error};
+use log::debug;
 use providers::diagnostics;
 use serde::{Deserialize, Serialize};
-use std::{
-    fs::read_to_string,
-    path::{Path, PathBuf},
-};
+use std::path;
 use tokio::sync::{Mutex, RwLock};
 use tower_lsp::lsp_types;
 
@@ -30,10 +25,10 @@ pub(crate) struct Session {
     //pub(crate) server_capabilities: RwLock<lsp_types::ServerCapabilities>,
     pub(crate) client_capabilities: RwLock<Option<lsp_types::ClientCapabilities>>,
     pub(crate) client: tower_lsp::Client,
-    documents: DashMap<lsp_types::Url, Document>,
-    parsers: DashMap<lsp_types::Url, Mutex<tree_sitter::Parser>>,
+    pub(crate) documents: DashMap<lsp_types::Url, Document>,
+    pub(crate) parsers: DashMap<lsp_types::Url, Mutex<tree_sitter::Parser>>,
     pub(crate) forest: DashMap<lsp_types::Url, Mutex<tree_sitter::Tree>>,
-    pub(crate) root_journal_path: RwLock<Option<PathBuf>>,
+    pub(crate) root_journal_path: RwLock<Option<path::PathBuf>>,
     //pub(crate) bean_check_path: Option<PathBuf>,
     pub(crate) beancount_data: BeancountData,
     pub(crate) diagnostic_data: diagnostics::DiagnosticData,
@@ -157,88 +152,5 @@ impl Session {
             let uri = uri.clone();
             Error::SessionResourceNotFound { kind, uri }.into()
         })
-    }
-
-    // Issus to look at if running into issues with this
-    // https://github.com/silvanshade/lspower/issues/8
-    pub async fn parse_initial_forest(&self, root_url: lsp_types::Url) -> anyhow::Result<bool, anyhow::Error> {
-        let mut seen_files = LinkedList::new();
-        // let root_pathbuf: String = self.root_journal_path.into_inner().unwrap().as_ref().as_os_str();
-        // let temp = self.root_journal_path.read().await;
-        // let root_url = lsp::Url::from_file_path(temp.clone().unwrap()).unwrap();
-        seen_files.push_back(root_url);
-
-        // follow this for native cursor support
-        // https://github.com/rust-lang/rust/issues/58533
-        let mut ll_cursor = seen_files.cursor();
-        while ll_cursor.peek_next() != None {
-            let file = ll_cursor.next().unwrap();
-            debug!("parsing {}", file.as_ref());
-
-            let file_path = file.to_file_path().ok().unwrap();
-
-            let text = read_to_string(file_path.clone())?;
-            let bytes = text.as_bytes();
-
-            let mut parser = tree_sitter::Parser::new();
-            parser.set_language(tree_sitter_beancount::language())?;
-            let tree = parser.parse(&text, None).unwrap();
-            self.parsers.insert(file.clone(), Mutex::new(parser));
-            let mut cursor = tree.root_node().walk();
-
-            debug!("adding to forest {}", file.as_ref());
-            self.forest.insert(file.clone(), Mutex::new(tree.clone()));
-
-            debug!("creating rope from text");
-            let content = ropey::Rope::from_str(text.as_str());
-            debug!("updating beancount data");
-            self.beancount_data.update_data(file.clone(), &tree, &content);
-
-            let include_filenames = tree
-                .root_node()
-                .children(&mut cursor)
-                .filter(|c| c.kind() == "include")
-                .filter_map(|include_node| {
-                    let mut node_cursor = include_node.walk();
-                    let node = include_node.children(&mut node_cursor).find(|c| c.kind() == "string")?;
-
-                    let filename = node
-                        .utf8_text(bytes)
-                        .unwrap()
-                        .trim_start_matches('"')
-                        .trim_end_matches('"');
-
-                    let path = Path::new(filename);
-
-                    let path = if path.is_absolute() {
-                        path.to_path_buf()
-                    } else if file_path.is_absolute() {
-                        file_path.parent().unwrap().join(path)
-                    } else {
-                        path.to_path_buf()
-                    };
-                    let path_url = lsp_types::Url::from_file_path(path).unwrap();
-
-                    Some(path_url)
-                });
-
-            // This could get in an infinite loop if there is a loop wtth the include files
-            // TODO see if I can prevent this
-            for include_url in include_filenames {
-                for entry in glob(include_url.path()).expect("Failed to read glob") {
-                    match entry {
-                        Ok(path) => {
-                            let url = lsp_types::Url::from_file_path(path).unwrap();
-                            if !self.forest.contains_key(&url) {
-                                debug!("adding include file: {}", url);
-                                ll_cursor.insert(url);
-                            }
-                        },
-                        Err(e) => error!("{:?}", e),
-                    }
-                }
-            }
-        }
-        Ok(true)
     }
 }
