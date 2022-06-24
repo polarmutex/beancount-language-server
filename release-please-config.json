@@ -8,7 +8,7 @@
         "package-name": "beancount-language-server",
         "extra-files": [{
             "type": "json",
-            "path": "../../vscode/package.json",
+            "path": "/vscode/package.json",
             "jsonpath": "$.version"
         }]
     },
