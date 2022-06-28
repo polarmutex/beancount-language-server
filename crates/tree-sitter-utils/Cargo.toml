@@ -13,4 +13,4 @@ keywords = ["lsp", "tree-sitter"]
 anyhow = "1.0.58"
 lsp-types = "0.93.0"
 ropey = "1.5"
-tree-sitter = "0.20.7"
+tree-sitter = "0.20.8"
