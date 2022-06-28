@@ -31,7 +31,7 @@ shellexpand = "2.0.0"
 linked-list = "0.0.3"
 tokio = { version = "1.19", features = ["io-std", "macros", "process", "sync", "rt-multi-thread"]}
 tree-sitter = "0.20"
-tree-sitter-beancount = "2.0.0"
+tree-sitter-beancount = "2.1.0"
 tree-sitter-utils = { version = "0.1.0", path = "../tree-sitter-utils" }
 
 [package.metadata.release]
