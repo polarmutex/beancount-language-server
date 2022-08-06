@@ -1,7 +1,7 @@
 use crate::{beancount_data::BeancountData, session::Session};
 use chrono::Datelike;
-use log::debug;
 use tower_lsp::lsp_types;
+use tracing::debug;
 use tree_sitter_utils::node::text_for_tree_sitter_node;
 
 /// Provider function for LSP ``.
