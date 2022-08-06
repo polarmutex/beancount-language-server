@@ -30,8 +30,12 @@ serde_json = "1.0"
 shellexpand = "2.1.2"
 linked-list = "0.0.3"
 tokio = { version = "1.21", features = ["io-std", "macros", "process", "sync", "rt-multi-thread"]}
+tracing = "0.1.35"
+tracing-appender = "0.2.0"
+tracing-subscriber = {version = "0.3.11", features = ["env-filter", "tracing-log"]}
+tracing-tree = "0.2.0"
 tree-sitter = "0.20"
-tree-sitter-beancount = "2.1.1"
+tree-sitter-beancount = "=2.0.0"
 tree-sitter-utils = { version = "0.1.0", path = "../tree-sitter-utils" }
 
 [package.metadata.release]
