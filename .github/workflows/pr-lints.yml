@@ -17,4 +17,4 @@ jobs:
           subjectPatternError: |
             The subject "{subject}" found in the pull request title "{title}" should start with a lowercase.
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
