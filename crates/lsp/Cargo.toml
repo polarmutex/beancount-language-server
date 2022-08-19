@@ -27,7 +27,7 @@ ropey = "1.5"
 thiserror = "1.0"
 serde = "1.0"
 serde_json = "1.0"
-shellexpand = "2.0.0"
+shellexpand = "2.1.2"
 linked-list = "0.0.3"
 tokio = { version = "1.20", features = ["io-std", "macros", "process", "sync", "rt-multi-thread"]}
 tree-sitter = "0.20"
