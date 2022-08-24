@@ -11,6 +11,6 @@ keywords = ["lsp", "tree-sitter"]
 
 [dependencies]
 anyhow = "1.0.62"
-lsp-types = "0.93.0"
+lsp-types = "0.93.1"
 ropey = "1.5"
 tree-sitter = "0.20.8"
