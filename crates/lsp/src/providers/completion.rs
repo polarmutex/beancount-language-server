@@ -30,23 +30,31 @@ pub(crate) async fn completion(
         column: char,
     };
     debug!("providers::completion - end {}", end);
-    let trigger_character = params.context.and_then(|c| c.trigger_character).and_then(|c| {
-        // Make sure 2 trigger only for first col
-        if c == "2" {
-            debug!("checking 2 - {}", char);
-            if char > 1 {
-                debug!("clearing 2");
-                None
+    let trigger_character = params
+        .context
+        .and_then(|c| c.trigger_character)
+        .and_then(|c| {
+            // Make sure 2 trigger only for first col
+            if c == "2" {
+                debug!("checking 2 - {}", char);
+                if char > 1 {
+                    debug!("clearing 2");
+                    None
+                } else {
+                    debug!("keeping 2");
+                    Some(c)
+                }
             } else {
-                debug!("keeping 2");
-                Some(c)
+                None
             }
-        } else {
-            None
-        }
-    });
-    debug!("providers::completion - is_char_triggered {:?}", trigger_character);
-    let node = tree.root_node().named_descendant_for_point_range(start, end);
+        });
+    debug!(
+        "providers::completion - is_char_triggered {:?}",
+        trigger_character
+    );
+    let node = tree
+        .root_node()
+        .named_descendant_for_point_range(start, end);
     debug!("providers::completion - node {:?}", node);
 
     match node {
@@ -59,11 +67,20 @@ pub(crate) async fn completion(
             if parent_node.is_some() {
                 parent_parent_node = parent_node.unwrap().parent();
             }
-            debug!("providers::completion - parent node {:?}", parent_parent_node);
+            debug!(
+                "providers::completion - parent node {:?}",
+                parent_parent_node
+            );
             let prev_sibling_node = node.prev_sibling();
-            debug!("providers::completion - prev sibling node {:?}", prev_sibling_node);
+            debug!(
+                "providers::completion - prev sibling node {:?}",
+                prev_sibling_node
+            );
             let prev_named_node = node.prev_named_sibling();
-            debug!("providers::completion - prev named node {:?}", prev_named_node);
+            debug!(
+                "providers::completion - prev named node {:?}",
+                prev_named_node
+            );
 
             if trigger_character.is_some() {
                 debug!("providers::completion - handle trigger char");
@@ -82,7 +99,10 @@ pub(crate) async fn completion(
                     match node.kind() {
                         "ERROR" => {
                             debug!("providers::completion - handle node - handle error");
-                            debug!("providers::completion - handle node - handle error {}", text);
+                            debug!(
+                                "providers::completion - handle node - handle error {}",
+                                text
+                            );
                             let prefix = text.chars().next().unwrap();
                             debug!("providers::completion - handle node - prefix {}", prefix);
                             if prefix == '"' {
@@ -90,7 +110,7 @@ pub(crate) async fn completion(
                             } else {
                                 Ok(None)
                             }
-                        },
+                        }
                         "identifier" => {
                             debug!("providers::completion - handle node - handle identifier");
                             // if parent_parent_node.is_some() && parent_parent_node.unwrap().kind() ==
@@ -99,20 +119,21 @@ pub(crate) async fn completion(
                             //} else {
                             //    Ok(None)
                             //}
-                        },
+                        }
                         "string" => {
                             debug!("providers::completion - handle node - handle string");
-                            if parent_node.is_some() && parent_node.unwrap().kind() == "txn_strings" {
+                            if parent_node.is_some() && parent_node.unwrap().kind() == "txn_strings"
+                            {
                                 complete_txn_string(&session.beancount_data)
                             } else {
                                 Ok(None)
                             }
-                        },
+                        }
                         _ => Ok(None),
                     }
                 }
             }
-        },
+        }
         None => Ok(None),
     }
 }
@@ -160,11 +181,16 @@ fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd(year, month, 1)
 }
 
-fn complete_txn_string(data: &BeancountData) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
+fn complete_txn_string(
+    data: &BeancountData,
+) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
     debug!("providers::completion::account");
     let mut completions = Vec::new();
     for txn_string in data.get_txn_strings() {
-        completions.push(lsp_types::CompletionItem::new_simple(txn_string, "".to_string()));
+        completions.push(lsp_types::CompletionItem::new_simple(
+            txn_string,
+            "".to_string(),
+        ));
     }
     Ok(Some(lsp_types::CompletionResponse::Array(completions)))
 }

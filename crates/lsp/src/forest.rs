@@ -9,7 +9,10 @@ use tower_lsp::lsp_types as lsp;
 
 // Issus to look at if running into issues with this
 // https://github.com/silvanshade/lspower/issues/8
-pub(crate) async fn parse_initial_forest(session: &Session, root_url: lsp::Url) -> anyhow::Result<bool, anyhow::Error> {
+pub(crate) async fn parse_initial_forest(
+    session: &Session,
+    root_url: lsp::Url,
+) -> anyhow::Result<bool, anyhow::Error> {
     let progress_token = progress::progress_begin(&session.client, "Generating Forest").await;
 
     let mut seen_files = LinkedList::new();
@@ -47,10 +50,14 @@ pub(crate) async fn parse_initial_forest(session: &Session, root_url: lsp::Url) 
             session.parsers.insert(file.clone(), Mutex::new(parser));
             let mut cursor = tree.root_node().walk();
 
-            session.forest.insert(file.clone(), Mutex::new(tree.clone()));
+            session
+                .forest
+                .insert(file.clone(), Mutex::new(tree.clone()));
 
             let content = ropey::Rope::from_str(text.as_str());
-            session.beancount_data.update_data(file.clone(), &tree, &content);
+            session
+                .beancount_data
+                .update_data(file.clone(), &tree, &content);
 
             let include_filenames = tree
                 .root_node()
@@ -58,7 +65,9 @@ pub(crate) async fn parse_initial_forest(session: &Session, root_url: lsp::Url) 
                 .filter(|c| c.kind() == "include")
                 .filter_map(|include_node| {
                     let mut node_cursor = include_node.walk();
-                    let node = include_node.children(&mut node_cursor).find(|c| c.kind() == "string")?;
+                    let node = include_node
+                        .children(&mut node_cursor)
+                        .find(|c| c.kind() == "string")?;
 
                     let filename = node
                         .utf8_text(bytes)
@@ -90,14 +99,14 @@ pub(crate) async fn parse_initial_forest(session: &Session, root_url: lsp::Url) 
                             if !session.forest.contains_key(&url) {
                                 new_to_processs.push_back(url);
                             }
-                        },
+                        }
                         Err(e) => error!("{:?}", e),
                     }
                 }
             }
         }
 
-        if new_to_processs.len() == 0 {
+        if new_to_processs.is_empty() {
             done = true;
         } else {
             to_processs.clear();

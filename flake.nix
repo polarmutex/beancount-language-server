@@ -66,6 +66,7 @@
           # Audit dependencies
           beancount-language-server-crate-audit = craneLib.cargoAudit {
             inherit src advisory-db;
+            cargoAuditExtraArgs = "--ignore RUSTSEC-2020-0071";
           };
 
           # Run tests with cargo-nextest
@@ -98,7 +99,7 @@
             cargo
             rustc
             rustfmt
-            #clippy
+            clippy
             #nodejs-16_x
             #python310
           ];

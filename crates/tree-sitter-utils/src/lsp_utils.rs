@@ -1,6 +1,6 @@
-pub fn lsp_textdocchange_to_ts_inputedit<'a>(
+pub fn lsp_textdocchange_to_ts_inputedit(
     source: &ropey::Rope,
-    change: &'a lsp_types::TextDocumentContentChangeEvent,
+    change: &lsp_types::TextDocumentContentChangeEvent,
 ) -> anyhow::Result<tree_sitter::InputEdit> {
     let text = change.text.as_str();
     let text_bytes = text.as_bytes();
@@ -68,7 +68,10 @@ struct TextPosition {
     pub point: tree_sitter::Point,
 }
 
-fn lsp_position_to_core(source: &ropey::Rope, position: lsp_types::Position) -> anyhow::Result<TextPosition> {
+fn lsp_position_to_core(
+    source: &ropey::Rope,
+    position: lsp_types::Position,
+) -> anyhow::Result<TextPosition> {
     let row_idx = position.line as usize;
 
     let col_code_idx = position.character as usize;
@@ -95,7 +98,10 @@ fn lsp_position_to_core(source: &ropey::Rope, position: lsp_types::Position) -> 
     })
 }
 
-fn byte_to_tree_sitter_point(source: &ropey::Rope, byte_idx: usize) -> anyhow::Result<tree_sitter::Point> {
+fn byte_to_tree_sitter_point(
+    source: &ropey::Rope,
+    byte_idx: usize,
+) -> anyhow::Result<tree_sitter::Point> {
     let line_idx = source.byte_to_line(byte_idx);
     let line_byte_idx = source.line_to_byte(line_idx);
     let row = u32::try_from(line_idx).unwrap() as usize;

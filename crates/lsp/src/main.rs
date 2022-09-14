@@ -1,13 +1,17 @@
 use beancount_language_server::server::run_server;
 use clap::{Arg, Command};
 use tracing::{debug_span, level_filters::LevelFilter, Instrument};
-use tracing_subscriber::{filter::Directive, layer::SubscriberExt, EnvFilter, Registry};
+use tracing_subscriber::{filter::Directive, layer::SubscriberExt, EnvFilter};
 use tracing_tree::HierarchicalLayer;
 
 #[tokio::main]
 async fn main() {
     let _matches = Command::new("beancount-language-server")
-        .arg(Arg::new("stdio").long("stdio").help("use std io for lang server"))
+        .arg(
+            Arg::new("stdio")
+                .long("stdio")
+                .help("use std io for lang server"),
+        )
         //TODO let the user specify the file
         .arg(Arg::new("log").long("log").help("Write logs to file"))
         .get_matches();

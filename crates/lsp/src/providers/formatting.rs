@@ -151,7 +151,7 @@ pub(crate) async fn formatting(
                         new_text: " ".repeat(new_num_pos - num_col_pos),
                     };
                     text_edits.push(edit)
-                },
+                }
                 Ordering::Less => {
                     // remove spaces
                     // TODO conform text will not be deleted
@@ -167,8 +167,8 @@ pub(crate) async fn formatting(
                         new_text: "".to_string(),
                     };
                     text_edits.push(edit)
-                },
-                Ordering::Equal => {},
+                }
+                Ordering::Equal => {}
             }
         }
     }

@@ -59,21 +59,28 @@ pub fn capabilities() -> lsp_types::ServerCapabilities {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for LspServer {
-    async fn initialize(&self, params: lsp_types::InitializeParams) -> jsonrpc::Result<lsp_types::InitializeResult> {
+    async fn initialize(
+        &self,
+        params: lsp_types::InitializeParams,
+    ) -> jsonrpc::Result<lsp_types::InitializeResult> {
         self.client
-            .log_message(lsp_types::MessageType::ERROR, "Beancount Server initializing")
+            .log_message(
+                lsp_types::MessageType::ERROR,
+                "Beancount Server initializing",
+            )
             .await;
 
         *self.session.client_capabilities.write().await = Some(params.capabilities);
         let capabilities = capabilities();
 
-        let beancount_lsp_settings: BeancountLspOptions = if let Some(json) = params.initialization_options {
-            serde_json::from_value(json).unwrap()
-        } else {
-            BeancountLspOptions {
-                journal_file: String::from(""),
-            }
-        };
+        let beancount_lsp_settings: BeancountLspOptions =
+            if let Some(json) = params.initialization_options {
+                serde_json::from_value(json).unwrap()
+            } else {
+                BeancountLspOptions {
+                    journal_file: String::from(""),
+                }
+            };
         // TODO need error if it does not exist
         *self.session.root_journal_path.write().await =
             Some(PathBuf::from(beancount_lsp_settings.journal_file.clone()));
@@ -88,7 +95,10 @@ impl LanguageServer for LspServer {
         if self.session.root_journal_path.read().await.is_some() {
             forest::parse_initial_forest(
                 &self.session,
-                lsp_types::Url::from_file_path(self.session.root_journal_path.read().await.clone().unwrap()).unwrap(),
+                lsp_types::Url::from_file_path(
+                    self.session.root_journal_path.read().await.clone().unwrap(),
+                )
+                .unwrap(),
             )
             .await
             .unwrap();
@@ -100,11 +110,15 @@ impl LanguageServer for LspServer {
     }
 
     async fn did_open(&self, params: lsp_types::DidOpenTextDocumentParams) {
-        handlers::text_document::did_open(&self.session, params).await.unwrap()
+        handlers::text_document::did_open(&self.session, params)
+            .await
+            .unwrap()
     }
 
     async fn did_save(&self, params: lsp_types::DidSaveTextDocumentParams) {
-        handlers::text_document::did_save(&self.session, params).await.unwrap()
+        handlers::text_document::did_save(&self.session, params)
+            .await
+            .unwrap()
     }
 
     async fn did_change(&self, params: lsp_types::DidChangeTextDocumentParams) {
@@ -114,7 +128,9 @@ impl LanguageServer for LspServer {
     }
 
     async fn did_close(&self, params: lsp_types::DidCloseTextDocumentParams) {
-        handlers::text_document::did_close(&self.session, params).await.unwrap()
+        handlers::text_document::did_close(&self.session, params)
+            .await
+            .unwrap()
     }
 
     async fn completion(

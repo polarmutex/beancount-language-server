@@ -21,6 +21,12 @@ pub struct BeancountData {
     pub flagged_entries: DashMap<lsp_types::Url, Vec<FlaggedEntry>>,
 }
 
+impl Default for BeancountData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BeancountData {
     pub fn new() -> Self {
         let accounts = DashMap::new();
@@ -33,7 +39,12 @@ impl BeancountData {
         }
     }
 
-    pub fn update_data(&self, uri: lsp_types::Url, tree: &tree_sitter::Tree, content: &ropey::Rope) {
+    pub fn update_data(
+        &self,
+        uri: lsp_types::Url,
+        tree: &tree_sitter::Tree,
+        content: &ropey::Rope,
+    ) {
         let mut cursor = tree.root_node().walk();
 
         // Update account opens
@@ -45,8 +56,10 @@ impl BeancountData {
             .filter(|c| c.kind() == "open")
             .filter_map(|node| {
                 let mut node_cursor = node.walk();
-                let account_node = node.children(&mut node_cursor).find(|c| c.kind() == "account")?;
-                let account = text_for_tree_sitter_node(&content, &account_node).to_string();
+                let account_node = node
+                    .children(&mut node_cursor)
+                    .find(|c| c.kind() == "account")?;
+                let account = text_for_tree_sitter_node(content, &account_node);
                 Some(account)
             });
 
@@ -75,7 +88,11 @@ impl BeancountData {
         for transaction in transactions {
             if let Some(txn_strings) = transaction.child_by_field_name("txn_strings") {
                 if let Some(payee) = txn_strings.children(&mut cursor).next() {
-                    txn_string_strings.insert(text_for_tree_sitter_node(&content, &payee).trim().to_string());
+                    txn_string_strings.insert(
+                        text_for_tree_sitter_node(content, &payee)
+                            .trim()
+                            .to_string(),
+                    );
                 }
             }
         }
@@ -88,7 +105,12 @@ impl BeancountData {
         }
 
         for txn_string in txn_string_strings {
-            if !self.txn_strings.get_mut(&uri).unwrap().contains(&txn_string) {
+            if !self
+                .txn_strings
+                .get_mut(&uri)
+                .unwrap()
+                .contains(&txn_string)
+            {
                 self.txn_strings.get_mut(&uri).unwrap().push(txn_string);
             }
         }
@@ -117,13 +139,18 @@ impl BeancountData {
                 let txn_node = node.children(&mut node_cursor).find(|c| c.kind() == "txn");
                 if let Some(txn_node) = txn_node {
                     let mut flag_cursor = txn_node.walk();
-                    let flag_node = txn_node.children(&mut flag_cursor).find(|c| c.kind() == "flag");
+                    let flag_node = txn_node
+                        .children(&mut flag_cursor)
+                        .find(|c| c.kind() == "flag");
                     if let Some(flag) = flag_node {
                         debug!("addind flag entry: {:?}", flag);
-                        self.flagged_entries.get_mut(&uri).unwrap().push(FlaggedEntry {
-                            _file: "".to_string(),
-                            line: flag.start_position().row as u32,
-                        });
+                        self.flagged_entries
+                            .get_mut(&uri)
+                            .unwrap()
+                            .push(FlaggedEntry {
+                                _file: "".to_string(),
+                                line: flag.start_position().row as u32,
+                            });
                     }
                 }
             });
