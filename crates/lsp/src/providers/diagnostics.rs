@@ -18,8 +18,15 @@ impl DiagnosticData {
     pub fn update(&self, data: DashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>>) {
         self.current_diagnostics.clear();
         for it in data.iter() {
-            self.current_diagnostics.insert(it.key().clone(), it.value().clone());
+            self.current_diagnostics
+                .insert(it.key().clone(), it.value().clone());
         }
+    }
+}
+
+impl Default for DiagnosticData {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

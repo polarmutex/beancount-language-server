@@ -22,8 +22,11 @@ pub mod text_document {
         debug!("handlers::did_open - adding {}", uri);
         session.insert_document(uri.clone(), document)?;
 
-        if let Err(err) = check_beancont(&session).await {
-            debug!("handlers::did_open -- Error finding diagnostics {}", err.to_string());
+        if let Err(err) = check_beancont(session).await {
+            debug!(
+                "handlers::did_open -- Error finding diagnostics {}",
+                err.to_string()
+            );
             session
                 .client
                 .log_message(lsp_types::MessageType::ERROR, err.to_string())
@@ -40,8 +43,11 @@ pub mod text_document {
     ) -> anyhow::Result<()> {
         debug!("handlers::did_save");
 
-        if let Err(err) = check_beancont(&session).await {
-            debug!("handlers::did_save -- Error finding diagnostics {}", err.to_string());
+        if let Err(err) = check_beancont(session).await {
+            debug!(
+                "handlers::did_save -- Error finding diagnostics {}",
+                err.to_string()
+            );
             session
                 .client
                 .log_message(lsp_types::MessageType::ERROR, err.to_string())
@@ -102,8 +108,8 @@ pub mod text_document {
             let end_row_char_idx = doc.content.line_to_char(range.end.line as usize);
             let end_col_char_idx = doc.content.utf16_cu_to_char(range.end.character as usize);
 
-            let start_char_idx = usize::try_from(start_row_char_idx + start_col_char_idx)?;
-            let end_char_idx = usize::try_from(end_row_char_idx + end_col_char_idx)?;
+            let start_char_idx = start_row_char_idx + start_col_char_idx;
+            let end_char_idx = end_row_char_idx + end_col_char_idx;
             doc.content.remove(start_char_idx..end_char_idx);
 
             if !change.text.is_empty() {
@@ -120,7 +126,7 @@ pub mod text_document {
             let mut old_tree = old_tree.lock().await;
 
             for edit in &edits {
-                old_tree.edit(&edit);
+                old_tree.edit(edit);
             }
 
             parser.parse(doc.text().to_string(), Some(&old_tree))
@@ -129,7 +135,9 @@ pub mod text_document {
         debug!("handlers::did_change - save tree");
         if let Some(tree) = result {
             *session.get_mut_tree(uri).await?.value_mut() = Mutex::new(tree.clone());
-            session.beancount_data.update_data(uri.clone(), &tree, &doc.content);
+            session
+                .beancount_data
+                .update_data(uri.clone(), &tree, &doc.content);
         }
 
         debug!("handlers::did_close - done");
@@ -158,13 +166,13 @@ pub mod text_document {
         //.bean_check_path
         //.as_ref()
         //.ok_or_else(|| core::Error::InvalidState)?;
-        let root_journal_path = &PathBuf::from(session.root_journal_path.read().await.clone().unwrap());
+        let root_journal_path = &session.root_journal_path.read().await.clone().unwrap();
 
         let diags = diagnostics::diagnostics(
             &session.diagnostic_data,
             &session.beancount_data,
             bean_check_cmd,
-            &root_journal_path,
+            root_journal_path,
         )
         .await;
         session.diagnostic_data.update(diags.clone());

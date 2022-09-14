@@ -101,7 +101,10 @@ impl Session {
     }
 
     /// Get a reference to the [`core::Document`] in the [`Session`].
-    pub async fn get_document(&self, uri: &lsp_types::Url) -> anyhow::Result<Ref<'_, lsp_types::Url, Document>> {
+    pub async fn get_document(
+        &self,
+        uri: &lsp_types::Url,
+    ) -> anyhow::Result<Ref<'_, lsp_types::Url, Document>> {
         self.documents.get(uri).ok_or_else(|| {
             let kind = SessionResourceKind::Document;
             let uri = uri.clone();
@@ -110,7 +113,10 @@ impl Session {
     }
 
     /// Get a mutable reference to the [`core::Document`] in the [`Session`].
-    pub async fn get_mut_document(&self, uri: &lsp_types::Url) -> anyhow::Result<RefMut<'_, lsp_types::Url, Document>> {
+    pub async fn get_mut_document(
+        &self,
+        uri: &lsp_types::Url,
+    ) -> anyhow::Result<RefMut<'_, lsp_types::Url, Document>> {
         self.documents.get_mut(uri).ok_or_else(|| {
             let kind = SessionResourceKind::Document;
             let uri = uri.clone();

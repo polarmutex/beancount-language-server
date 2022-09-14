@@ -1,8 +1,9 @@
 use tower_lsp::lsp_types::notification::Progress;
 use tower_lsp::lsp_types::request::WorkDoneProgressCreate;
 use tower_lsp::lsp_types::{
-    NumberOrString, ProgressParams, ProgressParamsValue, ProgressToken, WorkDoneProgress, WorkDoneProgressBegin,
-    WorkDoneProgressCreateParams, WorkDoneProgressEnd, WorkDoneProgressReport,
+    NumberOrString, ProgressParams, ProgressParamsValue, ProgressToken, WorkDoneProgress,
+    WorkDoneProgressBegin, WorkDoneProgressCreateParams, WorkDoneProgressEnd,
+    WorkDoneProgressReport,
 };
 use tower_lsp::Client;
 
@@ -16,7 +17,9 @@ pub async fn progress_begin(client: &Client, title: &str) -> ProgressToken {
     };
 
     client
-        .send_request::<WorkDoneProgressCreate>(WorkDoneProgressCreateParams { token: token.clone() })
+        .send_request::<WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
+            token: token.clone(),
+        })
         .await
         .unwrap();
 
