@@ -86,6 +86,7 @@ name = "beancount-language-server"
 version = "1.2.5"
 dependencies = [
  "anyhow",
+ "beancount-language-server-treesitter-utils",
  "bytes",
  "chrono",
  "clap",
@@ -108,7 +109,16 @@ dependencies = [
  "tracing-tree",
  "tree-sitter",
  "tree-sitter-beancount",
- "tree-sitter-utils",
+]
+
+[[package]]
+name = "beancount-language-server-treesitter-utils"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lsp-types",
+ "ropey",
+ "tree-sitter",
 ]
 
 [[package]]
@@ -1214,16 +1224,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a9bbff1d80f6310d8571b3fd87cf741ecd371aa34177fce3c80d5f82cc30043"
 dependencies = [
  "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-utils"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lsp-types",
- "ropey",
  "tree-sitter",
 ]
 
