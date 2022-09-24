@@ -1,5 +1,6 @@
 pub mod text_document {
     use crate::{document::Document, progress, providers, session::Session};
+    use beancount_language_server_treesitter_utils::lsp_utils::lsp_textdocchange_to_ts_inputedit;
     use log::debug;
     use providers::completion;
     use providers::diagnostics;
@@ -7,7 +8,6 @@ pub mod text_document {
     use std::path::PathBuf;
     use tokio::sync::Mutex;
     use tower_lsp::lsp_types;
-    use tree_sitter_utils::lsp_utils::lsp_textdocchange_to_ts_inputedit;
 
     /// handler for `textDocument/didOpen`.
     pub(crate) async fn did_open(

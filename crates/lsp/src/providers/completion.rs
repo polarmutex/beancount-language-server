@@ -1,8 +1,8 @@
 use crate::{beancount_data::BeancountData, session::Session};
+use beancount_language_server_treesitter_utils::node::text_for_tree_sitter_node;
 use chrono::Datelike;
 use tower_lsp::lsp_types;
 use tracing::debug;
-use tree_sitter_utils::node::text_for_tree_sitter_node;
 
 /// Provider function for LSP ``.
 pub(crate) async fn completion(
