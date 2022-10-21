@@ -10,7 +10,7 @@ repository = "https://github.com/polarmutex/beancount-language-server"
 keywords = ["lsp", "tree-sitter"]
 
 [dependencies]
-anyhow = "1.0.65"
+anyhow = "1.0.66"
 lsp-types = "0.93.1"
 ropey = "1.5"
 tree-sitter = "0.20.9"
