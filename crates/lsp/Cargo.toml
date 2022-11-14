@@ -33,7 +33,7 @@ tokio = { version = "1.21", features = ["io-std", "macros", "process", "sync", "
 tracing = "0.1.37"
 tracing-appender = "0.2.0"
 tracing-subscriber = {version = "0.3.16", features = ["env-filter", "tracing-log"]}
-tracing-tree = "0.2.0"
+tracing-tree = "0.2.2"
 tree-sitter = "0.20"
 tree-sitter-beancount = "=2.0.0"
 
