@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.0](https://github.com/polarmutex/beancount-language-server/compare/beancount-language-server-v1.2.5...beancount-language-server-v1.3.0) (2022-12-21)
+
+
+### Features ✨
+
+* impl progress ([54cce8c](https://github.com/polarmutex/beancount-language-server/commit/54cce8cbdc81fd5f6b51e75d0006f29022d05f21))
+
+
+### Bug Fixes 🐛
+
+* nix flake checks to pass ([2bc4287](https://github.com/polarmutex/beancount-language-server/commit/2bc42877d53623f3ea9a0a7585c74f2ab325ec79))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * beancount-language-server-treesitter-utils bumped from 0.1.0 to 0.1.1
+
 ## [1.2.5](https://github.com/polarmutex/beancount-language-server/compare/v1.2.4...v1.2.5) (2022-06-21)
 
 
