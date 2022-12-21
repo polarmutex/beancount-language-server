@@ -35,7 +35,7 @@ tracing-appender = "0.2.0"
 tracing-subscriber = {version = "0.3.16", features = ["env-filter", "tracing-log"]}
 tracing-tree = "0.2.2"
 tree-sitter = "0.20"
-tree-sitter-beancount = "=2.0.0"
+tree-sitter-beancount = "=2.1.1"
 
 [package.metadata.release]
 tag = true
