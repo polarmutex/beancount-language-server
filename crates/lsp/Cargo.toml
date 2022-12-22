@@ -20,7 +20,6 @@ chrono = { version = "0", default-features = false, features = ["clock"] }
 clap = "4"
 dashmap = "5.3"
 glob = "0.3"
-log = "0.4"
 tower-lsp = "0.17.0"
 regex = "1"
 ropey = "1.5"
@@ -32,10 +31,19 @@ linked-list = "0.0.3"
 tokio = { version = "1.23", features = ["io-std", "macros", "process", "sync", "rt-multi-thread"]}
 tracing = "0.1.37"
 tracing-appender = "0.2.0"
-tracing-subscriber = {version = "0.3.16", features = ["env-filter", "tracing-log"]}
-tracing-tree = "0.2.2"
 tree-sitter = "0.20"
 tree-sitter-beancount = "=2.0.0"
+
+[dependencies.tracing-subscriber]
+version = "0.3.16"
+default_features = false
+features = [
+    "env-filter",
+    "fmt",
+    "smallvec",
+    "std",
+    "tracing-log",
+]
 
 [package.metadata.release]
 tag = true
