@@ -1,11 +1,11 @@
 use crate::{progress, session::Session};
 use glob::glob;
-use log::error;
 use std::collections::linked_list::LinkedList;
 use std::fs;
 use std::path;
 use tokio::sync::Mutex;
 use tower_lsp::lsp_types as lsp;
+use tracing::error;
 
 // Issus to look at if running into issues with this
 // https://github.com/silvanshade/lspower/issues/8

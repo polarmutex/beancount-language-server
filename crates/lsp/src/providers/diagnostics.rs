@@ -1,9 +1,9 @@
 use crate::beancount_data::BeancountData;
 use dashmap::DashMap;
-use log::debug;
 use std::path::Path;
 use tokio::process::Command;
 use tower_lsp::lsp_types;
+use tracing::debug;
 
 pub struct DiagnosticData {
     current_diagnostics: DashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>>,

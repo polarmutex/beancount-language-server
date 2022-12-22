@@ -3,12 +3,12 @@ use dashmap::{
     mapref::one::{Ref, RefMut},
     DashMap,
 };
-use log::debug;
 use providers::diagnostics;
 use serde::{Deserialize, Serialize};
 use std::path;
 use tokio::sync::{Mutex, RwLock};
 use tower_lsp::lsp_types;
+use tracing::debug;
 
 /// A tag representing of the kinds of session resource.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,5 +1,5 @@
 use crate::session::Session;
-use log::debug;
+use tracing::debug;
 use std::cmp::Ordering;
 use tower_lsp::lsp_types;
 
