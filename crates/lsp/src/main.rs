@@ -18,7 +18,7 @@ async fn main() {
 
     let filter = EnvFilter::default().add_directive(Directive::from(LevelFilter::DEBUG));
 
-    let (file_logger, _guard, std_logger) = if _matches.is_present("log") {
+    let (file_logger, _guard, std_logger) = if _matches.contains_id("log") {
         println!("enable logging");
         let file_appender = tracing_appender::rolling::never(".", "beancount-language-server.log");
         let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
