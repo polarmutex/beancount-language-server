@@ -1,20 +1,21 @@
-use crate::{beancount_data::BeancountData, session::Session};
+use crate::beancount_data::BeancountData;
+use crate::server::LspServerStateSnapshot;
+use anyhow::Result;
 use beancount_language_server_treesitter_utils::node::text_for_tree_sitter_node;
 use chrono::Datelike;
-use tower_lsp::lsp_types;
+use std::collections::HashMap;
 use tracing::debug;
 
 /// Provider function for LSP ``.
-pub(crate) async fn completion(
-    session: &Session,
+pub(crate) fn completion(
+    snapshot: LspServerStateSnapshot,
     params: lsp_types::CompletionParams,
-) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
+) -> Result<Option<lsp_types::CompletionResponse>> {
     debug!("providers::completion");
 
     let uri = params.text_document_position.text_document.uri;
-    let tree = session.get_mut_tree(&uri).await?;
-    let tree = tree.lock().await;
-    let doc = session.get_document(&uri).await?;
+    let tree = snapshot.forest.get(&uri).unwrap();
+    let doc = snapshot.open_docs.get(&uri).unwrap();
     let content = doc.clone().content;
     let line = params.text_document_position.position.line as usize;
     debug!("providers::completion - line {}", line);
@@ -94,7 +95,7 @@ pub(crate) async fn completion(
                     && parent_parent_node.unwrap().kind() == "posting_or_kv_list"
                     && char < 10
                 {
-                    complete_account(&session.beancount_data)
+                    complete_account(snapshot.beancount_data)
                 } else {
                     match node.kind() {
                         "ERROR" => {
@@ -106,7 +107,7 @@ pub(crate) async fn completion(
                             let prefix = text.chars().next().unwrap();
                             debug!("providers::completion - handle node - prefix {}", prefix);
                             if prefix == '"' {
-                                complete_txn_string(&session.beancount_data)
+                                complete_txn_string(snapshot.beancount_data)
                             } else {
                                 Ok(None)
                             }
@@ -115,7 +116,7 @@ pub(crate) async fn completion(
                             debug!("providers::completion - handle node - handle identifier");
                             // if parent_parent_node.is_some() && parent_parent_node.unwrap().kind() ==
                             // "posting_or_kv_list" {
-                            complete_account(&session.beancount_data)
+                            complete_account(snapshot.beancount_data)
                             //} else {
                             //    Ok(None)
                             //}
@@ -124,7 +125,7 @@ pub(crate) async fn completion(
                             debug!("providers::completion - handle node - handle string");
                             if parent_node.is_some() && parent_node.unwrap().kind() == "txn_strings"
                             {
-                                complete_txn_string(&session.beancount_data)
+                                complete_txn_string(snapshot.beancount_data)
                             } else {
                                 Ok(None)
                             }
@@ -182,27 +183,33 @@ fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
 }
 
 fn complete_txn_string(
-    data: &BeancountData,
+    data: HashMap<lsp_types::Url, BeancountData>,
 ) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
     debug!("providers::completion::account");
     let mut completions = Vec::new();
-    for txn_string in data.get_txn_strings() {
-        completions.push(lsp_types::CompletionItem::new_simple(
-            txn_string,
-            "".to_string(),
-        ));
+    for data in data.values() {
+        for txn_string in data.get_txn_strings() {
+            completions.push(lsp_types::CompletionItem::new_simple(
+                txn_string,
+                "".to_string(),
+            ));
+        }
     }
     Ok(Some(lsp_types::CompletionResponse::Array(completions)))
 }
 
-fn complete_account(data: &BeancountData) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
+fn complete_account(
+    data: HashMap<lsp_types::Url, BeancountData>,
+) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
     debug!("providers::completion::account");
     let mut completions = Vec::new();
-    for account in data.get_accounts() {
-        completions.push(lsp_types::CompletionItem::new_simple(
-            account,
-            "Beancount Account".to_string(),
-        ));
+    for data in data.values() {
+        for account in data.get_accounts() {
+            completions.push(lsp_types::CompletionItem::new_simple(
+                account,
+                "Beancount Account".to_string(),
+            ));
+        }
     }
     Ok(Some(lsp_types::CompletionResponse::Array(completions)))
 }
