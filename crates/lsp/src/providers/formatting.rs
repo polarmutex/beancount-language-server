@@ -1,7 +1,7 @@
-use crate::session::Session;
-use tracing::debug;
+use crate::server::LspServerStateSnapshot;
+use anyhow::Result;
 use std::cmp::Ordering;
-use tower_lsp::lsp_types;
+use tracing::debug;
 
 struct TSRange {
     pub start: tree_sitter::Point,
@@ -61,16 +61,15 @@ impl<'a> tree_sitter::TextProvider<'a> for RopeProvider<'a> {
 }
 
 /// Provider function for LSP ``.
-pub(crate) async fn formatting(
-    session: &Session,
+pub(crate) fn formatting(
+    snapshot: LspServerStateSnapshot,
     params: lsp_types::DocumentFormattingParams,
-) -> anyhow::Result<Option<Vec<lsp_types::TextEdit>>> {
+) -> Result<Option<Vec<lsp_types::TextEdit>>> {
     debug!("providers::formatting");
 
     let uri = params.text_document.uri;
-    let tree = session.get_mut_tree(&uri).await?;
-    let tree = tree.lock().await;
-    let doc = session.get_document(&uri).await?;
+    let tree = snapshot.forest.get(&uri).unwrap();
+    let doc = snapshot.open_docs.get(&uri).unwrap();
 
     let query = tree_sitter::Query::new(tree.language(), QUERY_STR).unwrap();
     let mut query_cursor = tree_sitter::QueryCursor::new();

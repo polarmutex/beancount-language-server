@@ -1,4 +1,3 @@
-use beancount_language_server::server::run_server;
 use clap::{Arg, Command};
 use std::fs;
 use std::io;
@@ -7,8 +6,7 @@ use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::{filter::Directive, EnvFilter};
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let matches = Command::new("beancount-language-server")
         .arg(
             Arg::new("stdio")
@@ -21,10 +19,9 @@ async fn main() {
 
     setup_logging(matches.contains_id("log"));
 
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
-
-    run_server(stdin, stdout).await
+    beancount_language_server::run_server()
+        .map_err(|e| anyhow::anyhow!("{}", e))
+        .unwrap();
 }
 
 fn setup_logging(file: bool) {

@@ -1,20 +1,21 @@
-use crate::{progress, session::Session};
+use crate::beancount_data::BeancountData;
+use crate::server::LspServerStateSnapshot;
+use crate::server::ProgressMsg;
+use crate::server::Task;
+use crossbeam_channel::Sender;
 use glob::glob;
 use std::collections::linked_list::LinkedList;
 use std::fs;
 use std::path;
-use tokio::sync::Mutex;
-use tower_lsp::lsp_types as lsp;
 use tracing::error;
 
 // Issus to look at if running into issues with this
 // https://github.com/silvanshade/lspower/issues/8
-pub(crate) async fn parse_initial_forest(
-    session: &Session,
-    root_url: lsp::Url,
+pub(crate) fn parse_initial_forest(
+    snapshot: LspServerStateSnapshot,
+    root_url: lsp_types::Url,
+    sender: Sender<Task>,
 ) -> anyhow::Result<bool, anyhow::Error> {
-    let progress_token = progress::progress_begin(&session.client, "Generating Forest").await;
-
     let mut seen_files = LinkedList::new();
     // let root_pathbuf: String = self.root_journal_path.into_inner().unwrap().as_ref().as_os_str();
     // let temp = self.root_journal_path.read().await;
@@ -25,6 +26,16 @@ pub(crate) async fn parse_initial_forest(
     let mut to_processs = LinkedList::new();
     let mut new_to_processs = LinkedList::new();
     to_processs.push_back(root_url.clone());
+    let mut processed = 0;
+    let mut total = 1;
+
+    sender
+        .send(Task::Progress(ProgressMsg::ForestInit {
+            done: processed,
+            total,
+            data: None,
+        }))
+        .unwrap();
 
     while !done {
         let mut temp = to_processs.clone();
@@ -32,14 +43,15 @@ pub(crate) async fn parse_initial_forest(
 
         while iter.peek().is_some() {
             let file = iter.next().unwrap();
-            session
-                .client
-                .log_message(lsp::MessageType::INFO, format!("parsing {}", file.as_ref()))
-                .await;
+            //session
+            //    .client
+            //    .log_message(lsp::MessageType::INFO, format!("parsing {}", file.as_ref()))
+            //    .await;
 
             let file_path = file.to_file_path().ok().unwrap();
 
-            progress::progress(&session.client, progress_token.clone(), file.to_string()).await;
+            processed += 1;
+            tracing::info!("processing {}", file.to_string());
 
             let text = fs::read_to_string(file_path.clone())?;
             let bytes = text.as_bytes();
@@ -47,17 +59,20 @@ pub(crate) async fn parse_initial_forest(
             let mut parser = tree_sitter::Parser::new();
             parser.set_language(tree_sitter_beancount::language())?;
             let tree = parser.parse(&text, None).unwrap();
-            session.parsers.insert(file.clone(), Mutex::new(parser));
             let mut cursor = tree.root_node().walk();
 
-            session
-                .forest
-                .insert(file.clone(), Mutex::new(tree.clone()));
-
             let content = ropey::Rope::from_str(text.as_str());
-            session
-                .beancount_data
-                .update_data(file.clone(), &tree, &content);
+            let beancount_data = BeancountData::new(&tree, &content);
+
+            sender
+                .send(Task::Progress(ProgressMsg::ForestInit {
+                    done: processed,
+                    total,
+                    data: Some((file.clone(), tree.clone(), beancount_data)),
+                }))
+                .unwrap();
+
+            //snapshot.forest.insert(file.clone(), tree.clone());
 
             let include_filenames = tree
                 .root_node()
@@ -84,7 +99,7 @@ pub(crate) async fn parse_initial_forest(
                     } else {
                         path.to_path_buf()
                     };
-                    let path_url = lsp::Url::from_file_path(path).unwrap();
+                    let path_url = lsp_types::Url::from_file_path(path).unwrap();
 
                     Some(path_url)
                 });
@@ -95,8 +110,9 @@ pub(crate) async fn parse_initial_forest(
                 for entry in glob(include_url.path()).expect("Failed to read glob") {
                     match entry {
                         Ok(path) => {
-                            let url = lsp::Url::from_file_path(path).unwrap();
-                            if !session.forest.contains_key(&url) {
+                            let url = lsp_types::Url::from_file_path(path).unwrap();
+                            if !snapshot.forest.contains_key(&url) {
+                                total += 1;
                                 new_to_processs.push_back(url);
                             }
                         }
@@ -115,7 +131,13 @@ pub(crate) async fn parse_initial_forest(
         }
     }
 
-    progress::progress_end(&session.client, progress_token).await;
+    sender
+        .send(Task::Progress(ProgressMsg::ForestInit {
+            done: processed,
+            total,
+            data: None,
+        }))
+        .unwrap();
 
     Ok(true)
 }

@@ -1,27 +1,25 @@
 use crate::beancount_data::BeancountData;
-use dashmap::DashMap;
+use std::collections::HashMap;
 use std::path::Path;
-use tokio::process::Command;
-use tower_lsp::lsp_types;
+use std::process::Command;
 use tracing::debug;
 
 pub struct DiagnosticData {
-    current_diagnostics: DashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>>,
+    current_diagnostics: HashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>>,
 }
 impl DiagnosticData {
     pub fn new() -> Self {
         Self {
-            current_diagnostics: DashMap::new(),
+            current_diagnostics: HashMap::new(),
         }
     }
 
-    pub fn update(&self, data: DashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>>) {
+    /*pub fn update(&self, data: HashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>>) {
         self.current_diagnostics.clear();
         for it in data.iter() {
-            self.current_diagnostics
-                .insert(it.key().clone(), it.value().clone());
+            self.current_diagnostics.insert(it.0.clone(), it.1.clone());
         }
-    }
+    }*/
 }
 
 impl Default for DiagnosticData {
@@ -31,19 +29,18 @@ impl Default for DiagnosticData {
 }
 
 /// Provider function for LSP `textDocument/publishDiagnostics`.
-pub async fn diagnostics(
-    previous_diagnostics: &DiagnosticData,
-    beancount_data: &BeancountData,
+pub fn diagnostics(
+    //previous_diagnostics: &DiagnosticData,
+    beancount_data: HashMap<lsp_types::Url, BeancountData>,
     bean_check_cmd: &Path,
     root_journal_file: &Path,
-) -> DashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>> {
+) -> HashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>> {
     let error_line_regexp = regex::Regex::new(r"^([^:]+):(\d+):\s*(.*)$").unwrap();
 
     debug!("providers::diagnostics");
     let output = Command::new(bean_check_cmd)
         .arg(root_journal_file)
         .output()
-        .await
         .unwrap();
     debug!("bean-check outupt {:?}", output);
 
@@ -51,7 +48,7 @@ pub async fn diagnostics(
         debug!("bean-check generating diags");
         let output = std::str::from_utf8(&output.stderr);
 
-        let map: DashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>> = DashMap::new();
+        let mut map: HashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>> = HashMap::new();
 
         for line in output.unwrap().lines() {
             debug!("line: {}", line);
@@ -82,28 +79,28 @@ pub async fn diagnostics(
         map
     } else {
         debug!("bean-check return empty");
-        DashMap::new()
+        HashMap::new()
     };
 
-    let ret: DashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>> = DashMap::new();
+    let mut ret: HashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>> = HashMap::new();
 
     // Add previous urls to clear out if neccessary
-    for it in previous_diagnostics.current_diagnostics.iter() {
-        ret.insert(it.key().clone(), vec![]);
-    }
+    //for it in previous_diagnostics.current_diagnostics.iter() {
+    //    ret.insert(it.key().clone(), vec![]);
+    //}
     // add bean-check errors
     for url in diags.iter() {
-        for diag in url.value().iter() {
-            if ret.contains_key(url.key()) {
-                ret.get_mut(url.key()).unwrap().push(diag.clone());
+        for diag in url.1.iter() {
+            if ret.contains_key(url.0) {
+                ret.get_mut(url.0).unwrap().push(diag.clone());
             } else {
-                ret.insert(url.key().clone(), vec![diag.clone()]);
+                ret.insert(url.0.clone(), vec![diag.clone()]);
             }
         }
     }
     // add flagged entries
-    for uri in beancount_data.flagged_entries.iter() {
-        for entry in uri.value().iter() {
+    for data in beancount_data.iter() {
+        for entry in data.1.flagged_entries.iter() {
             let position = lsp_types::Position {
                 line: entry.line,
                 character: 0,
@@ -117,10 +114,10 @@ pub async fn diagnostics(
                 severity: Some(lsp_types::DiagnosticSeverity::WARNING),
                 ..lsp_types::Diagnostic::default()
             };
-            if ret.contains_key(uri.key()) {
-                ret.get_mut(uri.key()).unwrap().push(diag);
+            if ret.contains_key(data.0) {
+                ret.get_mut(data.0).unwrap().push(diag);
             } else {
-                ret.insert(uri.key().clone(), vec![diag]);
+                ret.insert(data.0.clone(), vec![diag]);
             }
         }
     }
