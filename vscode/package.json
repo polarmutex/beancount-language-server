@@ -31,7 +31,7 @@
     "test": "cross-env TEST_VARIABLE=test node ./out/tests/runTests.js"
   },
   "dependencies": {
-    "got": "^12.1.0",
+    "got": "^12.5.3",
     "tree-sitter": "^0.20.0",
     "tree-sitter-beancount": "^2.0.0",
     "vscode-languageclient": "8.0.0-next.14"
