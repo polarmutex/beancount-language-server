@@ -45,7 +45,7 @@ pub mod text_document {
         let snapshot = state.snapshot();
         let task_sender = state.task_sender.clone();
         state.thread_pool.execute(move || {
-            let _result = handle_diagnostics(snapshot, task_sender);
+            let _result = handle_diagnostics(snapshot, task_sender, params.text_document.uri);
         });
 
         Ok(())
@@ -54,14 +54,14 @@ pub mod text_document {
     /// handler for `textDocument/didSave`.
     pub(crate) fn did_save(
         state: &mut LspServerState,
-        _params: lsp_types::DidSaveTextDocumentParams,
+        params: lsp_types::DidSaveTextDocumentParams,
     ) -> Result<()> {
         tracing::debug!("handlers::did_save");
 
         let snapshot = state.snapshot();
         let task_sender = state.task_sender.clone();
         state.thread_pool.execute(move || {
-            let _result = handle_diagnostics(snapshot, task_sender);
+            let _result = handle_diagnostics(snapshot, task_sender, params.text_document.uri);
         });
 
         Ok(())
@@ -169,15 +169,23 @@ pub mod text_document {
         formatting::formatting(snapshot, params)
     }
 
-    fn handle_diagnostics(snapshot: LspServerStateSnapshot, sender: Sender<Task>) -> Result<()> {
+    fn handle_diagnostics(
+        snapshot: LspServerStateSnapshot,
+        sender: Sender<Task>,
+        uri: lsp_types::Url,
+    ) -> Result<()> {
         tracing::debug!("handlers::check_beancount");
         let bean_check_cmd = &PathBuf::from("bean-check");
-
-        let root_journal_path = snapshot.config.journal_root.unwrap();
 
         sender
             .send(Task::Progress(ProgressMsg::BeanCheck { done: 0, total: 1 }))
             .unwrap();
+
+        let root_journal_path = if snapshot.config.journal_root.is_some() {
+            snapshot.config.journal_root.unwrap()
+        } else {
+            PathBuf::from(uri.to_string().replace("file://", ""))
+        };
 
         let diags =
             diagnostics::diagnostics(snapshot.beancount_data, bean_check_cmd, &root_journal_path);

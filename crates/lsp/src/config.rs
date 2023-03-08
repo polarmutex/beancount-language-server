@@ -17,12 +17,16 @@ impl Config {
     }
     pub fn update(&mut self, mut json: serde_json::Value) -> Result<()> {
         let beancount_lsp_settings: BeancountLspOptions = serde_json::from_value(json).unwrap();
-        self.journal_root = Some(PathBuf::from(beancount_lsp_settings.journal_file.clone()));
+        if beancount_lsp_settings.journal_file.is_some() {
+            self.journal_root = Some(PathBuf::from(
+                beancount_lsp_settings.journal_file.unwrap().clone(),
+            ));
+        }
         Ok(())
     }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct BeancountLspOptions {
-    pub journal_file: String,
+    pub journal_file: Option<String>,
 }
