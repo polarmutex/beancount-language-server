@@ -1,4 +1,5 @@
 pub mod text_document {
+    use crate::beancount_data::BeancountData;
     use crate::document::Document;
     use crate::providers::completion;
     use crate::providers::diagnostics;
@@ -39,8 +40,13 @@ pub mod text_document {
 
         state
             .forest
-            .entry(uri)
+            .entry(uri.clone())
             .or_insert_with(|| parser.parse(&params.text_document.text, None).unwrap());
+
+        state.beancount_data.entry(uri.clone()).or_insert_with(|| {
+            let content = ropey::Rope::from_str(&params.text_document.text);
+            BeancountData::new(state.forest.get(&uri).unwrap(), &content)
+        });
 
         let snapshot = state.snapshot();
         let task_sender = state.task_sender.clone();
@@ -144,11 +150,13 @@ pub mod text_document {
 
         debug!("handlers::did_change - save tree");
         if let Some(tree) = result {
-            *state.forest.get_mut(uri).unwrap() = tree;
-            /*state
-            .beancount_data
-            .update_data(uri.clone(), &tree, &doc.content);
-            */
+            *state.forest.get_mut(uri).unwrap() = tree.clone();
+            *state.beancount_data.get_mut(&uri).unwrap() = BeancountData::new(&tree, &doc.content);
+            /*.unwrap().update_data(
+                uri.clone(),
+                &tree,
+                &doc.content,
+            );*/
         }
 
         debug!("handlers::did_close - done");
