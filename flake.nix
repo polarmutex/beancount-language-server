@@ -17,32 +17,38 @@
     };
   };
 
-  outputs = { self, nixpkgs, crane, flake-utils, advisory-db, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
-        pkgs = import nixpkgs {
-          inherit system;
-        };
+  outputs = {
+    self,
+    nixpkgs,
+    crane,
+    flake-utils,
+    advisory-db,
+    ...
+  }:
+    flake-utils.lib.eachDefaultSystem (system: let
+      pkgs = import nixpkgs {
+        inherit system;
+      };
 
-        inherit (pkgs) lib;
+      inherit (pkgs) lib;
 
-        craneLib = crane.lib.${system};
-        src = ./.;
+      craneLib = crane.lib.${system};
+      src = ./.;
 
-        # Build *just* the cargo dependencies, so we can reuse
-        # all of that work (e.g. via cachix) when running in CI
-        cargoArtifacts = craneLib.buildDepsOnly {
-          inherit src;
-        };
+      # Build *just* the cargo dependencies, so we can reuse
+      # all of that work (e.g. via cachix) when running in CI
+      cargoArtifacts = craneLib.buildDepsOnly {
+        inherit src;
+      };
 
-        # Build the actual crate itself, reusing the dependency
-        # artifacts from above.
-        beancount-language-server-crate = craneLib.buildPackage {
-          inherit cargoArtifacts src;
-        };
-      in
-      {
-        checks = {
+      # Build the actual crate itself, reusing the dependency
+      # artifacts from above.
+      beancount-language-server-crate = craneLib.buildPackage {
+        inherit cargoArtifacts src;
+      };
+    in {
+      checks =
+        {
           # Build the crate as part of `nix flake check` for convenience
           inherit beancount-language-server-crate;
 
@@ -62,7 +68,6 @@
             inherit src;
           };
 
-
           # Audit dependencies
           beancount-language-server-crate-audit = craneLib.cargoAudit {
             inherit src advisory-db;
@@ -77,7 +82,8 @@
             partitions = 1;
             partitionType = "count";
           };
-        } // lib.optionalAttrs (system == "x86_64-linux") {
+        }
+        // lib.optionalAttrs (system == "x86_64-linux") {
           # NB: cargo-tarpaulin only supports x86_64 systems
           # Check code coverage (note: this will not upload coverage anywhere)
           beancount-language-server-crate-coverage = craneLib.cargoTarpaulin {
@@ -85,24 +91,26 @@
           };
         };
 
-        packages.default = beancount-language-server-crate;
+      packages.default = beancount-language-server-crate;
 
-        apps.default = flake-utils.lib.mkApp {
-          drv = beancount-language-server-crate;
-        };
+      apps.default = flake-utils.lib.mkApp {
+        drv = beancount-language-server-crate;
+      };
 
-        devShells.default = pkgs.mkShell {
-          inputsFrom = builtins.attrValues self.checks;
+      devShells.default = pkgs.mkShell {
+        inputsFrom = builtins.attrValues self.checks;
 
-          # Extra inputs can be added here
-          nativeBuildInputs = with pkgs; [
-            cargo
-            rustc
-            rustfmt
-            clippy
-            #nodejs-16_x
-            #python310
-          ];
-        };
-      });
+        # Extra inputs can be added here
+        nativeBuildInputs = with pkgs; [
+          cargo
+          cargo-dist
+          rustc
+          rustfmt
+          clippy
+          commitizen
+          #nodejs-16_x
+          #python310
+        ];
+      };
+    });
 }
