@@ -1,176 +1,135 @@
+# CI that:
+#
+# * checks for a Git Tag that looks like a release
+# * creates a Github Release™ and fills in its text
+# * builds artifacts with cargo-dist (executable-zips, installers)
+# * uploads those artifacts to the Github Release™
+#
+# Note that the Github Release™ will be created before the artifacts,
+# so there will be a few minutes where the release has no artifacts
+# and then they will slowly trickle in, possibly failing. To make
+# this more pleasant we mark the release as a "draft" until all
+# artifacts have been successfully uploaded. This allows you to
+# choose what to do with partial successes and avoids spamming
+# anyone with notifications before the release is actually ready.
 name: release
 
+permissions:
+  contents: write
+
+# This task will run whenever you push a git tag that looks like a version
+# like "v1", "v1.2.0", "v0.1.0-prerelease01", "my-app-v1.0.0", etc.
+# The version will be roughly parsed as ({PACKAGE_NAME}-)?v{VERSION}, where
+# PACKAGE_NAME must be the name of a Cargo package in your workspace, and VERSION
+# must be a Cargo-style SemVer Version.
+#
+# If PACKAGE_NAME is specified, then we will create a Github Release™ for that
+# package (erroring out if it doesn't have the given version or isn't cargo-dist-able).
+#
+# If PACKAGE_NAME isn't specified, then we will create a Github Release™ for all
+# (cargo-dist-able) packages in the workspace with that version (this is mode is
+# intended for workspaces with only one dist-able package, or with all dist-able
+# packages versioned/released in lockstep).
+#
+# If you push multiple tags at once, separate instances of this workflow will
+# spin up, creating an independent Github Release™ for each one.
+#
+# If there's a prerelease-style suffix to the version then the Github Release™
+# will be marked as a prerelease.
 on:
   push:
-    branches:
-      - master
-
-env:
-  RUST_VERSION: 1.59.0
-  RUSTFLAGS: "-D warnings"
-  RUSTDOCFLAGS: "-D warnings"
+    tags:
+      - '*-?v[0-9]+*'
 
 jobs:
-  release_please:
-    name: Release Please
+  # Create the Github Release™ so the packages have something to be uploaded to
+  create-release:
     runs-on: ubuntu-latest
-    if: github.repository == 'polarmutex/beancount-language-server'
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-    steps:
-      - uses: google-github-actions/release-please-action@v3
-        id: release
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          command: manifest
-
-    # Build sources for every OS
-  build:
-    needs: release_please
-    if: ${{ needs.release_please.outputs.release_created == 'true' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-20.04
-            target: x86_64-unknown-linux-gnu
-            code-target: linux-x64
-          - os: ubuntu-20.04
-            target: aarch64-unknown-linux-gnu
-            code-target: linux-arm64
-          - os: macos-11
-            target: x86_64-apple-darwin
-            code-target: darwin-x64
-          - os: macos-11
-            target: aarch64-apple-darwin
-            code-target: darwin-arm64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            code-target: win32-x64
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-            code-target: win32-arm64
-
-    name: package ${{ matrix.code-target }}
-    runs-on: ${{ matrix.os }}
-    continue-on-error: true
-
-    steps:
-      - name: checkout repository
-        uses: actions/checkout@v3
-
-      - name: install node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 16.x
-
-      - name: install arm64 toolchain
-        if: matrix.code-target == 'linux-arm64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: setup cache
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-
-      - name: setup rust
-        uses: actions-rs/toolchain@v1.0.7
-        with:
-          toolchain: stable
-          override: true
-          profile: minimal
-          target: ${{ matrix.target }}
-
-      - name: setup rust-cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: build
-        uses: actions-rs/cargo@v1.0.3
-        with:
-          command: build
-          args: --release --locked --target ${{ matrix.target }}
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-
-      - name: copy cli binary
-        if: matrix.os == 'windows-latest'
-        run: |
-          mkdir dist
-          mkdir vscode/server
-          ls target
-          ls target/${{ matrix.target }}
-          ls target/${{ matrix.target }}/release
-          cp target/${{ matrix.target }}/release/beancount-language-server.exe dist/beancount-language-server-${{ matrix.code-target }}.exe
-          cp target/${{ matrix.target }}/release/beancount-language-server.exe vscode/server/beancount-language-server.exe
-
-      - name: copy cli binary
-        if: matrix.os != 'windows-latest'
-        run: |
-          mkdir dist
-          mkdir vscode/server
-          cp target/${{ matrix.target }}/release/beancount-language-server dist/beancount-language-server-${{ matrix.code-target }}
-          cp target/${{ matrix.target }}/release/beancount-language-server vscode/server/beancount-language-server
-
-      - name: package extension
-        run: |
-          npm ci
-          npm run package
-          npx vsce package -o "../dist/beancount-language-server-${{ matrix.code-target }}.vsix" --target ${{ matrix.code-target }}
-        working-directory: vscode
-
-      - name: upload artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: lsp
-          path: ./dist/*
-          files: dist/*
-          if-no-files-found: error
-
-  publish:
-    name: Publish Cargo Package
-    needs: [release_please, build]
-    runs-on: ubuntu-latest
-    if: ${{ needs.release_please.outputs.release_created == 'true' }}
+      has-releases: ${{ steps.create-release.outputs.has-releases }}
     env:
-      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_API_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v3
-
-      - uses: actions-rs/toolchain@v1.0.7
-        with:
-          toolchain: stable
-          override: true
-          profile: minimal
-
-      - name: Publish beancount-language-server
-        run: cargo publish
-
-      - name: download extension artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: lsp
-          path: artifacts
-
-      - name: install node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 16.x
-          registry-url: "https://registry.npmjs.org"
-
-      - name: publish extension
+      - name: Install Rust
+        run: rustup update 1.67.1 --no-self-update && rustup default 1.67.1
+      - name: Install cargo-dist
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.0.4-prerelease.3/cargo-dist-v0.0.4-prerelease.3-installer.sh | sh
+      - id: create-release
         run: |
-          npm ci
-          npx vsce publish --packagePath artifacts/beancount-language-server-*.vsix
-        if: needs.build.outputs.prerelease != 'true'
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          cargo dist manifest --tag=${{ github.ref_name }} --artifacts=all --no-local-paths --output-format=json > dist-manifest.json
+          echo "dist manifest ran successfully"
+          cat dist-manifest.json
 
-      - name: Post Build | Add Artifacts to Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: artifacts/*
-          tag_name: ${{ needs.release_please.outputs.tag_name }}
+          # Create the Github Release™ based on what cargo-dist thinks it should be
+          ANNOUNCEMENT_TITLE=$(cat dist-manifest.json | jq --raw-output ".announcement_title")
+          IS_PRERELEASE=$(cat dist-manifest.json | jq --raw-output ".announcement_is_prerelease")
+          cat dist-manifest.json | jq --raw-output ".announcement_changelog" > new_dist_announcement.md
+          gh release create ${{ github.ref_name }} --draft --prerelease="$IS_PRERELEASE" --title="$ANNOUNCEMENT_TITLE" --notes-file=new_dist_announcement.md
+          echo "created announcement!"
+          # Upload the manifest to the Github Release™
+          gh release upload ${{ github.ref_name }} dist-manifest.json
+          echo "uploaded manifest!"
+          # Disable all the upload-artifacts tasks if we have no actual releases
+          HAS_RELEASES=$(cat dist-manifest.json | jq --raw-output ".releases != null")
+          echo "has-releases=$HAS_RELEASES" >> "$GITHUB_OUTPUT"
+  # Build and packages all the things
+  upload-artifacts:
+    # Let the initial task tell us to not run (currently very blunt)
+    needs: create-release
+    if: ${{ needs.create-release.outputs.has-releases == 'true' }}
+    strategy:
+      matrix:
+        # For these target platforms
+        include:
+        - os: ubuntu-20.04
+          dist-args: --artifacts=global
+          install-dist: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.0.4-prerelease.3/cargo-dist-v0.0.4-prerelease.3-installer.sh | sh
+        - os: macos-11
+          dist-args: --artifacts=local --target=aarch64-apple-darwin --target=x86_64-apple-darwin
+          install-dist: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.0.4-prerelease.3/cargo-dist-v0.0.4-prerelease.3-installer.sh | sh
+        - os: ubuntu-20.04
+          dist-args: --artifacts=local --target=x86_64-unknown-linux-gnu
+          install-dist: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.0.4-prerelease.3/cargo-dist-v0.0.4-prerelease.3-installer.sh | sh
+        - os: windows-2019
+          dist-args: --artifacts=local --target=x86_64-pc-windows-msvc
+          install-dist: irm  https://github.com/axodotdev/cargo-dist/releases/download/v0.0.4-prerelease.3/cargo-dist-v0.0.4-prerelease.3-installer.ps1 | iex
+
+    runs-on: ${{ matrix.os }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Rust
+        run: rustup update 1.67.1 --no-self-update && rustup default 1.67.1
+      - name: Install cargo-dist
+        run: ${{ matrix.install-dist }}
+      - name: Run cargo-dist
+        # This logic is a bit janky because it's trying to be a polyglot between
+        # powershell and bash since this will run on windows, macos, and linux!
+        # The two platforms don't agree on how to talk about env vars but they
+        # do agree on 'cat' and '$()' so we use that to marshal values between commands.
+        run: |
+          # Actually do builds and make zips and whatnot
+          cargo dist build --tag=${{ github.ref_name }} --output-format=json ${{ matrix.dist-args }} > dist-manifest.json
+          echo "dist ran successfully"
+          cat dist-manifest.json
+          # Parse out what we just built and upload it to the Github Release™
+          cat dist-manifest.json | jq --raw-output ".artifacts[]?.path | select( . != null )" > uploads.txt
+          echo "uploading..."
+          cat uploads.txt
+          gh release upload ${{ github.ref_name }} $(cat uploads.txt)
+          echo "uploaded!"
+  # Mark the Github Release™ as a non-draft now that everything has succeeded!
+  publish-release:
+    # Only run after all the other tasks, but it's ok if upload-artifacts was skipped
+    needs: [create-release, upload-artifacts]
+    if: ${{ always() && needs.create-release.result == 'success' && (needs.upload-artifacts.result == 'skipped' || needs.upload-artifacts.result == 'success') }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: mark release as non-draft
+        run: |
+          gh release edit ${{ github.ref_name }} --draft=false
