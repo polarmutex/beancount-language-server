@@ -107,7 +107,7 @@
           rustc
           rustfmt
           clippy
-          commitizen
+          cocogitto
           #nodejs-16_x
           #python310
         ];
