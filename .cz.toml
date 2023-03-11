@@ -1,8 +1,7 @@
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.109.1"
-tag_format = "$major.$minor.$patch$prerelease"
+version = "v1.2.5"
+tag_format = "v$major.$minor.$patch$prerelease"
 version_files = [
     "./crates/lsp/Cargo.toml",
-    "./crates/format/Cargo.toml",
     ]
