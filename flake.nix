@@ -107,7 +107,7 @@
           rustc
           rustfmt
           clippy
-          cocogitto
+          git-cliff
           #nodejs-16_x
           #python310
         ];
