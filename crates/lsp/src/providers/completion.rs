@@ -1,7 +1,7 @@
 use crate::beancount_data::BeancountData;
 use crate::server::LspServerStateSnapshot;
+use crate::treesitter_utils::text_for_tree_sitter_node;
 use anyhow::Result;
-use beancount_language_server_treesitter_utils::node::text_for_tree_sitter_node;
 use chrono::Datelike;
 use std::collections::HashMap;
 use tracing::debug;

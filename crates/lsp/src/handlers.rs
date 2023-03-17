@@ -9,8 +9,8 @@ pub mod text_document {
     use crate::server::ProgressMsg;
     use crate::server::Task;
     use crate::to_json;
+    use crate::treesitter_utils::lsp_textdocchange_to_ts_inputedit;
     use anyhow::Result;
-    use beancount_language_server_treesitter_utils::lsp_utils::lsp_textdocchange_to_ts_inputedit;
     use crossbeam_channel::Sender;
     use lsp_types::notification::Notification;
     use std::path::PathBuf;

@@ -1,4 +1,4 @@
-use beancount_language_server_treesitter_utils::node::text_for_tree_sitter_node;
+use crate::treesitter_utils::text_for_tree_sitter_node;
 use std::collections::HashSet;
 
 #[derive(Clone, Debug)]

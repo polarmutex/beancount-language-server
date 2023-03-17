@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/lsp",
-    "crates/tree-sitter-utils",
 ]
 
 # Config for 'cargo dist'

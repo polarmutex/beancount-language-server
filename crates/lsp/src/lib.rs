@@ -10,6 +10,7 @@ pub mod progress;
 pub mod providers;
 mod server;
 //pub mod session;
+mod treesitter_utils;
 
 use crate::config::Config;
 use crate::server::LspServerState;
