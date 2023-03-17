@@ -65,8 +65,8 @@ pub(crate) fn completion(
             let parent_node = node.parent();
             debug!("providers::completion - parent node {:?}", parent_node);
             let mut parent_parent_node = None;
-            if parent_node.is_some() {
-                parent_parent_node = parent_node.unwrap().parent();
+            if let Some(pnode) = parent_node {
+                parent_parent_node = pnode.parent();
             }
             debug!(
                 "providers::completion - parent node {:?}",
@@ -83,9 +83,9 @@ pub(crate) fn completion(
                 prev_named_node
             );
 
-            if trigger_character.is_some() {
+            if let Some(char) = trigger_character {
                 debug!("providers::completion - handle trigger char");
-                match trigger_character.unwrap().as_str() {
+                match char.as_str() {
                     "2" => complete_date(),
                     _ => Ok(None),
                 }

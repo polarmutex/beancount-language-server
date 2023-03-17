@@ -17,7 +17,6 @@ use anyhow::Result;
 use lsp_server::Connection;
 use lsp_types::InitializeParams;
 use serde::{de::DeserializeOwned, Serialize};
-use std::path::PathBuf;
 
 pub fn run_server() -> Result<()> {
     tracing::info!("beancount-language-server started");
@@ -68,9 +67,9 @@ pub fn run_server() -> Result<()> {
         config
     };
 
-    main_loop(connection, config);
+    main_loop(connection, config)?;
 
-    io_threads.join();
+    io_threads.join()?;
 
     Ok(())
 }

@@ -5,12 +5,12 @@ use std::process::Command;
 use tracing::debug;
 
 pub struct DiagnosticData {
-    current_diagnostics: HashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>>,
+    //current_diagnostics: HashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>>,
 }
 impl DiagnosticData {
     pub fn new() -> Self {
         Self {
-            current_diagnostics: HashMap::new(),
+            //current_diagnostics: HashMap::new(),
         }
     }
 
@@ -69,11 +69,7 @@ pub fn diagnostics(
                     severity: Some(lsp_types::DiagnosticSeverity::ERROR),
                     ..lsp_types::Diagnostic::default()
                 };
-                if map.contains_key(&file_url) {
-                    map.get_mut(&file_url).unwrap().push(diag);
-                } else {
-                    map.insert(file_url, vec![diag]);
-                }
+                map.entry(file_url).or_insert(vec![]).push(diag);
             }
         }
         map

@@ -25,7 +25,7 @@ pub(crate) fn parse_initial_forest(
 
     let mut to_processs = LinkedList::new();
     let mut new_to_processs = LinkedList::new();
-    to_processs.push_back(root_url.clone());
+    to_processs.push_back(root_url);
     let mut processed = 0;
     let mut total = 1;
 
