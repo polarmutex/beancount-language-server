@@ -1,6 +1,6 @@
 [package]
 name = "beancount-language-server"
-version = "1.2.5"
+version = "1.2.6"
 rust-version = "1.59"
 edition = "2021"
 authors = ["Brian Ryall <polarmutex@users.noreply.github.com>"]
