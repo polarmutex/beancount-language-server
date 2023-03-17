@@ -151,7 +151,7 @@ pub mod text_document {
         debug!("handlers::did_change - save tree");
         if let Some(tree) = result {
             *state.forest.get_mut(uri).unwrap() = tree.clone();
-            *state.beancount_data.get_mut(&uri).unwrap() = BeancountData::new(&tree, &doc.content);
+            *state.beancount_data.get_mut(uri).unwrap() = BeancountData::new(&tree, &doc.content);
             /*.unwrap().update_data(
                 uri.clone(),
                 &tree,

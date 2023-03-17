@@ -10,7 +10,6 @@ use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
 use lsp_types::notification::Notification;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::Instant;
 
 pub(crate) type RequestHandler = fn(&mut LspServerState, lsp_server::Response);
@@ -145,7 +144,7 @@ impl LspServerState {
                     return Ok(());
                 }
             }
-            self.handle_event(event);
+            self.handle_event(event)?;
         }
         Ok(())
     }
