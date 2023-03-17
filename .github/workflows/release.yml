@@ -10,7 +10,7 @@ on:
       - main
 
 jobs:
-    release-plz:
+  release-plz:
     name: Release-plz
     runs-on: ubuntu-latest
     steps:
