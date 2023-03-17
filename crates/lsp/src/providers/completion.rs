@@ -167,7 +167,7 @@ fn add_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     } else {
         month += 1;
     }
-    chrono::NaiveDate::from_ymd(year, month, 1)
+    chrono::NaiveDate::from_ymd_opt(year, month, 1).expect("valid date")
 }
 
 fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
@@ -179,7 +179,7 @@ fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     } else {
         month -= 1;
     }
-    chrono::NaiveDate::from_ymd(year, month, 1)
+    chrono::NaiveDate::from_ymd_opt(year, month, 1).expect("valid date")
 }
 
 fn complete_txn_string(
