@@ -61,16 +61,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "beancount-language-server-treesitter-utils"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lsp-types",
- "ropey",
- "tree-sitter",
-]
-
-[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
