@@ -46,41 +46,6 @@
       beancount-language-server-crate = craneLib.buildPackage {
         inherit cargoArtifacts src;
       };
-
-      release-plz = pkgs.rustPlatform.buildRustPackage rec {
-        pname = "release-plz";
-        version = "0.2.55";
-        src = pkgs.fetchFromGitHub {
-          owner = "MarcoIeni";
-          repo = "release-plz";
-          rev = "release-plz-v${version}";
-          hash = "sha256-6syVqGQ+Qnr8nPFJBARSwQ9vRNXgKHm55XQ/Nr8qG3M=";
-        };
-
-        cargoHash = "sha256-9pjLWagAx/z+tvihk9RVN7zatObD7OJmsfPMWVFGl3o=";
-
-        nativeBuildInputs = [
-          pkgs.pkg-config
-        ];
-
-        buildInputs = [
-          pkgs.openssl
-        ];
-
-        doCheck = false;
-
-        #nativeCheckInputs = lib.optionals pkgs.stdenv.isDarwin [
-        #  pkgs.rustup
-        #];
-
-        meta = with lib; {
-          description = "Release rust packages without using the command line.";
-          homepage = "https://github.com/axodotdev/cargo-dist";
-          changelog = "https://github.com/MarcoIeni/release-plz/blob/${src.rev}/CHANGELOG.md";
-          license = with licenses; [mit];
-          maintainers = with maintainers; [polarmutex];
-        };
-      };
     in {
       checks =
         {
@@ -143,7 +108,6 @@
           rustfmt
           clippy
           git-cliff
-          release-plz
           #nodejs-16_x
           #python310
         ];
