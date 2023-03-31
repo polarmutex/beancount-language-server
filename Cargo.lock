@@ -903,9 +903,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-beancount"
-version = "2.0.0"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a9bbff1d80f6310d8571b3fd87cf741ecd371aa34177fce3c80d5f82cc30043"
+checksum = "0e644de3e1b38fa9afe78ba66120d030515c583261b56b8d911fc6922cffce7d"
 dependencies = [
  "cc",
  "tree-sitter",
