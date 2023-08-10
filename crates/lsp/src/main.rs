@@ -9,12 +9,12 @@ use tracing_subscriber::{filter::Directive, EnvFilter};
 fn main() {
     let matches = Command::new("beancount-language-server")
         .args(&[
-            arg!(--stdio ... "specifies to use stdio to communicate with lsp"),
-            arg!(--log ... "write log to file"),
+            arg!(--stdio "specifies to use stdio to communicate with lsp"),
+            arg!(--log "write log to file"),
         ])
         .get_matches();
 
-    setup_logging(matches.contains_id("log"));
+    setup_logging(matches.get_flag("log"));
 
     beancount_language_server::run_server()
         .map_err(|e| anyhow::anyhow!("{}", e))
