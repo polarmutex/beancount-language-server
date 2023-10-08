@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.1] - 2023-03-31
+
+### Bug Fixes
+
+- Cli not handling stdio option correctly
+
 ## [1.3.0] - 2023-03-18
 
 ### Bug Fixes

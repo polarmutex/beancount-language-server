@@ -1,4 +1,4 @@
-use clap::{Arg, Command};
+use clap::{arg, Command};
 use std::fs;
 use std::io;
 use std::sync::Arc;
@@ -8,13 +8,10 @@ use tracing_subscriber::{filter::Directive, EnvFilter};
 
 fn main() {
     let matches = Command::new("beancount-language-server")
-        .arg(
-            Arg::new("stdio")
-                .long("stdio")
-                .help("use std io for lang server"),
-        )
-        //TODO let the user specify the file
-        .arg(Arg::new("log").long("log").help("Write logs to file"))
+        .args(&[
+            arg!(--stdio ... "specifies to use stdio to communicate with lsp"),
+            arg!(--log ... "write log to file"),
+        ])
         .get_matches();
 
     setup_logging(matches.contains_id("log"));

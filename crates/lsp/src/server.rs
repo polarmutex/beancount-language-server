@@ -118,8 +118,9 @@ impl LspServerState {
     pub fn run(&mut self, receiver: Receiver<lsp_server::Message>) -> Result<()> {
         // init forest
         if self.config.journal_root.is_some() {
-            let journal_root =
-                lsp_types::Url::from_file_path(self.config.journal_root.clone().unwrap()).unwrap();
+            let file = self.config.journal_root.as_ref().unwrap();
+            let journal_root = lsp_types::Url::from_file_path(file)
+                .unwrap_or_else(|()| panic!("Cannot parse URL for file '{file:?}'"));
 
             tracing::info!("initializing forest...");
             let snapshot = self.snapshot();
