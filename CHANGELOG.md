@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.2] - 2023-10-08
+
+### Bug Fixes
+
+- Handle tilde in journal_file
+- Add some debug to journal file load to hopefully find user issues
+
+### Documentation
+
+- Add docs for use with Helix
+
 ## [1.3.1] - 2023-03-31
 
 ### Bug Fixes
