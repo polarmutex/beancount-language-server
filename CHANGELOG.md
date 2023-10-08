@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.3] - 2023-10-08
+
+### CI Tasks
+
+- Bump rustup version to 1.72.0
+
 ## [1.3.2] - 2023-10-08
 
 ### Bug Fixes
