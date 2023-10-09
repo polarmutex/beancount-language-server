@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Setup | Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup | Rust
         uses: actions-rs/toolchain@v1.0.7
@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Setup | Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup | Cache
         uses: Swatinem/rust-cache@v2
@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Setup | Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup | Cache
         uses: Swatinem/rust-cache@v2
@@ -92,7 +92,7 @@ jobs:
         rust: [stable, nightly]
     steps:
       - name: Setup | Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup | Cache
         uses: Swatinem/rust-cache@v2
@@ -137,7 +137,7 @@ jobs:
   documentation:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install rust toolchain
         uses: actions-rs/toolchain@v1.0.7
         with:
