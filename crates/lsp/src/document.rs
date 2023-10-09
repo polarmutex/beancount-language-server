@@ -7,7 +7,6 @@ pub struct Document {
 impl Document {
     pub fn open(params: lsp_types::DidOpenTextDocumentParams) -> Self {
         let content = ropey::Rope::from(params.text_document.text);
-        let content = content;
         Self { content }
     }
 

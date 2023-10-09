@@ -69,7 +69,7 @@ pub fn diagnostics(
                     severity: Some(lsp_types::DiagnosticSeverity::ERROR),
                     ..lsp_types::Diagnostic::default()
                 };
-                map.entry(file_url).or_insert(vec![]).push(diag);
+                map.entry(file_url).or_default().push(diag);
             }
         }
         map
