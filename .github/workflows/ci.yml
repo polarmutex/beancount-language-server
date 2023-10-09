@@ -66,7 +66,6 @@ jobs:
   test:
     name: Test Suite
     runs-on: ${{ matrix.os }}
-    needs: cargo_check # First check then run expansive tests
     strategy:
       fail-fast: false
       matrix:
