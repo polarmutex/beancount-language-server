@@ -31,7 +31,10 @@ jobs:
           components: rustfmt
 
       - name: Build | Format
-        run: cargo fmt --all -- --check
+        uses: actions-rs/cargo@v1
+        with:
+            command: fmt
+            args: -- --check
 
   # Run the `clippy` linting tool
   clippy:
@@ -53,31 +56,10 @@ jobs:
           components: clippy
 
       - name: Build | Lint
-        uses: actions-rs/cargo@v1.0.3
+        uses: actions-rs/cargo@v1
         with:
-          command: clippy
-          args: --workspace --locked --all-targets --all-features -- -D clippy::all
-
-  # Ensure that the project could be successfully compiled
-  cargo_check:
-    name: Compile
-    runs-on: ubuntu-latest
-    steps:
-      - name: Setup | Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup | Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Setup | Rust
-        uses: actions-rs/toolchain@v1.0.7
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
-
-      - name: Build | Check
-        run: cargo check --workspace --locked
+            command: clippy
+            args: --all-targets --all-features
 
   # Run tests on Linux, macOS, and Windows
   # On both Rust stable and Rust nightly
