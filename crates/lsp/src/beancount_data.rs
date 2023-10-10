@@ -63,14 +63,14 @@ impl BeancountData {
         //TODO: consider doing something silimar with others around
         let mut txn_string_strings: HashSet<String> = HashSet::new();
         for transaction in transactions {
-            if let Some(txn_strings) = transaction.child_by_field_name("txn_strings") {
-                if let Some(payee) = txn_strings.children(&mut cursor).next() {
-                    txn_string_strings.insert(
-                        text_for_tree_sitter_node(content, &payee)
-                            .trim()
-                            .to_string(),
-                    );
-                }
+            if let Some(narration) = transaction.child_by_field_name("narration") {
+                //if let Some(payee) = txn_strings.children(&mut cursor).next() {
+                txn_string_strings.insert(
+                    text_for_tree_sitter_node(content, &narration)
+                        .trim()
+                        .to_string(),
+                );
+                //}
             }
         }
 
