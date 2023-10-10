@@ -121,14 +121,14 @@ pub(crate) fn completion(
                             //    Ok(None)
                             //}
                         }
-                        "string" => {
+                        "narration" => {
                             debug!("providers::completion - handle node - handle string");
-                            if parent_node.is_some() && parent_node.unwrap().kind() == "txn_strings"
-                            {
-                                complete_txn_string(snapshot.beancount_data)
-                            } else {
-                                Ok(None)
-                            }
+                            //if parent_node.is_some() && parent_node.unwrap().kind() == "txn_strings"
+                            //{
+                            complete_txn_string(snapshot.beancount_data)
+                            //} else {
+                            //    Ok(None)
+                            //}
                         }
                         _ => Ok(None),
                     }
