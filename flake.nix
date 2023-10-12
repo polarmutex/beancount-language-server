@@ -128,11 +128,8 @@
         devShells.default =
           pkgs.mkShell
           {
-            NIX_CFLAGS_LINK = "-fuse-ld=mold";
-
             buildInputs = with pkgs;
               [
-                mold
                 clang
                 pkg-config
                 systemd
@@ -152,9 +149,13 @@
               })
               virt-viewer
             ];
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+              pkgs.stdenv.cc.cc
+              # Add any missing library needed
+              # You can use the nix-index package to locate them, e.g. nix-locate -w --top-level --at-root /lib/libudev.so.1
+            ];
 
             shellHook = ''
-              source ./.nixos-vm/vm.sh
             '';
 
             inherit GIT_HASH;
