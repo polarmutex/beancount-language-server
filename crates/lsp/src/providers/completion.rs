@@ -158,7 +158,7 @@ fn complete_date() -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
     ])))
 }
 
-fn add_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
+pub fn add_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     let mut year = date.year();
     let mut month = date.month();
     if month == 12 {
@@ -170,7 +170,7 @@ fn add_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd_opt(year, month, 1).expect("valid date")
 }
 
-fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
+pub fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     let mut year = date.year();
     let mut month = date.month();
     if month == 1 {
@@ -212,38 +212,4 @@ fn complete_account(
         }
     }
     Ok(Some(lsp_types::CompletionResponse::Array(completions)))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::add_one_month;
-    use super::sub_one_month;
-
-    #[test]
-    fn handle_sub_one_month() {
-        let input_date = chrono::NaiveDate::from_ymd_opt(2022, 6, 1).expect("valid date");
-        let expected_date = chrono::NaiveDate::from_ymd_opt(2022, 5, 1).expect("valid date");
-        assert_eq!(sub_one_month(input_date), expected_date)
-    }
-
-    #[test]
-    fn handle_sub_one_month_in_jan() {
-        let input_date = chrono::NaiveDate::from_ymd_opt(2022, 1, 1).expect("valid date");
-        let expected_date = chrono::NaiveDate::from_ymd_opt(2021, 12, 1).expect("valid date");
-        assert_eq!(sub_one_month(input_date), expected_date)
-    }
-
-    #[test]
-    fn handle_add_one_month() {
-        let input_date = chrono::NaiveDate::from_ymd_opt(2022, 6, 1).expect("valid date");
-        let expected_date = chrono::NaiveDate::from_ymd_opt(2022, 7, 1).expect("valid date");
-        assert_eq!(add_one_month(input_date), expected_date)
-    }
-
-    #[test]
-    fn handle_add_one_month_in_dec() {
-        let input_date = chrono::NaiveDate::from_ymd_opt(2021, 12, 1).expect("valid date");
-        let expected_date = chrono::NaiveDate::from_ymd_opt(2022, 1, 1).expect("valid date");
-        assert_eq!(add_one_month(input_date), expected_date)
-    }
 }
