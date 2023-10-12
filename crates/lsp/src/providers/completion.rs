@@ -3,52 +3,39 @@ use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::text_for_tree_sitter_node;
 use anyhow::Result;
 use chrono::Datelike;
+use lsp_types::Url;
 use std::collections::HashMap;
 use tracing::debug;
 
 /// Provider function for LSP ``.
 pub(crate) fn completion(
     snapshot: LspServerStateSnapshot,
-    params: lsp_types::CompletionParams,
-) -> Result<Option<lsp_types::CompletionResponse>> {
+    trigger_character: Option<char>,
+    uri: &Url,
+    line: &u32,
+    char: &u32,
+) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion");
 
-    let uri = params.text_document_position.text_document.uri;
     let tree = snapshot.forest.get(&uri).unwrap();
     let doc = snapshot.open_docs.get(&uri).unwrap();
     let content = doc.clone().content;
-    let line = params.text_document_position.position.line as usize;
     debug!("providers::completion - line {}", line);
-    let char = params.text_document_position.position.character as usize;
     debug!("providers::completion - char {}", char);
     let start = tree_sitter::Point {
-        row: line,
-        column: if char == 0 { char } else { char - 1 },
+        row: *line as usize,
+        column: if *char == 0 {
+            *char as usize
+        } else {
+            *char as usize - 1
+        },
     };
     debug!("providers::completion - start {}", start);
     let end = tree_sitter::Point {
-        row: line,
-        column: char,
+        row: *line as usize,
+        column: *char as usize,
     };
     debug!("providers::completion - end {}", end);
-    let trigger_character = params
-        .context
-        .and_then(|c| c.trigger_character)
-        .and_then(|c| {
-            // Make sure 2 trigger only for first col
-            if c == "2" {
-                debug!("checking 2 - {}", char);
-                if char > 1 {
-                    debug!("clearing 2");
-                    None
-                } else {
-                    debug!("keeping 2");
-                    Some(c)
-                }
-            } else {
-                None
-            }
-        });
     debug!(
         "providers::completion - is_char_triggered {:?}",
         trigger_character
@@ -85,15 +72,15 @@ pub(crate) fn completion(
 
             if let Some(char) = trigger_character {
                 debug!("providers::completion - handle trigger char");
-                match char.as_str() {
-                    "2" => complete_date(),
+                match char {
+                    '2' => complete_date(),
                     _ => Ok(None),
                 }
             } else {
                 debug!("providers::completion - handle node");
                 if parent_parent_node.is_some()
                     && parent_parent_node.unwrap().kind() == "posting_or_kv_list"
-                    && char < 10
+                    && *char < 10
                 {
                     complete_account(snapshot.beancount_data)
                 } else {
@@ -139,7 +126,7 @@ pub(crate) fn completion(
     }
 }
 
-fn complete_date() -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
+fn complete_date() -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::date");
     let today = chrono::offset::Local::now().naive_local().date();
     let prev_month = sub_one_month(today).format("%Y-%m-").to_string();
@@ -150,12 +137,24 @@ fn complete_date() -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
     debug!("providers::completion::date {}", next_month);
     let today = today.format("%Y-%m-%d").to_string();
     debug!("providers::completion::date {}", today);
-    Ok(Some(lsp_types::CompletionResponse::Array(vec![
-        lsp_types::CompletionItem::new_simple(today, "today".to_string()),
-        lsp_types::CompletionItem::new_simple(cur_month, "this month".to_string()),
-        lsp_types::CompletionItem::new_simple(prev_month, "prev month".to_string()),
-        lsp_types::CompletionItem::new_simple(next_month, "next month".to_string()),
-    ])))
+    let mut items = Vec::new();
+    items.push(lsp_types::CompletionItem::new_simple(
+        today,
+        "today".to_string(),
+    ));
+    items.push(lsp_types::CompletionItem::new_simple(
+        cur_month,
+        "this month".to_string(),
+    ));
+    items.push(lsp_types::CompletionItem::new_simple(
+        prev_month,
+        "prev month".to_string(),
+    ));
+    items.push(lsp_types::CompletionItem::new_simple(
+        next_month,
+        "next month".to_string(),
+    ));
+    Ok(Some(items))
 }
 
 pub fn add_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
@@ -184,7 +183,7 @@ pub fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
 
 fn complete_txn_string(
     data: HashMap<lsp_types::Url, BeancountData>,
-) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
+) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::account");
     let mut completions = Vec::new();
     for data in data.values() {
@@ -195,12 +194,12 @@ fn complete_txn_string(
             ));
         }
     }
-    Ok(Some(lsp_types::CompletionResponse::Array(completions)))
+    Ok(Some(completions))
 }
 
 fn complete_account(
     data: HashMap<lsp_types::Url, BeancountData>,
-) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
+) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::account");
     let mut completions = Vec::new();
     for data in data.values() {
@@ -211,5 +210,5 @@ fn complete_account(
             ));
         }
     }
-    Ok(Some(lsp_types::CompletionResponse::Array(completions)))
+    Ok(Some(completions))
 }

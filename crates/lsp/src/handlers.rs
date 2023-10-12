@@ -167,7 +167,29 @@ pub mod text_document {
         snapshot: LspServerStateSnapshot,
         params: lsp_types::CompletionParams,
     ) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
-        completion::completion(snapshot, params)
+        let uri = &params.text_document_position.text_document.uri;
+        let line = &params.text_document_position.position.line;
+        let char = &params.text_document_position.position.character;
+        let trigger_char = params
+            .context
+            .clone()
+            .and_then(|ctx| ctx.trigger_character?.chars().next())
+            .and_then(|c| {
+                if c == '2' {
+                    if *char > 1u32 {
+                        None
+                    } else {
+                        Some(c)
+                    }
+                } else {
+                    None
+                }
+            });
+
+        let Some(items) = completion::completion(snapshot, trigger_char, uri, line, char)? else {
+            return Ok(None);
+        };
+        Ok(Some(lsp_types::CompletionResponse::Array(items)))
     }
 
     pub(crate) fn formatting(

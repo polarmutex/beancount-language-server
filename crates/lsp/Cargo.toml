@@ -46,5 +46,8 @@ features = [
     "tracing-log",
 ]
 
+[dev-dependencies]
+insta = { version = "1.34.0", features = ["yaml"] }
+
 [package.metadata.release]
 tag = true
