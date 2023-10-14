@@ -16,14 +16,14 @@ pub struct FlaggedEntry {
 #[derive(Clone, Debug)]
 pub struct BeancountData {
     accounts: Vec<String>,
-    txn_strings: Vec<String>,
+    narration: Vec<String>,
     pub flagged_entries: Vec<FlaggedEntry>,
 }
 
 impl BeancountData {
     pub fn new(tree: &tree_sitter::Tree, content: &ropey::Rope) -> Self {
         let mut accounts = vec![];
-        let mut txn_strings = vec![];
+        let mut narration = vec![];
         let mut flagged_entries = vec![];
 
         let mut cursor = tree.root_node().walk();
@@ -52,7 +52,7 @@ impl BeancountData {
         }
 
         // Update account opens
-        tracing::debug!("beancount_data:: get txn_strings nodes");
+        tracing::debug!("beancount_data:: get narration nodes");
         tracing::debug!("beancount_data:: get account strings");
         let transactions = tree
             .root_node()
@@ -64,22 +64,20 @@ impl BeancountData {
         let mut txn_string_strings: HashSet<String> = HashSet::new();
         for transaction in transactions {
             if let Some(narration) = transaction.child_by_field_name("narration") {
-                //if let Some(payee) = txn_strings.children(&mut cursor).next() {
                 txn_string_strings.insert(
                     text_for_tree_sitter_node(content, &narration)
                         .trim()
                         .to_string(),
                 );
-                //}
             }
         }
 
-        tracing::debug!("beancount_data:: update txn_strings");
-        txn_strings.clear();
+        tracing::debug!("beancount_data:: update narration");
+        narration.clear();
 
         for txn_string in txn_string_strings {
-            if !txn_strings.contains(&txn_string) {
-                txn_strings.push(txn_string);
+            if !narration.contains(&txn_string) {
+                narration.push(txn_string);
             }
         }
 
@@ -118,7 +116,7 @@ impl BeancountData {
 
         Self {
             accounts,
-            txn_strings,
+            narration,
             flagged_entries,
         }
     }
@@ -127,7 +125,7 @@ impl BeancountData {
         self.accounts.clone()
     }
 
-    pub fn get_txn_strings(&self) -> Vec<String> {
-        self.txn_strings.clone()
+    pub fn get_narration(&self) -> Vec<String> {
+        self.narration.clone()
     }
 }
