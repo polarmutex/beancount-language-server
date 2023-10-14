@@ -77,6 +77,8 @@ pub(crate) fn completion(
                     Ok(None)
                 }
             }
+            '#' => complete_tag(snapshot.beancount_data),
+            '^' => complete_link(snapshot.beancount_data),
             _ => Ok(None),
         }
     } else {
@@ -123,15 +125,14 @@ pub(crate) fn completion(
                             //    Ok(None)
                         }
                     }
-                    /*"narration" => {
-                        debug!("providers::completion - handle node - handle string");
-                        //if parent_node.is_some() && parent_node.unwrap().kind() == "txn_strings"
-                        //{
-                        complete_txn_string(snapshot.beancount_data)
-                        //} else {
-                        //    Ok(None)
-                        //}
-                    }*/
+                    "narration" => {
+                        debug!("providers::completion - handle node - handle narration");
+                        complete_narration(snapshot.beancount_data)
+                    }
+                    "payee" => {
+                        debug!("providers::completion - handle node - handle payee");
+                        complete_narration(snapshot.beancount_data)
+                    }
                     _ => Ok(None),
                 }
                 //}
@@ -260,6 +261,42 @@ fn complete_account(
             completions.push(lsp_types::CompletionItem {
                 label: account,
                 detail: Some("Beancount Account".to_string()),
+                kind: Some(lsp_types::CompletionItemKind::TEXT),
+                ..Default::default()
+            });
+        }
+    }
+    Ok(Some(completions))
+}
+
+fn complete_tag(
+    data: HashMap<lsp_types::Url, BeancountData>,
+) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
+    debug!("providers::completion::tag");
+    let mut completions = Vec::new();
+    for data in data.values() {
+        for tag in data.get_tags() {
+            completions.push(lsp_types::CompletionItem {
+                label: tag,
+                detail: Some("Beancount Tag".to_string()),
+                kind: Some(lsp_types::CompletionItemKind::TEXT),
+                ..Default::default()
+            });
+        }
+    }
+    Ok(Some(completions))
+}
+
+fn complete_link(
+    data: HashMap<lsp_types::Url, BeancountData>,
+) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
+    debug!("providers::completion::tag");
+    let mut completions = Vec::new();
+    for data in data.values() {
+        for link in data.get_links() {
+            completions.push(lsp_types::CompletionItem {
+                label: link,
+                detail: Some("Beancount Link".to_string()),
                 kind: Some(lsp_types::CompletionItemKind::TEXT),
                 ..Default::default()
             });
@@ -642,6 +679,68 @@ mod tests {
                     ..Default::default()
                 }
             ]
+        )
+    }
+
+    #[test]
+    fn handle_tag_completion() {
+        let fixure = r#"
+%! main.beancount
+2023-10-01 open Assets:Test USD
+2023-10-01 open Expenses:Test USD
+2023-10-01 txn  "Test Co" "Foo Bar" #tag ^link
+    Assets:Test 1 USD
+    Expenses:Test
+2023-10-01 txn  "Test Co" "Foo Bar" #
+                                     |
+                                     ^
+"#;
+        let test_state = TestState::new(fixure).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        println!("{} {}", cursor.position.line, cursor.position.character);
+        let items = match completion(test_state.snapshot, Some('#'), cursor).unwrap() {
+            Some(items) => items,
+            None => Vec::new(),
+        };
+        assert_eq!(
+            items,
+            [lsp_types::CompletionItem {
+                label: String::from("#tag"),
+                kind: Some(lsp_types::CompletionItemKind::TEXT),
+                detail: Some(String::from("Beancount Tag")),
+                ..Default::default()
+            },]
+        )
+    }
+
+    #[test]
+    fn handle_link_completion() {
+        let fixure = r#"
+%! main.beancount
+2023-10-01 open Assets:Test USD
+2023-10-01 open Expenses:Test USD
+2023-10-01 txn  "Test Co" "Foo Bar" #tag ^link
+    Assets:Test 1 USD
+    Expenses:Test
+2023-10-01 txn  "Test Co" "Foo Bar" #
+                                     |
+                                     ^
+"#;
+        let test_state = TestState::new(fixure).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        println!("{} {}", cursor.position.line, cursor.position.character);
+        let items = match completion(test_state.snapshot, Some('^'), cursor).unwrap() {
+            Some(items) => items,
+            None => Vec::new(),
+        };
+        assert_eq!(
+            items,
+            [lsp_types::CompletionItem {
+                label: String::from("^link"),
+                kind: Some(lsp_types::CompletionItemKind::TEXT),
+                detail: Some(String::from("Beancount Link")),
+                ..Default::default()
+            },]
         )
     }
 }
