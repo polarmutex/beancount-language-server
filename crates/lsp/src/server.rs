@@ -23,7 +23,7 @@ pub(crate) enum ProgressMsg {
     ForestInit {
         total: usize,
         done: usize,
-        data: Option<(lsp_types::Url, tree_sitter::Tree, BeancountData)>,
+        data: Box<Option<(lsp_types::Url, tree_sitter::Tree, BeancountData)>>,
     },
 }
 
@@ -204,7 +204,7 @@ impl LspServerState {
                 )
             }
             ProgressMsg::ForestInit { total, done, data } => {
-                if let Some(data) = data {
+                if let Some(data) = *data {
                     self.forest.insert(data.0.clone(), data.1);
                     self.beancount_data.insert(data.0, data.2);
                 }

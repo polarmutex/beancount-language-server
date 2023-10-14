@@ -22,9 +22,9 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             trigger_characters: Some(vec![
                 "2".into(),
                 "\"".into(),
+                "#".into(),
+                "^".into(),
                 //":".into(),
-                //"#".into(),
-                //"\\".into(),
             ]),
             ..Default::default()
         }),

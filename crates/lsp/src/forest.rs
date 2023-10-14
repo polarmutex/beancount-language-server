@@ -33,7 +33,7 @@ pub(crate) fn parse_initial_forest(
         .send(Task::Progress(ProgressMsg::ForestInit {
             done: processed,
             total,
-            data: None,
+            data: Box::new(None),
         }))
         .unwrap();
 
@@ -68,7 +68,7 @@ pub(crate) fn parse_initial_forest(
                 .send(Task::Progress(ProgressMsg::ForestInit {
                     done: processed,
                     total,
-                    data: Some((file.clone(), tree.clone(), beancount_data)),
+                    data: Box::new(Some((file.clone(), tree.clone(), beancount_data))),
                 }))
                 .unwrap();
 
@@ -135,7 +135,7 @@ pub(crate) fn parse_initial_forest(
         .send(Task::Progress(ProgressMsg::ForestInit {
             done: processed,
             total,
-            data: None,
+            data: Box::new(None),
         }))
         .unwrap();
 

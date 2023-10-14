@@ -18,6 +18,8 @@ pub struct BeancountData {
     accounts: Vec<String>,
     narration: Vec<String>,
     pub flagged_entries: Vec<FlaggedEntry>,
+    tags: Vec<String>,
+    links: Vec<String>,
 }
 
 impl BeancountData {
@@ -114,10 +116,54 @@ impl BeancountData {
                 }
             });
 
+        // Update tags
+        tracing::debug!("beancount_data:: get tags");
+        let query_string = r#"
+        (tag) @tag
+        "#;
+        let query = tree_sitter::Query::new(tree_sitter_beancount::language(), query_string)
+            .unwrap_or_else(|_| panic!("get_position_by_query invalid query {query_string}"));
+        let mut cursor_qry = tree_sitter::QueryCursor::new();
+        let binding = content.clone().to_string();
+        let matches = cursor_qry.matches(&query, tree.root_node(), binding.as_bytes());
+        let mut tags: Vec<_> = matches
+            .into_iter()
+            .flat_map(|m| {
+                m.captures
+                    .iter()
+                    .map(|capture| text_for_tree_sitter_node(content, &capture.node))
+            })
+            .collect();
+        tags.sort();
+        tags.dedup();
+
+        // Update links
+        tracing::debug!("beancount_data:: get tags");
+        let query_string = r#"
+        (link) @link
+        "#;
+        let query = tree_sitter::Query::new(tree_sitter_beancount::language(), query_string)
+            .unwrap_or_else(|_| panic!("get_position_by_query invalid query {query_string}"));
+        let mut cursor_qry = tree_sitter::QueryCursor::new();
+        let binding = content.clone().to_string();
+        let matches = cursor_qry.matches(&query, tree.root_node(), binding.as_bytes());
+        let mut links: Vec<_> = matches
+            .into_iter()
+            .flat_map(|m| {
+                m.captures
+                    .iter()
+                    .map(|capture| text_for_tree_sitter_node(content, &capture.node))
+            })
+            .collect();
+        links.sort();
+        links.dedup();
+
         Self {
             accounts,
             narration,
             flagged_entries,
+            tags,
+            links,
         }
     }
 
@@ -127,5 +173,13 @@ impl BeancountData {
 
     pub fn get_narration(&self) -> Vec<String> {
         self.narration.clone()
+    }
+
+    pub fn get_tags(&self) -> Vec<String> {
+        self.tags.clone()
+    }
+
+    pub fn get_links(&self) -> Vec<String> {
+        self.links.clone()
     }
 }
