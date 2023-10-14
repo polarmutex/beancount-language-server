@@ -19,7 +19,13 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             },
         )),
         completion_provider: Some(CompletionOptions {
-            trigger_characters: Some(vec!["2".into(), ":".into(), "#".into(), "\\".into()]),
+            trigger_characters: Some(vec![
+                "2".into(),
+                "\"".into(),
+                //":".into(),
+                //"#".into(),
+                //"\\".into(),
+            ]),
             ..Default::default()
         }),
         document_formatting_provider: Some(OneOf::Left(true)),
