@@ -36,7 +36,7 @@ tree-sitter-beancount = "2"
 threadpool = "1.8.1"
 
 [dependencies.tracing-subscriber]
-version = "0.3.16"
+version = "0.3.18"
 default_features = false
 features = [
     "env-filter",
