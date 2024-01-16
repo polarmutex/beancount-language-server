@@ -147,6 +147,7 @@
                   "rustfmt"
                 ];
               })
+              git-cliff
               virt-viewer
             ];
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [

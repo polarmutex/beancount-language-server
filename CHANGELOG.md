@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.4] - 2024-01-06
+
+### Bug Fixes
+
+- Clippy warnings/errors
+- Read the log cmd flag
+- Upgrade to latest tree-sitter-beancount
+
+### Features
+
+- Improve, simplify, and test completion
+- Tag and link completion
+
+### Refactor
+
+- Initial date completion tests
+- Completion handler to handle params in handler
+
+### Testing
+
+- Add tests for date completion logic
+
 ## [1.3.3] - 2023-10-08
 
 ### CI Tasks
