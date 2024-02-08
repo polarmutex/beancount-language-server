@@ -1,472 +1,369 @@
 use crate::beancount_data::BeancountData;
+use crate::capabilities;
 use crate::config::Config;
-use crate::dispatcher::NotificationDispatcher;
-use crate::dispatcher::RequestDispatcher;
 use crate::document::Document;
 use crate::forest;
 use crate::handlers;
-use crate::progress::Progress;
+use crate::treesitter_utils::lsp_textdocchange_to_ts_inputedit;
 use anyhow::Result;
-use crossbeam_channel::{Receiver, Sender};
-use lsp_types::notification::Notification;
+use async_lsp::router::Router;
+use async_lsp::ClientSocket;
+use async_lsp::ErrorCode;
+use async_lsp::ResponseError;
+use lsp_types::notification as notif;
+use lsp_types::request as req;
+use lsp_types::request::Request;
+use lsp_types::DidChangeTextDocumentParams;
+use lsp_types::DidCloseTextDocumentParams;
+use lsp_types::DidOpenTextDocumentParams;
+use lsp_types::DidSaveTextDocumentParams;
+use lsp_types::InitializeParams;
+use lsp_types::InitializeResult;
+use lsp_types::InitializedParams;
+use lsp_types::ServerInfo;
+use std::borrow::BorrowMut;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::future::ready;
+use std::future::Future;
+use std::ops::ControlFlow;
+use std::panic;
+use std::panic::UnwindSafe;
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
+use tokio::task;
+use tokio::task::JoinHandle;
 
-pub(crate) type RequestHandler = fn(&mut LspServerState, lsp_server::Response);
+type NotifyResult = ControlFlow<async_lsp::Result<()>>;
 
-#[derive(Debug)]
-pub(crate) enum ProgressMsg {
-    BeanCheck {
-        total: usize,
-        done: usize,
-    },
-    ForestInit {
-        total: usize,
-        done: usize,
-        data: Box<Option<(lsp_types::Url, tree_sitter::Tree, BeancountData)>>,
-    },
-}
+pub struct LspServerState {
+    client: ClientSocket,
 
-#[derive(Debug)]
-pub(crate) enum Task {
-    Response(lsp_server::Response),
-    Notify(lsp_server::Notification),
-    Progress(ProgressMsg),
-}
-
-#[derive(Debug)]
-pub(crate) enum Event {
-    Lsp(lsp_server::Message),
-    Task(Task),
-}
-
-/*
-struct LspServer {
-    client: tower_lsp::Client,
-    session: Session,
-}
-*/
-
-pub(crate) struct LspServerState {
-    pub beancount_data: HashMap<lsp_types::Url, BeancountData>,
+    pub beancount_data: Arc<RwLock<HashMap<lsp_types::Url, BeancountData>>>,
 
     // the lsp server config options
-    pub config: Config,
+    pub config: Arc<Config>,
 
-    pub forest: HashMap<lsp_types::Url, tree_sitter::Tree>,
+    pub forest: Arc<RwLock<HashMap<lsp_types::Url, tree_sitter::Tree>>>,
 
     // Documents that are currently kept in memory from the client
-    pub open_docs: HashMap<lsp_types::Url, Document>,
+    pub open_docs: Arc<RwLock<HashMap<lsp_types::Url, Document>>>,
 
     pub parsers: HashMap<lsp_types::Url, tree_sitter::Parser>,
 
-    // The request queue keeps track of all incoming and outgoing requests.
-    pub req_queue: lsp_server::ReqQueue<(String, Instant), RequestHandler>,
+    load_forest_future: Option<JoinHandle<()>>,
+    load_diagnostics_future: Option<JoinHandle<()>>,
+}
 
-    // Channel to send language server messages to the client
-    pub sender: Sender<lsp_server::Message>,
+impl LspServerState {
+    pub fn new_router(client: ClientSocket) -> Router<Self> {
+        let this = Self::new(client);
+        let mut router = Router::new(this);
+        router
+            .request::<req::Initialize, _>(Self::on_initialize)
+            .notification::<notif::Initialized>(Self::on_initialized)
+            .notification::<notif::DidOpenTextDocument>(Self::on_did_open)
+            .notification::<notif::DidCloseTextDocument>(Self::on_did_close)
+            .notification::<notif::DidChangeTextDocument>(Self::on_did_change)
+            .notification::<notif::DidSaveTextDocument>(Self::on_did_save)
+            .request_snap::<req::Completion>(handlers::completion)
+            .request_snap::<req::Formatting>(handlers::formatting)
+            .request::<req::Shutdown, _>(|_, _| ready(Ok(())))
+            .notification::<notif::Exit>(|_, _| ControlFlow::Break(Ok(())));
+        router
+    }
 
-    // True if the client requested that we shut down
-    pub shutdown_requested: bool,
+    pub fn new(client: ClientSocket) -> Self {
+        Self {
+            client,
+            beancount_data: Arc::new(RwLock::new(HashMap::new())),
+            config: Arc::new(Config::new(PathBuf::new())),
+            forest: Arc::new(RwLock::new(HashMap::new())),
+            open_docs: Arc::new(RwLock::new(HashMap::new())),
+            parsers: HashMap::new(),
 
-    // Channel to send tasks to from background operations
-    pub task_sender: Sender<Task>,
+            load_forest_future: None,
+            load_diagnostics_future: None,
+        }
+    }
 
-    // Channel to receive tasks on from background operations
-    pub task_receiver: Receiver<Task>,
+    fn on_initialize(
+        &mut self,
+        params: InitializeParams,
+    ) -> impl Future<Output = Result<InitializeResult, ResponseError>> {
+        tracing::info!("Init params: {params:?}");
 
-    // Thread pool for async execution
-    pub thread_pool: threadpool::ThreadPool,
+        let config = {
+            let root_file = match params.root_uri.and_then(|it| it.to_file_path().ok()) {
+                Some(it) => it,
+                None => std::env::current_dir().expect("to have a current dir"),
+            };
+            let mut config = Config::new(root_file);
+            if let Some(json) = params.initialization_options {
+                config.update(json).unwrap();
+            }
+            config
+        };
+        *Arc::get_mut(&mut self.config).expect("No concurrent access yet") = config;
+
+        let server_capabilities = capabilities::server_capabilities();
+        ready(Ok(InitializeResult {
+            capabilities: server_capabilities,
+            server_info: Some(ServerInfo {
+                name: String::from("beancount-language-server"),
+                version: option_env!("CFG_RELEASE").map(Into::into),
+            }),
+        }))
+    }
+
+    fn spawn_load_forest(&mut self) {
+        let file = self.config.journal_root.as_ref().unwrap();
+        let journal_root = lsp_types::Url::from_file_path(file)
+            .unwrap_or_else(|()| panic!("Cannot parse URL for file '{file:?}'"));
+        let client = self.client.clone();
+        let forest = Arc::clone(&self.forest);
+        let data = Arc::clone(&self.beancount_data);
+        let fut = tokio::spawn(async {
+            forest::parse_initial_forest(client, forest, data, journal_root).await
+        });
+        if let Some(prev_fut) = self.load_forest_future.replace(fut) {
+            prev_fut.abort();
+        }
+        // tokio::spawn(async { forest::parse_initial_forest(forest, data, journal_root).await });
+    }
+
+    fn spawn_update_diagnostics(&mut self, uri: String) {
+        let path = if self.config.journal_root.is_some() {
+            self.config.journal_root.as_ref().unwrap().clone()
+        } else {
+            PathBuf::from(uri.to_string().replace("file://", ""))
+        };
+        let client = self.client.clone();
+        let forest = self.forest.read().unwrap().clone();
+        let data = self.beancount_data.read().unwrap().clone();
+        let fut =
+            task::spawn(async { handlers::handle_diagnostics(client, forest, data, path).await });
+        // let fut = task::spawn(Self::load_flake_workspace(self.client.clone()));
+        if let Some(prev_fut) = self.load_diagnostics_future.replace(fut) {
+            prev_fut.abort();
+        }
+    }
+
+    fn on_initialized(&mut self, _params: InitializedParams) -> NotifyResult {
+        self.spawn_load_forest();
+        ControlFlow::Continue(())
+    }
+
+    /// handler for `textDocument/didOpen`.
+    fn on_did_open(&mut self, params: DidOpenTextDocumentParams) -> NotifyResult {
+        tracing::debug!("handlers::did_open");
+        let uri = params.text_document.uri.clone();
+
+        let document = Document::open(params.clone());
+        //let tree = document.tree.clone();
+        tracing::debug!("handlers::did_open - adding {}", uri);
+        self.open_docs
+            .write()
+            .unwrap()
+            .insert(uri.clone(), document);
+
+        self.parsers.entry(uri.clone()).or_insert_with(|| {
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(tree_sitter_beancount::language())
+                .unwrap();
+            parser
+        });
+        let parser = self.parsers.get_mut(&uri).unwrap();
+
+        self.forest
+            .write()
+            .unwrap()
+            .entry(uri.clone())
+            .or_insert_with(|| parser.parse(&params.text_document.text, None).unwrap());
+
+        self.beancount_data
+            .write()
+            .unwrap()
+            .entry(uri.clone())
+            .or_insert_with(|| {
+                let content = ropey::Rope::from_str(&params.text_document.text);
+                BeancountData::new(self.forest.read().unwrap().get(&uri).unwrap(), &content)
+            });
+
+        // let snapshot = self.snapshot();
+        // let _result = handle_diagnostics(snapshot, task_sender, params.text_document.uri);
+        self.spawn_update_diagnostics(params.text_document.uri.to_string());
+
+        ControlFlow::Continue(())
+    }
+
+    // handler for `textDocument/didClose`.
+    fn on_did_close(&mut self, params: DidCloseTextDocumentParams) -> NotifyResult {
+        tracing::debug!("handlers::did_close");
+        let uri = params.text_document.uri;
+        self.open_docs.write().unwrap().remove(&uri);
+        // let version = Default::default();
+        ControlFlow::Continue(())
+    }
+
+    // handler for `textDocument/didChange`.
+    fn on_did_change(&mut self, params: DidChangeTextDocumentParams) -> NotifyResult {
+        tracing::debug!("handlers::did_change");
+        let uri = &params.text_document.uri;
+        tracing::debug!("handlers::did_change - requesting {}", uri);
+        let mut binding = self.open_docs.write().unwrap();
+        let doc = binding.get_mut(uri).unwrap();
+
+        tracing::debug!("handlers::did_change - convert edits");
+        let edits = params
+            .content_changes
+            .iter()
+            .map(|change| lsp_textdocchange_to_ts_inputedit(&doc.content, change))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("");
+
+        tracing::debug!("handlers::did_change - apply edits - document");
+        for change in &params.content_changes {
+            let text = change.text.as_str();
+            let text_bytes = text.as_bytes();
+            let text_end_byte_idx = text_bytes.len();
+
+            let range = if let Some(range) = change.range {
+                range
+            } else {
+                let start_line_idx = doc.content.byte_to_line(0);
+                let end_line_idx = doc.content.byte_to_line(text_end_byte_idx);
+
+                let start = lsp_types::Position::new(start_line_idx as u32, 0);
+                let end = lsp_types::Position::new(end_line_idx as u32, 0);
+                lsp_types::Range { start, end }
+            };
+
+            let start_row_char_idx = doc.content.line_to_char(range.start.line as usize);
+            let start_col_char_idx = doc.content.utf16_cu_to_char(range.start.character as usize);
+            let end_row_char_idx = doc.content.line_to_char(range.end.line as usize);
+            let end_col_char_idx = doc.content.utf16_cu_to_char(range.end.character as usize);
+
+            let start_char_idx = start_row_char_idx + start_col_char_idx;
+            let end_char_idx = end_row_char_idx + end_col_char_idx;
+            doc.content.remove(start_char_idx..end_char_idx);
+
+            if !change.text.is_empty() {
+                doc.content.insert(start_char_idx, text);
+            }
+        }
+
+        tracing::debug!("handlers::did_change - apply edits - tree");
+        let result = {
+            let parser = self.parsers.get_mut(uri).unwrap();
+            //let mut parser = parser.lock();
+
+            let mut binding = self.forest.write().unwrap();
+            let old_tree = binding.get_mut(uri).unwrap();
+            //let mut old_tree = old_tree.lock().await;
+
+            for edit in &edits {
+                old_tree.edit(edit);
+            }
+
+            parser.parse(doc.text().to_string(), Some(old_tree))
+        };
+
+        tracing::debug!("handlers::did_change - save tree");
+        if let Some(tree) = result {
+            *self.forest.write().unwrap().get_mut(uri).unwrap() = tree.clone();
+            *self.beancount_data.write().unwrap().get_mut(uri).unwrap() =
+                BeancountData::new(&tree, &doc.content);
+            /*.unwrap().update_data(
+                uri.clone(),
+                &tree,
+                &doc.content,
+            );*/
+        }
+
+        tracing::debug!("handlers::did_close - done");
+
+        ControlFlow::Continue(())
+    }
+
+    // handler for `textDocument/didClose`.
+    fn on_did_save(&mut self, params: DidSaveTextDocumentParams) -> NotifyResult {
+        tracing::debug!("handlers::did_save");
+        self.spawn_update_diagnostics(params.text_document.uri.to_string());
+        ControlFlow::Continue(())
+    }
+
+    fn spawn_with_snapshot<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(LspServerStateSnapshot) -> T + Send + 'static,
+    ) -> JoinHandle<T> {
+        let snap = LspServerStateSnapshot {
+            beancount_data: Arc::clone(&self.beancount_data),
+            forest: Arc::clone(&self.forest),
+            open_docs: Arc::clone(&self.open_docs),
+        };
+        task::spawn_blocking(move || f(snap))
+    }
 }
 
 /// A snapshot of the state of the language server
 pub(crate) struct LspServerStateSnapshot {
-    pub beancount_data: HashMap<lsp_types::Url, BeancountData>,
-    pub config: Config,
-    pub forest: HashMap<lsp_types::Url, tree_sitter::Tree>,
-    pub open_docs: HashMap<lsp_types::Url, Document>,
+    pub(crate) beancount_data: Arc<RwLock<HashMap<lsp_types::Url, BeancountData>>>,
+    pub(crate) forest: Arc<RwLock<HashMap<lsp_types::Url, tree_sitter::Tree>>>,
+    pub(crate) open_docs: Arc<RwLock<HashMap<lsp_types::Url, Document>>>,
 }
 
-/*
-impl LspServer {
-    /// Create a new [`Server`] instance.
-    fn new(client: Client) -> Self {
-        let session = Session::new(client.clone());
-        Self { client, session }
+impl LspServerStateSnapshot {
+    pub(crate) fn beancount_data(
+        &self,
+    ) -> impl std::ops::Deref<Target = HashMap<lsp_types::Url, BeancountData>> + '_ {
+        self.beancount_data.read().unwrap()
+    }
+    pub(crate) fn forest(
+        &self,
+    ) -> impl std::ops::Deref<Target = HashMap<lsp_types::Url, tree_sitter::Tree>> + '_ {
+        self.forest.read().unwrap()
+    }
+    pub(crate) fn open_docs(
+        &self,
+    ) -> impl std::ops::Deref<Target = HashMap<lsp_types::Url, Document>> + '_ {
+        self.open_docs.read().unwrap()
     }
 }
-*/
-impl LspServerState {
-    pub fn new(sender: Sender<lsp_server::Message>, config: Config) -> Self {
-        let (task_sender, task_receiver) = crossbeam_channel::unbounded();
-        //let (event_tx, event_rx) = crossbeam_channel::unbounded();
-        Self {
-            beancount_data: HashMap::new(),
-            config,
-            forest: HashMap::new(),
-            open_docs: HashMap::new(),
-            parsers: HashMap::new(),
-            req_queue: lsp_server::ReqQueue::default(),
-            sender,
-            shutdown_requested: false,
-            task_sender,
-            task_receiver,
-            thread_pool: threadpool::ThreadPool::default(),
-        }
-    }
 
-    pub fn run(&mut self, receiver: Receiver<lsp_server::Message>) -> Result<()> {
-        // init forest
-        if self.config.journal_root.is_some() {
-            let file = self.config.journal_root.as_ref().unwrap();
-            let journal_root = lsp_types::Url::from_file_path(file)
-                .unwrap_or_else(|()| panic!("Cannot parse URL for file '{file:?}'"));
-
-            tracing::info!("initializing forest...");
-            let snapshot = self.snapshot();
-            let sender = self.task_sender.clone();
-            self.thread_pool.execute(move || {
-                forest::parse_initial_forest(snapshot, journal_root, sender).unwrap();
+trait RouterExt: BorrowMut<Router<LspServerState>> {
+    fn request_snap<R: Request>(
+        &mut self,
+        f: impl Fn(LspServerStateSnapshot, R::Params) -> Result<R::Result>
+            + Send
+            + Copy
+            + UnwindSafe
+            + 'static,
+    ) -> &mut Self
+    where
+        R::Params: Send + UnwindSafe + 'static,
+        R::Result: Send + 'static,
+    {
+        self.borrow_mut().request::<R, _>(move |this, params| {
+            let task = this.spawn_with_snapshot(move |snap| {
+                // with_catch_unwind(R::METHOD, move || f(snap, params))
+                f(snap, params)
             });
-            /*forest::parse_initial_forest(
-                &self.session,
-                lsp_types::Url::from_file_path(
-                    self.session.root_journal_path.read().await.clone().unwrap(),
-                )
-                .unwrap(),
-            )
-            .unwrap();
-            */
-        }
-
-        while let Some(event) = self.next_event(&receiver) {
-            if let Event::Lsp(lsp_server::Message::Notification(notification)) = &event {
-                if notification.method == lsp_types::notification::Exit::METHOD {
-                    return Ok(());
-                }
+            async move {
+                task.await
+                    .expect("Already catch_unwind")
+                    .map_err(error_to_response)
             }
-            self.handle_event(event)?;
-        }
-        Ok(())
-    }
-
-    // Blocks until new event is received
-    pub fn next_event(&self, receiver: &Receiver<lsp_server::Message>) -> Option<Event> {
-        crossbeam_channel::select! {
-            recv(receiver) -> msg => msg.ok().map(Event::Lsp),
-            recv(self.task_receiver) -> task => Some(Event::Task(task.unwrap())),
-        }
-    }
-
-    // handles an event
-    fn handle_event(&mut self, event: Event) -> Result<()> {
-        tracing::info!("handling event {:?}", event);
-        let start_time = Instant::now();
-
-        match event {
-            Event::Task(task) => self.handle_task(task)?,
-            Event::Lsp(msg) => match msg {
-                lsp_server::Message::Request(req) => self.on_request(req, start_time)?,
-                lsp_server::Message::Response(resp) => self.complete_request(resp),
-                lsp_server::Message::Notification(notif) => self.on_notification(notif)?,
-            },
-        };
-        Ok(())
-    }
-
-    // Handles a task sent by another async task
-    fn handle_task(&mut self, task: Task) -> anyhow::Result<()> {
-        match task {
-            Task::Notify(notification) => {
-                self.send(notification.into());
-            }
-            Task::Response(response) => self.respond(response),
-            Task::Progress(task) => self.handle_progress_task(task)?,
-        }
-        Ok(())
-    }
-
-    fn handle_progress_task(&mut self, task: ProgressMsg) -> Result<()> {
-        match task {
-            ProgressMsg::BeanCheck { total, done } => {
-                let progress_state = if done == 0 {
-                    Progress::Begin
-                } else if done < total {
-                    Progress::Report
-                } else {
-                    Progress::End
-                };
-                self.report_progress(
-                    "bean check",
-                    progress_state,
-                    Some(format!("{}/{}", done, total)),
-                    Some(Progress::fraction(done, total)),
-                )
-            }
-            ProgressMsg::ForestInit { total, done, data } => {
-                if let Some(data) = *data {
-                    self.forest.insert(data.0.clone(), data.1);
-                    self.beancount_data.insert(data.0, data.2);
-                }
-                let progress_state = if done == 0 {
-                    Progress::Begin
-                } else if done < total {
-                    Progress::Report
-                } else {
-                    Progress::End
-                };
-                self.report_progress(
-                    "generating forest",
-                    progress_state,
-                    Some(format!("{}/{}", done, total)),
-                    Some(Progress::fraction(done, total)),
-                )
-            }
-        }
-        Ok(())
-    }
-
-    // Registers a request with the server. We register all these request to make
-    // sure they all get handled and so we can measure the time it takes for them
-    // to complete from the point of view of the client.
-    fn register_request(&mut self, request: &lsp_server::Request, start_time: Instant) {
-        self.req_queue
-            .incoming
-            .register(request.id.clone(), (request.method.clone(), start_time))
-    }
-
-    // Handles a language server protocol request
-    fn on_request(&mut self, req: lsp_server::Request, start_time: Instant) -> Result<()> {
-        self.register_request(&req, start_time);
-        if self.shutdown_requested {
-            self.respond(lsp_server::Response::new_err(
-                req.id,
-                lsp_server::ErrorCode::InvalidRequest as i32,
-                "shutdown was requested".to_string(),
-            ));
-            return Ok(());
-        }
-
-        RequestDispatcher::new(self, req)
-            .on_sync::<lsp_types::request::Shutdown>(|state, _request| {
-                state.shutdown_requested = true;
-                Ok(())
-            })?
-            .on::<lsp_types::request::Completion>(handlers::text_document::completion)?
-            .on::<lsp_types::request::Formatting>(handlers::text_document::formatting)?
-            .finish();
-        Ok(())
-    }
-
-    // Handles a response to a request we made. The response gets forwarded to where we made the request from.
-    fn complete_request(&mut self, resp: lsp_server::Response) {
-        let handler = self
-            .req_queue
-            .outgoing
-            .complete(resp.id.clone())
-            .expect("received response for unknown request");
-        handler(self, resp)
-    }
-
-    // Handles a notification from the language server client
-    fn on_notification(&mut self, notif: lsp_server::Notification) -> Result<()> {
-        NotificationDispatcher::new(self, notif)
-            .on::<lsp_types::notification::DidOpenTextDocument>(handlers::text_document::did_open)?
-            .on::<lsp_types::notification::DidCloseTextDocument>(
-                handlers::text_document::did_close,
-            )?
-            .on::<lsp_types::notification::DidSaveTextDocument>(handlers::text_document::did_save)?
-            .on::<lsp_types::notification::DidChangeTextDocument>(
-                handlers::text_document::did_change,
-            )?
-            .finish();
-        Ok(())
-    }
-
-    // Sends a response to the client. This method logs the time it took us to reply to a request from the client.
-    pub(crate) fn respond(&mut self, response: lsp_server::Response) {
-        if let Some((_method, start)) = self.req_queue.incoming.complete(response.id.clone()) {
-            let duration = start.elapsed();
-            tracing::info!("handled req#{} in {:?}", response.id, duration);
-            self.send(response.into());
-        }
-    }
-
-    /// Sends a message to the client
-    pub(crate) fn send(&mut self, message: lsp_server::Message) {
-        self.sender
-            .send(message)
-            .expect("error sending lsp message to the outgoing channel")
-    }
-
-    // Sends a request to the client and registers the request so that we can handle the response.
-    pub(crate) fn send_request<R: lsp_types::request::Request>(
-        &mut self,
-        params: R::Params,
-        handler: RequestHandler,
-    ) {
-        let request = self
-            .req_queue
-            .outgoing
-            .register(R::METHOD.to_string(), params, handler);
-        self.send(request.into());
-    }
-
-    // Sends a notification to the client
-    pub(crate) fn send_notification<N: lsp_types::notification::Notification>(
-        &mut self,
-        params: N::Params,
-    ) {
-        let not = lsp_server::Notification::new(N::METHOD.to_string(), params);
-        self.send(not.into());
-    }
-
-    pub(crate) fn snapshot(&self) -> LspServerStateSnapshot {
-        LspServerStateSnapshot {
-            beancount_data: self.beancount_data.clone(),
-            config: self.config.clone(),
-            forest: self.forest.clone(),
-            open_docs: self.open_docs.clone(),
-        }
+        });
+        self
     }
 }
 
-/*
-pub fn capabilities() -> lsp_types::ServerCapabilities {
-    let text_document_sync = {
-        let options = lsp_types::TextDocumentSyncOptions {
-            open_close: Some(true),
-            change: Some(lsp_types::TextDocumentSyncKind::INCREMENTAL),
-            will_save: Some(true),
-            will_save_wait_until: Some(false),
-            save: Some(lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
-                lsp_types::SaveOptions {
-                    include_text: Some(true),
-                },
-            )),
-        };
-        Some(lsp_types::TextDocumentSyncCapability::Options(options))
-    };
-    let completion_provider = {
-        let options = lsp_types::CompletionOptions {
-            resolve_provider: Some(false),
-            trigger_characters: Some(vec![
-                "2".to_string(),
-                ":".to_string(),
-                "#".to_string(),
-                "\"".to_string(),
-            ]),
-            ..Default::default()
-        };
-        Some(options)
-    };
+impl RouterExt for Router<LspServerState> {}
 
-    let document_formatting_provider = { Some(lsp_types::OneOf::Left(true)) };
-
-    lsp_types::ServerCapabilities {
-        text_document_sync,
-        completion_provider,
-        document_formatting_provider,
-        ..Default::default()
-    }
-}*/
-
-/*
-#[tower_lsp::async_trait]
-impl LanguageServer for LspServer {
-    async fn initialize(
-        &self,
-        params: lsp_types::InitializeParams,
-    ) -> jsonrpc::Result<lsp_types::InitializeResult> {
-        self.client
-            .log_message(
-                lsp_types::MessageType::ERROR,
-                "Beancount Server initializing",
-            )
-            .await;
-
-        *self.session.client_capabilities.write().await = Some(params.capabilities);
-        let capabilities = capabilities();
-
-        let beancount_lsp_settings: BeancountLspOptions =
-            if let Some(json) = params.initialization_options {
-                serde_json::from_value(json).unwrap()
-            } else {
-                BeancountLspOptions {
-                    journal_file: String::from(""),
-                }?
-            };
-        // TODO need error if it does not exist
-        *self.session.root_journal_path.write().await =
-            Some(PathBuf::from(beancount_lsp_settings.journal_file.clone()));
-
-        Ok(lsp_types::InitializeResult {
-            capabilities,
-            ..lsp_types::InitializeResult::default()
-        })
-    }
-
-    async fn initialized(&self, _: lsp_types::InitializedParams) {
-        if self.session.root_journal_path.read().await.is_some() {
-            forest::parse_initial_forest(
-                &self.session,
-                lsp_types::Url::from_file_path(
-                    self.session.root_journal_path.read().await.clone().unwrap(),
-                )
-                .unwrap(),
-            )
-            .await
-            .unwrap();
-        }
-    }
-
-    async fn shutdown(&self) -> jsonrpc::Result<()> {
-        Ok(())
-    }
-
-    async fn did_open(&self, params: lsp_types::DidOpenTextDocumentParams) {
-        handlers::text_document::did_open(&self.session, params)
-            .await
-            .unwrap()
-    }
-
-    async fn did_save(&self, params: lsp_types::DidSaveTextDocumentParams) {
-        handlers::text_document::did_save(&self.session, params)
-            .await
-            .unwrap()
-    }
-
-    async fn did_change(&self, params: lsp_types::DidChangeTextDocumentParams) {
-        handlers::text_document::did_change(&self.session, params)
-            .await
-            .unwrap()
-    }
-
-    async fn did_close(&self, params: lsp_types::DidCloseTextDocumentParams) {
-        handlers::text_document::did_close(&self.session, params)
-            .await
-            .unwrap()
-    }
-
-    async fn completion(
-        &self,
-        params: lsp_types::CompletionParams,
-    ) -> jsonrpc::Result<Option<lsp_types::CompletionResponse>> {
-        let result = handlers::text_document::completion(&self.session, params).await;
-        Ok(result.map_err(error::IntoJsonRpcError)?)
-    }
-
-    async fn formatting(
-        &self,
-        params: lsp_types::DocumentFormattingParams,
-    ) -> jsonrpc::Result<Option<Vec<lsp_types::TextEdit>>> {
-        let result = handlers::text_document::formatting(&self.session, params).await;
-        Ok(result.map_err(error::IntoJsonRpcError)?)
+fn error_to_response(err: anyhow::Error) -> ResponseError {
+    match err.downcast::<ResponseError>() {
+        Ok(resp) => resp,
+        Err(err) => ResponseError::new(ErrorCode::INTERNAL_ERROR, err),
     }
 }
-
-pub async fn run_server(stdin: Stdin, stdout: Stdout) {
-    let (service, messages) = LspService::build(LspServer::new).finish();
-    Server::new(stdin, stdout, messages).serve(service).await;
-}
-*/

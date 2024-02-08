@@ -1,5 +1,5 @@
 use crate::beancount_data::BeancountData;
-use crate::server::LspServerStateSnapshot;
+use crate::document::Document;
 use crate::treesitter_utils::text_for_tree_sitter_node;
 use anyhow::Result;
 use chrono::Datelike;
@@ -8,7 +8,9 @@ use tracing::debug;
 
 /// Provider function for LSP ``.
 pub(crate) fn completion(
-    snapshot: LspServerStateSnapshot,
+    forest: &HashMap<lsp_types::Url, tree_sitter::Tree>,
+    beancount_data: &HashMap<lsp_types::Url, BeancountData>,
+    open_docs: &HashMap<lsp_types::Url, Document>,
     trigger_character: Option<char>,
     cursor: lsp_types::TextDocumentPositionParams,
 ) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
@@ -19,8 +21,8 @@ pub(crate) fn completion(
     let char = &cursor.position.character;
     debug!("providers::completion - line {} char {}", line, char);
 
-    let tree = snapshot.forest.get(uri).unwrap();
-    let doc = snapshot.open_docs.get(uri).unwrap();
+    let tree = forest.get(uri).unwrap();
+    let doc = open_docs.get(uri).unwrap();
     let content = doc.clone().content;
 
     let start = tree_sitter::Point {
@@ -72,13 +74,13 @@ pub(crate) fn completion(
             '2' => complete_date(),
             '"' => {
                 if prev_sibling_node.is_some() && prev_sibling_node.unwrap().kind() == "txn" {
-                    complete_narration(snapshot.beancount_data)
+                    complete_narration(beancount_data.clone())
                 } else {
                     Ok(None)
                 }
             }
-            '#' => complete_tag(snapshot.beancount_data),
-            '^' => complete_link(snapshot.beancount_data),
+            '#' => complete_tag(beancount_data.clone()),
+            '^' => complete_link(beancount_data.clone()),
             _ => Ok(None),
         }
     } else {
@@ -120,18 +122,18 @@ pub(crate) fn completion(
                         } else {
                             // if parent_parent_node.is_some() && parent_parent_node.unwrap().kind() ==
                             // "posting_or_kv_list" {
-                            complete_account(snapshot.beancount_data)
+                            complete_account(beancount_data.clone())
                             //} else {
                             //    Ok(None)
                         }
                     }
                     "narration" => {
                         debug!("providers::completion - handle node - handle narration");
-                        complete_narration(snapshot.beancount_data)
+                        complete_narration(beancount_data.clone())
                     }
                     "payee" => {
                         debug!("providers::completion - handle node - handle payee");
-                        complete_narration(snapshot.beancount_data)
+                        complete_narration(beancount_data.clone())
                     }
                     _ => Ok(None),
                 }
@@ -307,14 +309,11 @@ fn complete_link(
 
 #[cfg(test)]
 mod tests {
+    use crate::beancount_data::BeancountData;
+    use crate::document::Document;
     use crate::providers::completion::add_one_month;
     use crate::providers::completion::completion;
     use crate::providers::completion::sub_one_month;
-    use crate::server::LspServerStateSnapshot;
-    //use insta::assert_yaml_snapshot;
-    use crate::beancount_data::BeancountData;
-    use crate::config::Config;
-    use crate::document::Document;
     use anyhow::Result;
     use std::collections::HashMap;
     use test_log::test;
@@ -399,7 +398,9 @@ mod tests {
 
     pub struct TestState {
         fixture: Fixture,
-        snapshot: LspServerStateSnapshot,
+        beancount_data: HashMap<lsp_types::Url, BeancountData>,
+        forest: HashMap<lsp_types::Url, tree_sitter::Tree>,
+        open_docs: HashMap<lsp_types::Url, Document>,
     }
     impl TestState {
         pub fn new(fixture: &str) -> Result<Self> {
@@ -443,12 +444,9 @@ mod tests {
                 .collect();
             Ok(TestState {
                 fixture,
-                snapshot: LspServerStateSnapshot {
-                    beancount_data,
-                    config: Config::new(std::env::current_dir()?),
-                    forest,
-                    open_docs,
-                },
+                beancount_data,
+                forest,
+                open_docs,
             })
         }
 
@@ -508,11 +506,18 @@ mod tests {
             "{} {}",
             text_document_position.position.line, text_document_position.position.character
         );
-        let items =
-            match completion(test_state.snapshot, Some('2'), text_document_position).unwrap() {
-                Some(items) => items,
-                None => Vec::new(),
-            };
+        let items = match completion(
+            &test_state.forest,
+            &test_state.beancount_data,
+            &test_state.open_docs,
+            Some('2'),
+            text_document_position,
+        )
+        .unwrap()
+        {
+            Some(items) => items,
+            None => Vec::new(),
+        };
         let today = chrono::offset::Local::now().naive_local().date();
         let prev_month = sub_one_month(today).format("%Y-%m-").to_string();
         let cur_month = today.format("%Y-%m-").to_string();
@@ -560,7 +565,15 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = match completion(test_state.snapshot, None, cursor).unwrap() {
+        let items = match completion(
+            &test_state.forest,
+            &test_state.beancount_data,
+            &test_state.open_docs,
+            None,
+            cursor,
+        )
+        .unwrap()
+        {
             Some(items) => items,
             None => Vec::new(),
         };
@@ -607,7 +620,15 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = match completion(test_state.snapshot, Some('"'), cursor).unwrap() {
+        let items = match completion(
+            &test_state.forest,
+            &test_state.beancount_data,
+            &test_state.open_docs,
+            Some('"'),
+            cursor,
+        )
+        .unwrap()
+        {
             Some(items) => items,
             None => Vec::new(),
         };
@@ -638,7 +659,15 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = match completion(test_state.snapshot, Some('"'), cursor).unwrap() {
+        let items = match completion(
+            &test_state.forest,
+            &test_state.beancount_data,
+            &test_state.open_docs,
+            Some('"'),
+            cursor,
+        )
+        .unwrap()
+        {
             Some(items) => items,
             None => Vec::new(),
         };
@@ -659,7 +688,15 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = match completion(test_state.snapshot, None, cursor).unwrap() {
+        let items = match completion(
+            &test_state.forest,
+            &test_state.beancount_data,
+            &test_state.open_docs,
+            None,
+            cursor,
+        )
+        .unwrap()
+        {
             Some(items) => items,
             None => Vec::new(),
         };
@@ -698,7 +735,15 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = match completion(test_state.snapshot, Some('#'), cursor).unwrap() {
+        let items = match completion(
+            &test_state.forest,
+            &test_state.beancount_data,
+            &test_state.open_docs,
+            Some('#'),
+            cursor,
+        )
+        .unwrap()
+        {
             Some(items) => items,
             None => Vec::new(),
         };
@@ -729,7 +774,15 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = match completion(test_state.snapshot, Some('^'), cursor).unwrap() {
+        let items = match completion(
+            &test_state.forest,
+            &test_state.beancount_data,
+            &test_state.open_docs,
+            Some('^'),
+            cursor,
+        )
+        .unwrap()
+        {
             Some(items) => items,
             None => Vec::new(),
         };

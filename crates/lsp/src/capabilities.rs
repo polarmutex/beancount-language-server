@@ -9,8 +9,8 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             TextDocumentSyncOptions {
                 open_close: Some(true),
                 change: Some(TextDocumentSyncKind::INCREMENTAL),
-                will_save: Some(true),
-                will_save_wait_until: Some(true),
+                will_save: Some(false),
+                will_save_wait_until: Some(false),
                 save: Some(lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
                     lsp_types::SaveOptions {
                         include_text: Some(false),

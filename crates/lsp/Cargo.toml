@@ -1,9 +1,8 @@
 [package]
 name = "beancount-language-server"
-version = "1.3.4"
-edition = "2021"
-authors = ["Brian Ryall <polarmutex@users.noreply.github.com>"]
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 readme = "README.md"
 repository = "https://github.com/polarmutex/beancount-language-server"
 keywords = ["beancount", "lsp"]
@@ -13,14 +12,14 @@ A language server for the beancount language
 
 [dependencies]
 anyhow = "1.0"
+async-lsp = { version = "0", features = ["tokio"] }
 bytes = "1.3"
 chrono = { version = "0", default-features = false, features = ["clock"] }
 clap = "4"
 crossbeam-channel = "0.5.11"
 dashmap = "5.3"
 glob = "0.3"
-lsp-server = "0.7"
-lsp-types = "0.95.0"
+lsp-types = "0.94.0"
 regex = "1"
 ropey = "1.6"
 thiserror = "1.0"
@@ -28,6 +27,8 @@ serde = "1.0"
 serde_json = "1.0"
 shellexpand = "3.0.0"
 linked-list = "0.0.3"
+tokio = { version = "1.27.0", features = ["full"] }
+tower = "0.4.13"
 tracing = "0.1.40"
 tracing-appender = "0.2.3"
 tree-sitter = "0.20"
@@ -53,3 +54,6 @@ test-log = { version = "0.2.14", features = ["trace"] }
 
 [package.metadata.release]
 tag = true
+
+[target.'cfg(windows)'.dependencies]
+tokio-util = {version = "0.7.9", features = ["compat"]}

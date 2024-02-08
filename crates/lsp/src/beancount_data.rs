@@ -31,8 +31,8 @@ impl BeancountData {
         let mut cursor = tree.root_node().walk();
 
         // Update account opens
-        tracing::debug!("beancount_data:: get account nodes");
-        tracing::debug!("beancount_data:: get account strings");
+        // tracing::debug!("beancount_data:: get account nodes");
+        // tracing::debug!("beancount_data:: get account strings");
         let account_strings = tree
             .root_node()
             .children(&mut cursor)
@@ -46,16 +46,17 @@ impl BeancountData {
                 Some(account)
             });
 
-        tracing::debug!("beancount_data:: update accounts");
+        // tracing::debug!("beancount_data:: update accounts");
         accounts.clear();
 
         for account in account_strings {
+            tracing::info!(account);
             accounts.push(account);
         }
 
         // Update account opens
-        tracing::debug!("beancount_data:: get narration nodes");
-        tracing::debug!("beancount_data:: get account strings");
+        // tracing::debug!("beancount_data:: get narration nodes");
+        // tracing::debug!("beancount_data:: get account strings");
         let transactions = tree
             .root_node()
             .children(&mut cursor)
@@ -74,7 +75,7 @@ impl BeancountData {
             }
         }
 
-        tracing::debug!("beancount_data:: update narration");
+        // tracing::debug!("beancount_data:: update narration");
         narration.clear();
 
         for txn_string in txn_string_strings {
@@ -84,7 +85,7 @@ impl BeancountData {
         }
 
         // Update flagged entries
-        tracing::debug!("beancount_data:: update flagged entries");
+        // tracing::debug!("beancount_data:: update flagged entries");
         flagged_entries.clear();
 
         tree.root_node()
@@ -107,7 +108,7 @@ impl BeancountData {
                         .children(&mut flag_cursor)
                         .find(|c| c.kind() == "flag");
                     if let Some(flag) = flag_node {
-                        tracing::debug!("addind flag entry: {:?}", flag);
+                        // tracing::debug!("addind flag entry: {:?}", flag);
                         flagged_entries.push(FlaggedEntry {
                             _file: "".to_string(),
                             line: flag.start_position().row as u32,
@@ -117,7 +118,7 @@ impl BeancountData {
             });
 
         // Update tags
-        tracing::debug!("beancount_data:: get tags");
+        // tracing::debug!("beancount_data:: get tags");
         let query_string = r#"
         (tag) @tag
         "#;
@@ -138,7 +139,7 @@ impl BeancountData {
         tags.dedup();
 
         // Update links
-        tracing::debug!("beancount_data:: get tags");
+        // tracing::debug!("beancount_data:: get tags");
         let query_string = r#"
         (link) @link
         "#;
@@ -168,6 +169,8 @@ impl BeancountData {
     }
 
     pub fn get_accounts(&self) -> Vec<String> {
+        let t = self.accounts.join(",");
+        tracing::info!(t);
         self.accounts.clone()
     }
 
