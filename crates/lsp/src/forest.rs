@@ -1,41 +1,41 @@
 use crate::beancount_data::BeancountData;
-use crate::server::LspServerStateSnapshot;
-use crate::server::ProgressMsg;
-use crate::server::Task;
-use crossbeam_channel::Sender;
+use crate::progress::Progress;
+use async_lsp::ClientSocket;
 use glob::glob;
 use std::collections::linked_list::LinkedList;
+use std::collections::HashMap;
 use std::fs;
 use std::path;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use tracing::error;
 
 // Issus to look at if running into issues with this
 // https://github.com/silvanshade/lspower/issues/8
-pub(crate) fn parse_initial_forest(
-    snapshot: LspServerStateSnapshot,
+pub(crate) async fn parse_initial_forest(
+    client: ClientSocket,
+    forest: Arc<RwLock<HashMap<lsp_types::Url, tree_sitter::Tree>>>,
+    data: Arc<RwLock<HashMap<lsp_types::Url, BeancountData>>>,
     root_url: lsp_types::Url,
-    sender: Sender<Task>,
-) -> anyhow::Result<bool, anyhow::Error> {
-    let mut seen_files = LinkedList::new();
-    // let root_pathbuf: String = self.root_journal_path.into_inner().unwrap().as_ref().as_os_str();
-    // let temp = self.root_journal_path.read().await;
-    // let root_url = lsp::Url::from_file_path(temp.clone().unwrap()).unwrap();
-    seen_files.push_back(root_url.clone());
-    let mut done = false;
+) {
+    let progress = Progress::new(&client, String::from("blsp/forest")).await;
+    progress.begin(
+        String::from("Fetching flake with inputs"),
+        String::from("nix flake archive"),
+    );
 
-    let mut to_processs = LinkedList::new();
-    let mut new_to_processs = LinkedList::new();
-    to_processs.push_back(root_url);
+    let mut seen_files = LinkedList::new();
+    seen_files.push_back(root_url.clone());
+
     let mut processed = 0;
+    let mut done = false;
     let mut total = 1;
 
-    sender
-        .send(Task::Progress(ProgressMsg::ForestInit {
-            done: processed,
-            total,
-            data: Box::new(None),
-        }))
-        .unwrap();
+    let mut to_processs = LinkedList::new();
+    to_processs.push_back(root_url);
+    let mut new_to_processs = LinkedList::new();
+
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     while !done {
         let mut temp = to_processs.clone();
@@ -43,36 +43,31 @@ pub(crate) fn parse_initial_forest(
 
         while iter.peek().is_some() {
             let file = iter.next().unwrap();
-            //session
-            //    .client
-            //    .log_message(lsp::MessageType::INFO, format!("parsing {}", file.as_ref()))
-            //    .await;
-
             let file_path = file.to_file_path().ok().unwrap();
 
             processed += 1;
+            // if processed % 10 == 0 {
+            // need sleep for notif to go through
+            tokio::time::sleep(Duration::from_nanos(1)).await;
+            // }
             tracing::info!("processing {}", file.to_string());
 
-            let text = fs::read_to_string(file_path.clone())?;
-            let bytes = text.as_bytes();
+            // tokio::time::sleep(Duration::from_millis(100)).await;
 
+            let text = fs::read_to_string(file_path.clone()).expect("");
+            let bytes = text.as_bytes();
             let mut parser = tree_sitter::Parser::new();
-            parser.set_language(tree_sitter_beancount::language())?;
+            parser
+                .set_language(tree_sitter_beancount::language())
+                .expect("");
             let tree = parser.parse(&text, None).unwrap();
             let mut cursor = tree.root_node().walk();
 
             let content = ropey::Rope::from_str(text.as_str());
             let beancount_data = BeancountData::new(&tree, &content);
 
-            sender
-                .send(Task::Progress(ProgressMsg::ForestInit {
-                    done: processed,
-                    total,
-                    data: Box::new(Some((file.clone(), tree.clone(), beancount_data))),
-                }))
-                .unwrap();
-
-            //snapshot.forest.insert(file.clone(), tree.clone());
+            forest.write().unwrap().insert(file.clone(), tree.clone());
+            data.write().unwrap().insert(file.clone(), beancount_data);
 
             let include_filenames = tree
                 .root_node()
@@ -103,7 +98,6 @@ pub(crate) fn parse_initial_forest(
 
                     Some(path_url)
                 });
-
             // This could get in an infinite loop if there is a loop wtth the include files
             // TODO see if I can prevent this
             for include_url in include_filenames {
@@ -111,7 +105,7 @@ pub(crate) fn parse_initial_forest(
                     match entry {
                         Ok(path) => {
                             let url = lsp_types::Url::from_file_path(path).unwrap();
-                            if !snapshot.forest.contains_key(&url) {
+                            if !forest.read().unwrap().contains_key(&url) {
                                 total += 1;
                                 new_to_processs.push_back(url);
                             }
@@ -120,6 +114,11 @@ pub(crate) fn parse_initial_forest(
                     }
                 }
             }
+
+            progress.report(
+                (processed * 100 / total) as u32,
+                format!("[{processed}/{total}]"),
+            );
         }
 
         if new_to_processs.is_empty() {
@@ -131,13 +130,8 @@ pub(crate) fn parse_initial_forest(
         }
     }
 
-    sender
-        .send(Task::Progress(ProgressMsg::ForestInit {
-            done: processed,
-            total,
-            data: Box::new(None),
-        }))
-        .unwrap();
-
-    Ok(true)
+    progress.done(None);
+    // // let root_pathbuf: String = self.root_journal_path.into_inner().unwrap().as_ref().as_os_str();
+    // // let temp = self.root_journal_path.read().await;
+    // // let root_url = lsp::Url::from_file_path(temp.clone().unwrap()).unwrap();
 }

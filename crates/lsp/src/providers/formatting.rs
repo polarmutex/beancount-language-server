@@ -68,8 +68,10 @@ pub(crate) fn formatting(
     debug!("providers::formatting");
 
     let uri = params.text_document.uri;
-    let tree = snapshot.forest.get(&uri).unwrap();
-    let doc = snapshot.open_docs.get(&uri).unwrap();
+    let bind = snapshot.forest.read().unwrap();
+    let tree = bind.get(&uri).unwrap();
+    let binding = snapshot.open_docs.write().unwrap();
+    let doc = binding.get(&uri).unwrap();
 
     let query = tree_sitter::Query::new(tree.language(), QUERY_STR).unwrap();
     let mut query_cursor = tree_sitter::QueryCursor::new();

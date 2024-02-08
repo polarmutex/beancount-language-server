@@ -1,7 +1,14 @@
 [workspace]
+resolver = "2"
 members = [
     "crates/lsp",
 ]
+
+[workspace.package]
+version = "1.3.4"
+edition = "2021"
+license = "MIT"
+authors = ["Brian Ryall <polarmutex@users.noreply.github.com>"]
 
 # Config for 'cargo dist'
 [workspace.metadata.dist]
