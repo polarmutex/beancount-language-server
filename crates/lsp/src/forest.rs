@@ -1,5 +1,6 @@
 use crate::beancount_data::BeancountData;
 use crate::progress::Progress;
+use async_lsp::lsp_types;
 use async_lsp::ClientSocket;
 use glob::glob;
 use std::collections::linked_list::LinkedList;

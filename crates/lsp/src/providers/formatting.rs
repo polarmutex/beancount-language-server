@@ -1,5 +1,6 @@
 use crate::server::LspServerStateSnapshot;
 use anyhow::Result;
+use async_lsp::lsp_types;
 use std::cmp::Ordering;
 use tracing::debug;
 

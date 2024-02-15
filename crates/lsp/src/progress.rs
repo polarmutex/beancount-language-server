@@ -1,3 +1,4 @@
+use async_lsp::lsp_types;
 use async_lsp::ClientSocket;
 use lsp_types::notification as notif;
 use lsp_types::request as req;

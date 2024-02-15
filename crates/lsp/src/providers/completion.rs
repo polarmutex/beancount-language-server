@@ -2,6 +2,7 @@ use crate::beancount_data::BeancountData;
 use crate::document::Document;
 use crate::treesitter_utils::text_for_tree_sitter_node;
 use anyhow::Result;
+use async_lsp::lsp_types;
 use chrono::Datelike;
 use std::collections::HashMap;
 use tracing::debug;
@@ -315,6 +316,7 @@ mod tests {
     use crate::providers::completion::completion;
     use crate::providers::completion::sub_one_month;
     use anyhow::Result;
+    use async_lsp::lsp_types;
     use std::collections::HashMap;
     use test_log::test;
 

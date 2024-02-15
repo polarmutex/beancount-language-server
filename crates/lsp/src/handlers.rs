@@ -5,6 +5,7 @@ use crate::providers::diagnostics;
 use crate::providers::formatting;
 use crate::server::LspServerStateSnapshot;
 use anyhow::Result;
+use async_lsp::lsp_types;
 use async_lsp::ClientSocket;
 use async_lsp::LanguageClient;
 use lsp_types::PublishDiagnosticsParams;

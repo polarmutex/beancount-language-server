@@ -6,6 +6,7 @@ use crate::forest;
 use crate::handlers;
 use crate::treesitter_utils::lsp_textdocchange_to_ts_inputedit;
 use anyhow::Result;
+use async_lsp::lsp_types;
 use async_lsp::router::Router;
 use async_lsp::ClientSocket;
 use async_lsp::ErrorCode;

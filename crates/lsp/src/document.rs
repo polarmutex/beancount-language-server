@@ -1,3 +1,5 @@
+use async_lsp::lsp_types;
+
 #[derive(Clone)]
 pub struct Document {
     /// The textual content of the document.

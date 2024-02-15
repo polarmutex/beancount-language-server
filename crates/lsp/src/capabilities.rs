@@ -1,3 +1,4 @@
+use async_lsp::lsp_types;
 use lsp_types::{
     CompletionOptions, OneOf, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
     TextDocumentSyncOptions,

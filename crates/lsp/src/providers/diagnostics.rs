@@ -1,4 +1,5 @@
 use crate::beancount_data::BeancountData;
+use async_lsp::lsp_types;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
