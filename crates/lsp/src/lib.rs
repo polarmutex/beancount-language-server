@@ -4,6 +4,7 @@ mod config;
 pub mod document;
 pub mod forest;
 pub mod handlers;
+pub mod lsp_ext;
 pub mod progress;
 pub mod providers;
 pub mod server;

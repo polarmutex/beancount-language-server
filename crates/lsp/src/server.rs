@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::document::Document;
 use crate::forest;
 use crate::handlers;
+use crate::lsp_ext;
 use crate::treesitter_utils::lsp_textdocchange_to_ts_inputedit;
 use anyhow::Result;
 use async_lsp::lsp_types;
@@ -70,6 +71,7 @@ impl LspServerState {
             .request_snap::<req::Formatting>(handlers::formatting)
             .request_snap::<req::Rename>(handlers::rename)
             .request_snap::<req::References>(handlers::references)
+            .request_snap::<lsp_ext::SortTransactions>(handlers::sort_transactions)
             .request::<req::Shutdown, _>(|_, _| ready(Ok(())))
             .notification::<notif::Exit>(|_, _| ControlFlow::Break(Ok(())));
         router

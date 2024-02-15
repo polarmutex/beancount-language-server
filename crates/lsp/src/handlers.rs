@@ -10,6 +10,7 @@ use anyhow::Result;
 use async_lsp::lsp_types;
 use async_lsp::ClientSocket;
 use async_lsp::LanguageClient;
+use chrono;
 use itertools::Itertools;
 use lsp_types::Location;
 use lsp_types::PublishDiagnosticsParams;
@@ -250,4 +251,86 @@ pub(crate) async fn handle_diagnostics(
             })
             .expect("");
     }
+}
+
+pub(crate) fn sort_transactions(
+    snapshot: LspServerStateSnapshot,
+    params: lsp_types::TextDocumentPositionParams,
+) -> Result<Option<Vec<lsp_types::TextEdit>>> {
+    let filename = &params.text_document.uri;
+    let tree = snapshot.forest().get(filename).unwrap().clone();
+    let content = snapshot.open_docs().get(&filename).unwrap().content.clone();
+
+    let mut text_edits = Vec::new();
+
+    let mut cursor = tree.root_node().walk();
+    let nodes = tree
+        .root_node()
+        .named_children(&mut cursor)
+        .sorted_by(|a, b| {
+            let mut a_cursor = a.walk();
+            let mut b_cursor = b.walk();
+
+            let a_date_node = a.children(&mut a_cursor).find(|n| n.kind() == "date");
+            let b_date_node = b.children(&mut b_cursor).find(|n| n.kind() == "date");
+            if a_date_node.is_some() && b_date_node.is_some() {
+                let a_text = text_for_tree_sitter_node(&content, &a_date_node.unwrap());
+                let a_date =
+                    chrono::NaiveDate::parse_from_str(a_text.as_str(), "%Y-%m-%d").unwrap();
+                let b_text = text_for_tree_sitter_node(&content, &b_date_node.unwrap());
+                let b_date =
+                    chrono::NaiveDate::parse_from_str(b_text.as_str(), "%Y-%m-%d").unwrap();
+                // tracing::error!(
+                //     "--- {:?} {:?} {:?} {:?} ---",
+                //     a_text,
+                //     b_text,
+                //     a_date,
+                //     b_date
+                // );
+                a_date.cmp(&b_date)
+            } else if a_date_node.is_none() || b_date_node.is_none() {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .collect_vec();
+    tracing::error!("{:?}\n", nodes);
+
+    let mut new_text = "".to_string();
+    let mut prev_kind = "NONE";
+    nodes.iter().for_each(|n| {
+        let text = text_for_tree_sitter_node(&content, &n);
+        if n.kind() == "transaction" {
+            if prev_kind != "transaction" {
+                new_text += "\n";
+            }
+            new_text += text.as_str();
+            new_text += "\n";
+        } else {
+            new_text += text.as_str();
+        }
+        prev_kind = n.kind()
+    });
+
+    let start_pos = lsp_types::Position {
+        line: 0,
+        character: 0,
+    };
+
+    let end_pos = lsp_types::Position {
+        line: content.len_lines() as u32,
+        character: content.lines().last().unwrap().to_string().len() as u32,
+    };
+
+    let edit = lsp_types::TextEdit {
+        range: lsp_types::Range {
+            start: start_pos,
+            end: end_pos,
+        },
+        new_text,
+    };
+    text_edits.push(edit);
+
+    Ok(Some(text_edits))
 }
