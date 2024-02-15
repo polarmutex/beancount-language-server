@@ -68,6 +68,8 @@ impl LspServerState {
             .notification::<notif::DidSaveTextDocument>(Self::on_did_save)
             .request_snap::<req::Completion>(handlers::completion)
             .request_snap::<req::Formatting>(handlers::formatting)
+            .request_snap::<req::Rename>(handlers::rename)
+            .request_snap::<req::References>(handlers::references)
             .request::<req::Shutdown, _>(|_, _| ready(Ok(())))
             .notification::<notif::Exit>(|_, _| ControlFlow::Break(Ok(())));
         router

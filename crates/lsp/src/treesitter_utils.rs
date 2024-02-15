@@ -1,4 +1,5 @@
 use async_lsp::lsp_types;
+
 pub fn lsp_textdocchange_to_ts_inputedit(
     source: &ropey::Rope,
     change: &lsp_types::TextDocumentContentChangeEvent,
