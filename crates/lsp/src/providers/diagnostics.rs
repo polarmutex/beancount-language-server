@@ -60,17 +60,20 @@ pub fn diagnostics(
                     character: 0,
                 };
 
-                let file_url = lsp_types::Url::from_file_path(&caps[1]).unwrap();
-                let diag = lsp_types::Diagnostic {
-                    range: lsp_types::Range {
-                        start: position,
-                        end: position,
-                    },
-                    message: caps[3].trim().to_string(),
-                    severity: Some(lsp_types::DiagnosticSeverity::ERROR),
-                    ..lsp_types::Diagnostic::default()
-                };
-                map.entry(file_url).or_default().push(diag);
+                tracing::error!("{:?}", caps);
+                let file_url = lsp_types::Url::from_file_path(&caps[1]);
+                if file_url.is_ok() {
+                    let diag = lsp_types::Diagnostic {
+                        range: lsp_types::Range {
+                            start: position,
+                            end: position,
+                        },
+                        message: caps[3].trim().to_string(),
+                        severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+                        ..lsp_types::Diagnostic::default()
+                    };
+                    map.entry(file_url.unwrap()).or_default().push(diag);
+                }
             }
         }
         map
