@@ -2,6 +2,7 @@
 members = [
     "crates/lsp",
 ]
+resolver = "2"
 
 # Config for 'cargo dist'
 [workspace.metadata.dist]
