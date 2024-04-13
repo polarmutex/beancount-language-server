@@ -131,10 +131,14 @@ TODO
 1. Install beancount-language-server with `cargo install beancount-language-server`.
 2. Add the following snippet to your [`languages.toml` file](https://docs.helix-editor.com/languages.html#languagestoml-files):
    ```toml
+   [language-server.beancount-language-server]
+   command = "beancount-language-server"
+   args = ["--stdio"]
+   config.journal_file = "<path to journal file>"
+
    [[language]]
    name = "beancount"
-   language-server = { command = "beancount-language-server", args = ["--stdio"] }
-   config = { journal_file = "<path to journal file>" }
+   language-servers = [{ name = "beancount-language-server" }]
    ```
 3. Verify beancount-language-server shows as available in the output of `hx --health`.
 
