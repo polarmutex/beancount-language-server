@@ -10,6 +10,12 @@ The server can be installed via `cargo` (or from source).
 cargo install beancount-language-server
 ```
 
+Alternatively, it can be installed via Homebrew.
+
+```sh
+brew install beancount-language-server
+```
+
 Then, you should be able to run the language server with the following command:
 
 ```sh
