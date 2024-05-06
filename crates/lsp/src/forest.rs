@@ -57,7 +57,7 @@ pub(crate) fn parse_initial_forest(
             let bytes = text.as_bytes();
 
             let mut parser = tree_sitter::Parser::new();
-            parser.set_language(tree_sitter_beancount::language())?;
+            parser.set_language(&tree_sitter_beancount::language())?;
             let tree = parser.parse(&text, None).unwrap();
             let mut cursor = tree.root_node().walk();
 

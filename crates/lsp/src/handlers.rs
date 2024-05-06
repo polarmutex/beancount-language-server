@@ -32,7 +32,7 @@ pub mod text_document {
         state.parsers.entry(uri.clone()).or_insert_with(|| {
             let mut parser = tree_sitter::Parser::new();
             parser
-                .set_language(tree_sitter_beancount::language())
+                .set_language(&tree_sitter_beancount::language())
                 .unwrap();
             parser
         });

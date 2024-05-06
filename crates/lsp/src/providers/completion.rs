@@ -412,7 +412,7 @@ mod tests {
                     let k = lsp_types::Url::parse(format!("file://{path}").as_str()).unwrap();
                     let mut parser = tree_sitter::Parser::new();
                     parser
-                        .set_language(tree_sitter_beancount::language())
+                        .set_language(&tree_sitter_beancount::language())
                         .unwrap();
                     let v = parser.parse(document.text.clone(), None).unwrap();
                     (k, v)

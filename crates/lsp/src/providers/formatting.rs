@@ -47,7 +47,7 @@ impl<'a> Iterator for ChunksBytes<'a> {
 }
 
 struct RopeProvider<'a>(ropey::RopeSlice<'a>);
-impl<'a> tree_sitter::TextProvider<'a> for RopeProvider<'a> {
+impl<'a> tree_sitter::TextProvider<&'a [u8]> for RopeProvider<'a> {
     type I = ChunksBytes<'a>;
 
     fn text(&mut self, node: tree_sitter::Node) -> Self::I {
@@ -71,7 +71,7 @@ pub(crate) fn formatting(
     let tree = snapshot.forest.get(&uri).unwrap();
     let doc = snapshot.open_docs.get(&uri).unwrap();
 
-    let query = tree_sitter::Query::new(tree.language(), QUERY_STR).unwrap();
+    let query = tree_sitter::Query::new(&tree.language(), QUERY_STR).unwrap();
     let mut query_cursor = tree_sitter::QueryCursor::new();
     let matches = query_cursor.matches(
         &query,
@@ -84,7 +84,7 @@ pub(crate) fn formatting(
         let mut prefix: Option<TSRange> = None;
         let mut number: Option<TSRange> = None;
         for capture in matched.captures {
-            let capture_name = &query.capture_names()[capture.index as usize];
+            let capture_name = query.capture_names()[capture.index as usize];
             if capture_name == "prefix" {
                 prefix = Some(TSRange {
                     start: capture.node.start_position(),
