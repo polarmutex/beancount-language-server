@@ -121,7 +121,7 @@ impl BeancountData {
         let query_string = r#"
         (tag) @tag
         "#;
-        let query = tree_sitter::Query::new(tree_sitter_beancount::language(), query_string)
+        let query = tree_sitter::Query::new(&tree_sitter_beancount::language(), query_string)
             .unwrap_or_else(|_| panic!("get_position_by_query invalid query {query_string}"));
         let mut cursor_qry = tree_sitter::QueryCursor::new();
         let binding = content.clone().to_string();
@@ -142,7 +142,7 @@ impl BeancountData {
         let query_string = r#"
         (link) @link
         "#;
-        let query = tree_sitter::Query::new(tree_sitter_beancount::language(), query_string)
+        let query = tree_sitter::Query::new(&tree_sitter_beancount::language(), query_string)
             .unwrap_or_else(|_| panic!("get_position_by_query invalid query {query_string}"));
         let mut cursor_qry = tree_sitter::QueryCursor::new();
         let binding = content.clone().to_string();
