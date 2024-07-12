@@ -347,7 +347,7 @@ mod tests {
         pub path: String,
         pub text: String,
         pub cursor: Option<lsp_types::Position>,
-        //pub ranges: Vec<lsp_types::Range>,
+        // pub ranges: Vec<lsp_types::Range>,
     }
     impl TestDocument {
         pub fn parse(input: &str) -> Self {
@@ -392,7 +392,7 @@ mod tests {
                 path: path.to_string(),
                 text: lines.join("\n"),
                 cursor,
-                //ranges,
+                // ranges,
             }
         }
     }
