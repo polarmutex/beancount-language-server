@@ -48,7 +48,7 @@ features = [
 
 [dev-dependencies]
 env_logger = "0.11.1"
-insta = { version = "1.34.0", features = ["yaml"] }
+insta = { version = "1.39.0", features = ["yaml"] }
 test-log = { version = "0.2.16", features = ["trace"] }
 
 [package.metadata.release]
