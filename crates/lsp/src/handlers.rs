@@ -10,10 +10,12 @@ pub mod text_document {
     use crate::server::Task;
     use crate::to_json;
     use crate::treesitter_utils::lsp_textdocchange_to_ts_inputedit;
+    use crate::utils::ToFilePath;
     use anyhow::Result;
     use crossbeam_channel::Sender;
     use lsp_types::notification::Notification;
     use std::path::PathBuf;
+    use std::str::FromStr;
     use tracing::debug;
 
     /// handler for `textDocument/didOpen`.
@@ -22,11 +24,11 @@ pub mod text_document {
         params: lsp_types::DidOpenTextDocumentParams,
     ) -> Result<()> {
         debug!("handlers::did_open");
-        let uri = params.text_document.uri.clone();
+        let uri = params.text_document.uri.to_file_path().unwrap();
 
         let document = Document::open(params.clone());
         //let tree = document.tree.clone();
-        tracing::debug!("handlers::did_open - adding {}", uri);
+        tracing::debug!("handlers::did_open - adding {:#?}", &uri);
         state.open_docs.insert(uri.clone(), document);
 
         state.parsers.entry(uri.clone()).or_insert_with(|| {
@@ -79,7 +81,7 @@ pub mod text_document {
         params: lsp_types::DidCloseTextDocumentParams,
     ) -> Result<()> {
         tracing::debug!("handlers::did_close");
-        let uri = params.text_document.uri;
+        let uri = params.text_document.uri.to_file_path().unwrap();
         state.open_docs.remove(&uri);
         // let version = Default::default();
         Ok(())
@@ -91,8 +93,8 @@ pub mod text_document {
         params: lsp_types::DidChangeTextDocumentParams,
     ) -> Result<()> {
         tracing::debug!("handlers::did_change");
-        let uri = &params.text_document.uri;
-        tracing::debug!("handlers::did_change - requesting {}", uri);
+        let uri = &params.text_document.uri.to_file_path().unwrap();
+        tracing::debug!("handlers::did_change - requesting {:#?}", uri);
         let doc = state.open_docs.get_mut(uri).unwrap();
 
         tracing::debug!("handlers::did_change - convert edits");
@@ -202,7 +204,7 @@ pub mod text_document {
     fn handle_diagnostics(
         snapshot: LspServerStateSnapshot,
         sender: Sender<Task>,
-        uri: lsp_types::Url,
+        uri: lsp_types::Uri,
     ) -> Result<()> {
         tracing::debug!("handlers::check_beancount");
         let bean_check_cmd = &PathBuf::from("bean-check");
@@ -234,7 +236,10 @@ pub mod text_document {
                 .send(Task::Notify(lsp_server::Notification {
                     method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
                     params: to_json(lsp_types::PublishDiagnosticsParams {
-                        uri: file.clone(),
+                        uri: lsp_types::Uri::from_str(
+                            format!("file://{}", file.to_str().unwrap()).as_str(),
+                        )
+                        .unwrap(),
                         diagnostics,
                         version: None,
                     })

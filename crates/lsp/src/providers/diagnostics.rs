@@ -1,7 +1,10 @@
 use crate::beancount_data::BeancountData;
+use crate::utils::ToFilePath;
 use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
+use std::str::FromStr;
 use tracing::debug;
 
 pub struct DiagnosticData {
@@ -31,10 +34,10 @@ impl Default for DiagnosticData {
 /// Provider function for LSP `textDocument/publishDiagnostics`.
 pub fn diagnostics(
     //previous_diagnostics: &DiagnosticData,
-    beancount_data: HashMap<lsp_types::Url, BeancountData>,
+    beancount_data: HashMap<PathBuf, BeancountData>,
     bean_check_cmd: &Path,
     root_journal_file: &Path,
-) -> HashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>> {
+) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
     let error_line_regexp = regex::Regex::new(r"^([^:]+):(\d+):\s*(.*)$").unwrap();
 
     debug!("providers::diagnostics");
@@ -48,7 +51,7 @@ pub fn diagnostics(
         debug!("bean-check generating diags");
         let output = std::str::from_utf8(&output.stderr);
 
-        let mut map: HashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>> = HashMap::new();
+        let mut map: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
 
         for line in output.unwrap().lines() {
             debug!("line: {}", line);
@@ -59,7 +62,10 @@ pub fn diagnostics(
                     character: 0,
                 };
 
-                let file_url = lsp_types::Url::from_file_path(&caps[1]).unwrap();
+                let file_url = lsp_types::Uri::from_str(format!("file://{}", &caps[1]).as_str())
+                    .unwrap()
+                    .to_file_path()
+                    .unwrap();
                 let diag = lsp_types::Diagnostic {
                     range: lsp_types::Range {
                         start: position,
@@ -78,7 +84,7 @@ pub fn diagnostics(
         HashMap::new()
     };
 
-    let mut ret: HashMap<lsp_types::Url, Vec<lsp_types::Diagnostic>> = HashMap::new();
+    let mut ret: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
 
     // Add previous urls to clear out if neccessary
     //for it in previous_diagnostics.current_diagnostics.iter() {

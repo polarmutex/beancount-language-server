@@ -11,6 +11,7 @@ pub mod providers;
 pub mod server;
 //pub mod session;
 mod treesitter_utils;
+mod utils;
 
 use crate::config::Config;
 use crate::server::LspServerState;
@@ -18,6 +19,7 @@ use anyhow::Result;
 use lsp_server::Connection;
 use lsp_types::InitializeParams;
 use serde::{de::DeserializeOwned, Serialize};
+use utils::ToFilePath;
 
 pub fn run_server() -> Result<()> {
     tracing::info!("beancount-language-server started");

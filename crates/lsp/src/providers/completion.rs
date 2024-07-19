@@ -1,9 +1,11 @@
 use crate::beancount_data::BeancountData;
 use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::text_for_tree_sitter_node;
+use crate::utils::ToFilePath;
 use anyhow::Result;
 use chrono::Datelike;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use tracing::debug;
 
 /// Provider function for LSP ``.
@@ -14,7 +16,7 @@ pub(crate) fn completion(
 ) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion");
 
-    let uri = &cursor.text_document.uri;
+    let uri = &cursor.text_document.uri.to_file_path().unwrap();
     let line = &cursor.position.line;
     let char = &cursor.position.character;
     debug!("providers::completion - line {} char {}", line, char);
@@ -234,7 +236,7 @@ pub fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
 }
 
 fn complete_narration(
-    data: HashMap<lsp_types::Url, BeancountData>,
+    data: HashMap<PathBuf, BeancountData>,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::narration");
     let mut completions = Vec::new();
@@ -252,7 +254,7 @@ fn complete_narration(
 }
 
 fn complete_account(
-    data: HashMap<lsp_types::Url, BeancountData>,
+    data: HashMap<PathBuf, BeancountData>,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::account");
     let mut completions = Vec::new();
@@ -270,7 +272,7 @@ fn complete_account(
 }
 
 fn complete_tag(
-    data: HashMap<lsp_types::Url, BeancountData>,
+    data: HashMap<PathBuf, BeancountData>,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::tag");
     let mut completions = Vec::new();
@@ -288,7 +290,7 @@ fn complete_tag(
 }
 
 fn complete_link(
-    data: HashMap<lsp_types::Url, BeancountData>,
+    data: HashMap<PathBuf, BeancountData>,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::tag");
     let mut completions = Vec::new();
@@ -315,8 +317,11 @@ mod tests {
     use crate::beancount_data::BeancountData;
     use crate::config::Config;
     use crate::document::Document;
+    use crate::utils::ToFilePath;
     use anyhow::Result;
     use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::str::FromStr;
     use test_log::test;
 
     #[derive(Debug)]
@@ -404,12 +409,15 @@ mod tests {
     impl TestState {
         pub fn new(fixture: &str) -> Result<Self> {
             let fixture = Fixture::parse(fixture);
-            let forest: HashMap<lsp_types::Url, tree_sitter::Tree> = fixture
+            let forest: HashMap<PathBuf, tree_sitter::Tree> = fixture
                 .documents
                 .iter()
                 .map(|document| {
                     let path = document.path.as_str();
-                    let k = lsp_types::Url::parse(format!("file://{path}").as_str()).unwrap();
+                    let k = lsp_types::Uri::from_str(format!("file://{path}").as_str())
+                        .unwrap()
+                        .to_file_path()
+                        .unwrap();
                     let mut parser = tree_sitter::Parser::new();
                     parser
                         .set_language(&tree_sitter_beancount::language())
@@ -418,23 +426,29 @@ mod tests {
                     (k, v)
                 })
                 .collect();
-            let beancount_data: HashMap<lsp_types::Url, BeancountData> = fixture
+            let beancount_data: HashMap<PathBuf, BeancountData> = fixture
                 .documents
                 .iter()
                 .map(|document| {
                     let path = document.path.as_str();
-                    let k = lsp_types::Url::parse(format!("file://{path}").as_str()).unwrap();
+                    let k = lsp_types::Uri::from_str(format!("file://{path}").as_str())
+                        .unwrap()
+                        .to_file_path()
+                        .unwrap();
                     let content = ropey::Rope::from(document.text.clone());
                     let v = BeancountData::new(forest.get(&k).unwrap(), &content);
                     (k, v)
                 })
                 .collect();
-            let open_docs: HashMap<lsp_types::Url, Document> = fixture
+            let open_docs: HashMap<PathBuf, Document> = fixture
                 .documents
                 .iter()
                 .map(|document| {
                     let path = document.path.as_str();
-                    let k = lsp_types::Url::parse(format!("file://{path}").as_str()).unwrap();
+                    let k = lsp_types::Uri::from_str(format!("file://{path}").as_str())
+                        .unwrap()
+                        .to_file_path()
+                        .unwrap();
                     let v = Document {
                         content: ropey::Rope::from(document.text.clone()),
                     };
@@ -460,7 +474,7 @@ mod tests {
                 .find_map(|document| document.cursor.map(|cursor| (document, cursor)))?;
 
             let path = document.path.as_str();
-            let uri = lsp_types::Url::parse(format!("file://{path}").as_str()).unwrap();
+            let uri = lsp_types::Uri::from_str(format!("file://{path}").as_str()).unwrap();
             let id = lsp_types::TextDocumentIdentifier::new(uri);
             Some(lsp_types::TextDocumentPositionParams::new(id, cursor))
         }
@@ -497,7 +511,7 @@ mod tests {
     #[test]
     fn handle_date_completion() {
         let fixure = r#"
-%! main.beancount
+%! /main.beancount
 2
 |
 ^
@@ -550,7 +564,7 @@ mod tests {
     #[test]
     fn handle_txn_completion() {
         let fixure = r#"
-%! main.beancount
+%! /main.beancount
 2023-10-01 t
             |
             ^
@@ -591,7 +605,7 @@ mod tests {
     #[test]
     fn handle_narration_completion() {
         let fixure = r#"
-%! main.beancount
+%! /main.beancount
 2023-10-01 open Assets:Test USD
 2023-10-01 open Expenses:Test USD
 2023-10-01 txn  "Test Co"
@@ -621,7 +635,7 @@ mod tests {
     #[test]
     fn handle_payee_completion() {
         let fixure = r#"
-%! main.beancount
+%! /main.beancount
 2023-10-01 open Assets:Test USD
 2023-10-01 open Expenses:Test USD
 2023-10-01 txn  "Test Co" "Foo Bar"
@@ -643,7 +657,7 @@ mod tests {
     #[test]
     fn handle_account_completion() {
         let fixure = r#"
-%! main.beancount
+%! /main.beancount
 2023-10-01 open Assets:Test USD
 2023-10-01 open Expenses:Test USD
 2023-10-01 txn  "Test Co" "Foo Bar"
@@ -679,7 +693,7 @@ mod tests {
     #[test]
     fn handle_tag_completion() {
         let fixure = r#"
-%! main.beancount
+%! /main.beancount
 2023-10-01 open Assets:Test USD
 2023-10-01 open Expenses:Test USD
 2023-10-01 txn  "Test Co" "Foo Bar" #tag ^link
@@ -709,7 +723,7 @@ mod tests {
     #[test]
     fn handle_link_completion() {
         let fixure = r#"
-%! main.beancount
+%! /main.beancount
 2023-10-01 open Assets:Test USD
 2023-10-01 open Expenses:Test USD
 2023-10-01 txn  "Test Co" "Foo Bar" #tag ^link
