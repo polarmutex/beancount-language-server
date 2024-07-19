@@ -347,7 +347,7 @@ mod tests {
         pub path: String,
         pub text: String,
         pub cursor: Option<lsp_types::Position>,
-        pub ranges: Vec<lsp_types::Range>,
+        //pub ranges: Vec<lsp_types::Range>,
     }
     impl TestDocument {
         pub fn parse(input: &str) -> Self {
@@ -392,7 +392,7 @@ mod tests {
                 path: path.to_string(),
                 text: lines.join("\n"),
                 cursor,
-                ranges,
+                //ranges,
             }
         }
     }
@@ -508,11 +508,9 @@ mod tests {
             "{} {}",
             text_document_position.position.line, text_document_position.position.character
         );
-        let items =
-            match completion(test_state.snapshot, Some('2'), text_document_position).unwrap() {
-                Some(items) => items,
-                None => Vec::new(),
-            };
+        let items = completion(test_state.snapshot, Some('2'), text_document_position)
+            .unwrap()
+            .unwrap_or_default();
         let today = chrono::offset::Local::now().naive_local().date();
         let prev_month = sub_one_month(today).format("%Y-%m-").to_string();
         let cur_month = today.format("%Y-%m-").to_string();
@@ -560,10 +558,9 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = match completion(test_state.snapshot, None, cursor).unwrap() {
-            Some(items) => items,
-            None => Vec::new(),
-        };
+        let items = completion(test_state.snapshot, None, cursor)
+            .unwrap()
+            .unwrap_or_default();
         assert_eq!(
             items,
             [
@@ -607,10 +604,9 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = match completion(test_state.snapshot, Some('"'), cursor).unwrap() {
-            Some(items) => items,
-            None => Vec::new(),
-        };
+        let items = completion(test_state.snapshot, Some('"'), cursor)
+            .unwrap()
+            .unwrap_or_default();
         assert_eq!(
             items,
             [lsp_types::CompletionItem {
@@ -638,10 +634,9 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = match completion(test_state.snapshot, Some('"'), cursor).unwrap() {
-            Some(items) => items,
-            None => Vec::new(),
-        };
+        let items = completion(test_state.snapshot, Some('"'), cursor)
+            .unwrap()
+            .unwrap_or_default();
         assert_eq!(items, [])
     }
 
@@ -659,10 +654,9 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = match completion(test_state.snapshot, None, cursor).unwrap() {
-            Some(items) => items,
-            None => Vec::new(),
-        };
+        let items = completion(test_state.snapshot, None, cursor)
+            .unwrap()
+            .unwrap_or_default();
         assert_eq!(
             items,
             [
@@ -698,10 +692,9 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = match completion(test_state.snapshot, Some('#'), cursor).unwrap() {
-            Some(items) => items,
-            None => Vec::new(),
-        };
+        let items = completion(test_state.snapshot, Some('#'), cursor)
+            .unwrap()
+            .unwrap_or_default();
         assert_eq!(
             items,
             [lsp_types::CompletionItem {
@@ -729,10 +722,9 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = match completion(test_state.snapshot, Some('^'), cursor).unwrap() {
-            Some(items) => items,
-            None => Vec::new(),
-        };
+        let items = completion(test_state.snapshot, Some('^'), cursor)
+            .unwrap()
+            .unwrap_or_default();
         assert_eq!(
             items,
             [lsp_types::CompletionItem {

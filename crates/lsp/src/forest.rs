@@ -126,7 +126,7 @@ pub(crate) fn parse_initial_forest(
             done = true;
         } else {
             to_processs.clear();
-            to_processs = new_to_processs.clone();
+            to_processs.clone_from(&new_to_processs);
             new_to_processs.clear();
         }
     }
