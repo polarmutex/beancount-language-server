@@ -1,4 +1,5 @@
 use crate::server::LspServerStateSnapshot;
+use crate::utils::ToFilePath;
 use anyhow::Result;
 use std::cmp::Ordering;
 use tracing::debug;
@@ -67,7 +68,7 @@ pub(crate) fn formatting(
 ) -> Result<Option<Vec<lsp_types::TextEdit>>> {
     debug!("providers::formatting");
 
-    let uri = params.text_document.uri;
+    let uri = params.text_document.uri.to_file_path().unwrap();
     let tree = snapshot.forest.get(&uri).unwrap();
     let doc = snapshot.open_docs.get(&uri).unwrap();
 

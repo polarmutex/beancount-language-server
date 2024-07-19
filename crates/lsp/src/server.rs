@@ -6,10 +6,13 @@ use crate::document::Document;
 use crate::forest;
 use crate::handlers;
 use crate::progress::Progress;
+use crate::utils::ToFilePath;
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
 use lsp_types::notification::Notification;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::str::FromStr;
 use std::time::Instant;
 
 pub(crate) type RequestHandler = fn(&mut LspServerState, lsp_server::Response);
@@ -23,7 +26,7 @@ pub(crate) enum ProgressMsg {
     ForestInit {
         total: usize,
         done: usize,
-        data: Box<Option<(lsp_types::Url, tree_sitter::Tree, BeancountData)>>,
+        data: Box<Option<(PathBuf, tree_sitter::Tree, BeancountData)>>,
     },
 }
 
@@ -48,17 +51,17 @@ struct LspServer {
 */
 
 pub(crate) struct LspServerState {
-    pub beancount_data: HashMap<lsp_types::Url, BeancountData>,
+    pub beancount_data: HashMap<PathBuf, BeancountData>,
 
     // the lsp server config options
     pub config: Config,
 
-    pub forest: HashMap<lsp_types::Url, tree_sitter::Tree>,
+    pub forest: HashMap<PathBuf, tree_sitter::Tree>,
 
     // Documents that are currently kept in memory from the client
-    pub open_docs: HashMap<lsp_types::Url, Document>,
+    pub open_docs: HashMap<PathBuf, Document>,
 
-    pub parsers: HashMap<lsp_types::Url, tree_sitter::Parser>,
+    pub parsers: HashMap<PathBuf, tree_sitter::Parser>,
 
     // The request queue keeps track of all incoming and outgoing requests.
     pub req_queue: lsp_server::ReqQueue<(String, Instant), RequestHandler>,
@@ -81,10 +84,10 @@ pub(crate) struct LspServerState {
 
 /// A snapshot of the state of the language server
 pub(crate) struct LspServerStateSnapshot {
-    pub beancount_data: HashMap<lsp_types::Url, BeancountData>,
+    pub beancount_data: HashMap<PathBuf, BeancountData>,
     pub config: Config,
-    pub forest: HashMap<lsp_types::Url, tree_sitter::Tree>,
-    pub open_docs: HashMap<lsp_types::Url, Document>,
+    pub forest: HashMap<PathBuf, tree_sitter::Tree>,
+    pub open_docs: HashMap<PathBuf, Document>,
 }
 
 /*
@@ -119,8 +122,12 @@ impl LspServerState {
         // init forest
         if self.config.journal_root.is_some() {
             let file = self.config.journal_root.as_ref().unwrap();
-            let journal_root = lsp_types::Url::from_file_path(file)
-                .unwrap_or_else(|()| panic!("Cannot parse URL for file '{file:?}'"));
+            let journal_root =
+                lsp_types::Uri::from_str(format!("file://{}", file.to_str().unwrap()).as_str())
+                    .unwrap()
+                    .to_file_path()
+                    .unwrap();
+            // .unwrap_or_else(|()| panic!("Cannot parse URL for file '{file:?}'"));
 
             tracing::info!("initializing forest...");
             let snapshot = self.snapshot();
