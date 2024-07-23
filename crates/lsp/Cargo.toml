@@ -16,7 +16,7 @@ anyhow = "1.0"
 bytes = "1.6"
 chrono = { version = "0", default-features = false, features = ["clock"] }
 clap = "4"
-crossbeam-channel = "0.5.11"
+crossbeam-channel = "0.5.13"
 dashmap = "5.3"
 glob = "0.3"
 lsp-server = "0.7"
