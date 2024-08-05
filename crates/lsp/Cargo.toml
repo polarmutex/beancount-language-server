@@ -1,6 +1,6 @@
 [package]
 name = "beancount-language-server"
-version = "1.3.4"
+version = "1.3.5"
 edition = "2021"
 authors = ["Brian Ryall <polarmutex@users.noreply.github.com>"]
 license = "MIT"

@@ -2,7 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.3.4] - 2024-01-06
+## [1.3.5] - 2024-08-05
+
+### Bug Fixes
+
+- Change message prefix from mun to beancount
+- Clippy
+
+### Documentation
+
+- Document installation with Homebrew
+- Update docs for Helix 23.10 and later
+
+## [1.3.4] - 2024-01-16
 
 ### Bug Fixes
 
@@ -23,12 +35,6 @@ All notable changes to this project will be documented in this file.
 ### Testing
 
 - Add tests for date completion logic
-
-## [1.3.3] - 2023-10-08
-
-### CI Tasks
-
-- Bump rustup version to 1.72.0
 
 ## [1.3.2] - 2023-10-08
 
@@ -81,23 +87,53 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-- Vscode version sync
-- Make release artifacts uncompressed
-- Release-please manifest
-- Link README and CHANGELOG to vscode ext
-- Typo in formatting log
-- Github workflow errors on release
+- Release workflow issues
+
+## [beancount-language-server-v1.2.4] - 2022-06-21
+
+### Bug Fixes
+
+- Release workflow issues
+
+## [beancount-language-server-v1.2.3] - 2022-06-21
+
+### Bug Fixes
+
+- Release workflow errors
+
+## [beancount-language-server-v1.2.2] - 2022-06-21
+
+### Bug Fixes
+
 - Windows github workflow error on release
 - Vsce publish error
-- Release workflow errors
-- Release workflow issues
-- Release workflow issues
+
+## [beancount-language-server-v1.2.1] - 2022-06-21
+
+### Bug Fixes
+
+- Github workflow errors on release
+
+## [beancount-language-server-v1.2.0] - 2022-06-21
+
+### Bug Fixes
+
+- Typo in formatting log
 
 ### Features
 
 - Initial work on vscode ext
 - Reboot vscode ext
 - Support glob in include statements
+
+## [beancount-language-server-v1.1.2] - 2022-06-19
+
+### Bug Fixes
+
+- Vscode version sync
+- Make release artifacts uncompressed
+- Release-please manifest
+- Link README and CHANGELOG to vscode ext
 
 ## [1.1.1] - 2022-05-02
 
