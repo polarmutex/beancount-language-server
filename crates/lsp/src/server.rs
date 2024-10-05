@@ -285,7 +285,7 @@ impl LspServerState {
 
     // Sends a response to the client. This method logs the time it took us to reply to a request from the client.
     pub(crate) fn respond(&mut self, response: lsp_server::Response) {
-        if let Some((_method, start)) = self.req_queue.incoming.complete(response.id.clone()) {
+        if let Some((_method, start)) = self.req_queue.incoming.complete(&response.id) {
             let duration = start.elapsed();
             tracing::info!("handled req#{} in {:?}", response.id, duration);
             self.send(response.into());
