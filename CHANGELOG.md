@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.6] - 2024-10-27
+
+### Bug Fixes
+
+- Update req_queue call to match API change
+- Don't panic on invalid JSON inputs to Config
+
 ## [1.3.5] - 2024-08-05
 
 ### Bug Fixes
