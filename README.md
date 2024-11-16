@@ -29,7 +29,7 @@ Follow the instructions below to integrate the language server into your editor.
 First, clone this repo and compile it.
 
 ```sh
-git clone git@github.com/polarmutex/beancount-language-server.git
+git clone git@github.com:polarmutex/beancount-language-server.git
 cd beancount-language-server
 cargo build
 ```
