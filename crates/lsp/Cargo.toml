@@ -36,7 +36,7 @@ threadpool = "1.8.1"
 url = "2"
 
 [dependencies.tracing-subscriber]
-version = "0.3.18"
+version = "0.3.19"
 default_features = false
 features = [
     "env-filter",
