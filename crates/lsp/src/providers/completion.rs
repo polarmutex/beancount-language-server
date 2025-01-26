@@ -159,25 +159,25 @@ fn complete_date() -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
         lsp_types::CompletionItem {
             label: today,
             detail: Some("today".to_string()),
-            kind: Some(lsp_types::CompletionItemKind::TEXT),
+            kind: Some(lsp_types::CompletionItemKind::ENUM),
             ..Default::default()
         },
         lsp_types::CompletionItem {
             label: cur_month,
             detail: Some("this month".to_string()),
-            kind: Some(lsp_types::CompletionItemKind::TEXT),
+            kind: Some(lsp_types::CompletionItemKind::ENUM),
             ..Default::default()
         },
         lsp_types::CompletionItem {
             label: prev_month,
             detail: Some("prev month".to_string()),
-            kind: Some(lsp_types::CompletionItemKind::TEXT),
+            kind: Some(lsp_types::CompletionItemKind::ENUM),
             ..Default::default()
         },
         lsp_types::CompletionItem {
             label: next_month,
             detail: Some("next month".to_string()),
-            kind: Some(lsp_types::CompletionItemKind::TEXT),
+            kind: Some(lsp_types::CompletionItemKind::ENUM),
             ..Default::default()
         },
     ];
@@ -189,22 +189,22 @@ fn complete_kind() -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     let items = vec![
         lsp_types::CompletionItem {
             label: String::from("txn"),
-            kind: Some(lsp_types::CompletionItemKind::TEXT),
+            kind: Some(lsp_types::CompletionItemKind::ENUM),
             ..Default::default()
         },
         lsp_types::CompletionItem {
             label: String::from("balance"),
-            kind: Some(lsp_types::CompletionItemKind::TEXT),
+            kind: Some(lsp_types::CompletionItemKind::ENUM),
             ..Default::default()
         },
         lsp_types::CompletionItem {
             label: String::from("open"),
-            kind: Some(lsp_types::CompletionItemKind::TEXT),
+            kind: Some(lsp_types::CompletionItemKind::ENUM),
             ..Default::default()
         },
         lsp_types::CompletionItem {
             label: String::from("close"),
-            kind: Some(lsp_types::CompletionItemKind::TEXT),
+            kind: Some(lsp_types::CompletionItemKind::ENUM),
             ..Default::default()
         },
     ];
@@ -245,7 +245,7 @@ fn complete_narration(
             completions.push(lsp_types::CompletionItem {
                 label: txn_string,
                 detail: Some("Beancount Narration".to_string()),
-                kind: Some(lsp_types::CompletionItemKind::TEXT),
+                kind: Some(lsp_types::CompletionItemKind::ENUM),
                 ..Default::default()
             });
         }
@@ -263,7 +263,7 @@ fn complete_account(
             completions.push(lsp_types::CompletionItem {
                 label: account,
                 detail: Some("Beancount Account".to_string()),
-                kind: Some(lsp_types::CompletionItemKind::TEXT),
+                kind: Some(lsp_types::CompletionItemKind::ENUM),
                 ..Default::default()
             });
         }
@@ -281,7 +281,7 @@ fn complete_tag(
             completions.push(lsp_types::CompletionItem {
                 label: tag,
                 detail: Some("Beancount Tag".to_string()),
-                kind: Some(lsp_types::CompletionItemKind::TEXT),
+                kind: Some(lsp_types::CompletionItemKind::ENUM),
                 ..Default::default()
             });
         }
@@ -299,7 +299,7 @@ fn complete_link(
             completions.push(lsp_types::CompletionItem {
                 label: link,
                 detail: Some("Beancount Link".to_string()),
-                kind: Some(lsp_types::CompletionItemKind::TEXT),
+                kind: Some(lsp_types::CompletionItemKind::ENUM),
                 ..Default::default()
             });
         }
@@ -535,25 +535,25 @@ mod tests {
             [
                 lsp_types::CompletionItem {
                     label: today,
-                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
                     detail: Some(String::from("today")),
                     ..Default::default()
                 },
                 lsp_types::CompletionItem {
                     label: cur_month,
-                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
                     detail: Some(String::from("this month")),
                     ..Default::default()
                 },
                 lsp_types::CompletionItem {
                     label: prev_month,
-                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
                     detail: Some(String::from("prev month")),
                     ..Default::default()
                 },
                 lsp_types::CompletionItem {
                     label: next_month,
-                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
                     detail: Some(String::from("next month")),
                     ..Default::default()
                 }
@@ -580,22 +580,22 @@ mod tests {
             [
                 lsp_types::CompletionItem {
                     label: String::from("txn"),
-                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
                     ..Default::default()
                 },
                 lsp_types::CompletionItem {
                     label: String::from("balance"),
-                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
                     ..Default::default()
                 },
                 lsp_types::CompletionItem {
                     label: String::from("open"),
-                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
                     ..Default::default()
                 },
                 lsp_types::CompletionItem {
                     label: String::from("close"),
-                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
                     ..Default::default()
                 },
             ]
@@ -625,7 +625,7 @@ mod tests {
             items,
             [lsp_types::CompletionItem {
                 label: String::from("\"Test Co\""),
-                kind: Some(lsp_types::CompletionItemKind::TEXT),
+                kind: Some(lsp_types::CompletionItemKind::ENUM),
                 detail: Some(String::from("Beancount Narration")),
                 ..Default::default()
             },]
@@ -676,13 +676,13 @@ mod tests {
             [
                 lsp_types::CompletionItem {
                     label: String::from("Assets:Test"),
-                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
                     detail: Some(String::from("Beancount Account")),
                     ..Default::default()
                 },
                 lsp_types::CompletionItem {
                     label: String::from("Expenses:Test"),
-                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
                     detail: Some(String::from("Beancount Account")),
                     ..Default::default()
                 }
@@ -713,7 +713,7 @@ mod tests {
             items,
             [lsp_types::CompletionItem {
                 label: String::from("#tag"),
-                kind: Some(lsp_types::CompletionItemKind::TEXT),
+                kind: Some(lsp_types::CompletionItemKind::ENUM),
                 detail: Some(String::from("Beancount Tag")),
                 ..Default::default()
             },]
@@ -743,7 +743,7 @@ mod tests {
             items,
             [lsp_types::CompletionItem {
                 label: String::from("^link"),
-                kind: Some(lsp_types::CompletionItemKind::TEXT),
+                kind: Some(lsp_types::CompletionItemKind::ENUM),
                 detail: Some(String::from("Beancount Link")),
                 ..Default::default()
             },]
