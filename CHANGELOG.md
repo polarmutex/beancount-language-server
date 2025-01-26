@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.7] - 2025-01-26
+
+### Bug Fixes
+
+- Make enum to not be hidden in blink-cmp
+
+### Features
+
+- Add version command to cli
+
+
 ## [1.3.6] - 2024-10-27
 
 ### Bug Fixes
