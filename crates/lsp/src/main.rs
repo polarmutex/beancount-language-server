@@ -11,8 +11,14 @@ fn main() {
         .args(&[
             arg!(--stdio "specifies to use stdio to communicate with lsp"),
             arg!(--log "write log to file"),
+            arg!(version: -v --version),
         ])
         .get_matches();
+
+    if matches.args_present() && matches.get_flag("version") {
+        print!("{}", std::env!("CARGO_PKG_VERSION"));
+        return;
+    }
 
     setup_logging(matches.get_flag("log"));
 
