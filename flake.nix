@@ -34,7 +34,7 @@
         "x86_64-linux"
         "aarch64-linux"
         # wind
-        # mac
+        "aarch64-darwin"
       ];
       perSystem = {
         pkgs,
@@ -132,8 +132,8 @@
               [
                 clang
                 pkg-config
-                systemd
               ]
+              ++ lib.optional stdenv.isLinux systemd
               ++ commonArgs.buildInputs;
             nativeBuildInputs = with pkgs; [
               gnumake
