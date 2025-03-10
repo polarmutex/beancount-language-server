@@ -261,6 +261,8 @@ impl LspServerState {
             })?
             .on::<lsp_types::request::Completion>(handlers::text_document::completion)?
             .on::<lsp_types::request::Formatting>(handlers::text_document::formatting)?
+            .on::<lsp_types::request::Rename>(handlers::text_document::handle_rename)?
+            .on::<lsp_types::request::References>(handlers::text_document::handle_references)?
             .finish();
         Ok(())
     }
