@@ -2,6 +2,7 @@ version: 2
 updates:
   - package-ecosystem: cargo
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: monthly
     open-pull-requests-limit: 10
@@ -11,6 +12,7 @@ updates:
       - dependabot
   - package-ecosystem: github-actions
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
