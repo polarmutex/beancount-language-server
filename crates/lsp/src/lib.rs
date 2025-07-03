@@ -18,7 +18,7 @@ use crate::server::LspServerState;
 use anyhow::Result;
 use lsp_server::Connection;
 use lsp_types::InitializeParams;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use utils::ToFilePath;
 
 pub fn run_server() -> Result<()> {
@@ -57,8 +57,8 @@ pub fn run_server() -> Result<()> {
 
     let config = {
         let root_file = match initialize_params
-            .root_uri
-            .and_then(|it| it.to_file_path().ok())
+            .workspace_folders
+            .and_then(|wfs| wfs.first().and_then(|f| f.uri.to_file_path().ok()))
         {
             Some(it) => it,
             None => std::env::current_dir()?,
