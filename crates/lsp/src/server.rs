@@ -206,7 +206,7 @@ impl LspServerState {
                 self.report_progress(
                     "bean check",
                     progress_state,
-                    Some(format!("{}/{}", done, total)),
+                    Some(format!("{done}/{total}")),
                     Some(Progress::fraction(done, total)),
                 )
             }
@@ -225,7 +225,7 @@ impl LspServerState {
                 self.report_progress(
                     "generating forest",
                     progress_state,
-                    Some(format!("{}/{}", done, total)),
+                    Some(format!("{done}/{total}")),
                     Some(Progress::fraction(done, total)),
                 )
             }
