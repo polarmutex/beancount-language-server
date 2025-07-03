@@ -8,133 +8,103 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    crane = {
-      url = "github:ipetkov/crane";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    crane = { url = "github:ipetkov/crane"; };
     advisory-db = {
       url = "github:rustsec/advisory-db";
       flake = false;
     };
   };
 
-  outputs = inputs @ {
-    self,
-    nixpkgs,
-    crane,
-    flake-parts,
-    advisory-db,
-    rust-overlay,
-    ...
-  }: let
-    GIT_HASH = self.shortRev or (self.dirtyShortRev or "dirty");
-  in
-    flake-parts.lib.mkFlake {inherit inputs;} {
+  outputs = inputs@{ self, nixpkgs, crane, flake-parts, advisory-db
+    , rust-overlay, ... }:
+    let GIT_HASH = self.shortRev or (self.dirtyShortRev or "dirty");
+    in flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [
         "x86_64-linux"
         "aarch64-linux"
         # wind
         # mac
       ];
-      perSystem = {
-        pkgs,
-        system,
-        ...
-      }: let
-        pkgs = import nixpkgs {
-          inherit system;
-          overlays = [(import rust-overlay)];
-        };
+      perSystem = { pkgs, system, ... }:
+        let
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ (import rust-overlay) ];
+          };
 
-        commonArgs =
-          {
+          commonArgs = {
             src = craneLib.cleanCargoSource (craneLib.path ./.);
-
-            buildInputs = with pkgs; [];
+            buildInputs = [ ];
 
             inherit GIT_HASH;
-          }
-          // (craneLib.crateNameFromCargoToml {cargoToml = ./crates/lsp/Cargo.toml;});
-
-        craneLib = (crane.mkLib pkgs).overrideToolchain (pkgs.rust-bin.stable.latest.default.override {
-          extensions = [
-            "cargo"
-            "clippy"
-            "rust-src"
-            "rust-analyzer"
-            "rustc"
-            "rustfmt"
-          ];
-        });
-
-        cargoArtifacts = craneLib.buildDepsOnly (commonArgs
-          // {
-            panme = "beancount-language-server-deps";
+          } // (craneLib.crateNameFromCargoToml {
+            cargoToml = ./crates/lsp/Cargo.toml;
           });
 
-        beancount-language-server = craneLib.buildPackage (commonArgs
-          // {
-            inherit cargoArtifacts;
-          });
-      in {
-        checks = {
-          # Build the crate as part of `nix flake check` for convenience
-          inherit beancount-language-server;
-
-          # Run clippy (and deny all warnings) on the crate source,
-          # again, resuing the dependency artifacts from above.
-          #
-          # Note that this is done as a separate derivation so that
-          # we can block the CI if there are issues here, but not
-          # prevent downstream consumers from building our crate by itself.
-          beancount-language-server-clippy = craneLib.cargoClippy (commonArgs
-            // {
-              inherit cargoArtifacts;
-              cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+          craneLib = (crane.mkLib pkgs).overrideToolchain
+            (pkgs.rust-bin.stable.latest.default.override {
+              extensions = [
+                "cargo"
+                "clippy"
+                "rust-src"
+                "rust-analyzer"
+                "rustc"
+                "rustfmt"
+              ];
             });
 
-          beancount-language-server-doc = craneLib.cargoDoc (commonArgs
-            // {
-              inherit cargoArtifacts;
-            });
+          cargoArtifacts = craneLib.buildDepsOnly
+            (commonArgs // { panme = "beancount-language-server-deps"; });
 
-          # Check formatting
-          beancount-language-server-fmt = craneLib.cargoFmt (commonArgs
-            // {
-            });
+          beancount-language-server =
+            craneLib.buildPackage (commonArgs // { inherit cargoArtifacts; });
+        in {
+          checks = {
+            # Build the crate as part of `nix flake check` for convenience
+            inherit beancount-language-server;
 
-          # Audit dependencies
-          beancount-language-server-audit = craneLib.cargoAudit (commonArgs
-            // {
-              inherit advisory-db;
-            });
+            # Run clippy (and deny all warnings) on the crate source,
+            # again, resuing the dependency artifacts from above.
+            #
+            # Note that this is done as a separate derivation so that
+            # we can block the CI if there are issues here, but not
+            # prevent downstream consumers from building our crate by itself.
+            beancount-language-server-clippy = craneLib.cargoClippy (commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+              });
 
-          # Run tests with cargo-nextest
-          # Consider setting `doCheck = false` on `my-crate` if you do not want
-          # the tests to run twice
-          beancount-language-server-nextest = craneLib.cargoNextest (commonArgs
-            // {
-              inherit cargoArtifacts;
-              partitions = 1;
-              partitionType = "count";
-            });
-        };
+            beancount-language-server-doc =
+              craneLib.cargoDoc (commonArgs // { inherit cargoArtifacts; });
 
-        packages = {
-          inherit beancount-language-server;
-          default = beancount-language-server;
-        };
+            # Check formatting
+            beancount-language-server-fmt =
+              craneLib.cargoFmt (commonArgs // { });
 
-        devShells.default =
-          pkgs.mkShell
-          {
+            # Audit dependencies
+            beancount-language-server-audit =
+              craneLib.cargoAudit (commonArgs // { inherit advisory-db; });
+
+            # Run tests with cargo-nextest
+            # Consider setting `doCheck = false` on `my-crate` if you do not want
+            # the tests to run twice
+            beancount-language-server-nextest = craneLib.cargoNextest
+              (commonArgs // {
+                inherit cargoArtifacts;
+                partitions = 1;
+                partitionType = "count";
+              });
+          };
+
+          packages = {
+            inherit beancount-language-server;
+            default = beancount-language-server;
+          };
+
+          devShells.default = pkgs.mkShell {
             buildInputs = with pkgs;
-              [
-                clang
-                pkg-config
-                systemd
-              ]
-              ++ commonArgs.buildInputs;
+              [ clang pkg-config systemd ] ++ commonArgs.buildInputs;
             nativeBuildInputs = with pkgs; [
               gnumake
               (rust-bin.stable.latest.default.override {
@@ -150,18 +120,10 @@
               git-cliff
               virt-viewer
             ];
-            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-              pkgs.stdenv.cc.cc
-              # Add any missing library needed
-              # You can use the nix-index package to locate them, e.g. nix-locate -w --top-level --at-root /lib/libudev.so.1
-            ];
-
-            shellHook = ''
-            '';
 
             inherit GIT_HASH;
           };
-      };
+        };
     };
   #packages.default = beancount-language-server-crate;
 
