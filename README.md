@@ -54,8 +54,9 @@ Supports Beancount v2
 | ----------- | ---------------------------------------------- |
 | diagnostics | Provided via `beancount`                       |
 | formatting  | Should generate edits silimar to `bean-format` |
-| completions | Show completions for Payees, Accounts, Date    |
-| definitions | Planned for future release                     |
+| completions | Show completions for Payees, Accounts, Date, Links, Tags    |
+| definitions | Go to definition for Accounts and Commodities                     |
+| references | Goes to references for Accounts |
 | folding     | Planned for future release                     |
 | hover       | Planned for future release                     |
 | rename      | Planned for future release                     |
