@@ -50,16 +50,16 @@ TODO
 
 Supports Beancount v2
 
-| Feature     | Description                                    |
-| ----------- | ---------------------------------------------- |
-| diagnostics | Provided via `beancount`                       |
-| formatting  | Should generate edits silimar to `bean-format` |
-| completions | Show completions for Payees, Accounts, Date, Links, Tags    |
-| definitions | Go to definition for Accounts and Commodities                     |
-| references | Goes to references for Accounts |
-| folding     | Planned for future release                     |
-| hover       | Planned for future release                     |
-| rename      | Planned for future release                     |
+| Feature     | Description                                             |
+| ----------- | ------------------------------------------------------- |
+| diagnostics | Provided via `beancount`                                |
+| formatting  | Should generate edits silimar to `bean-format`          |
+| completions | Show completions for Payees, Accounts, Date, Links, Tag |
+| definitions | Go to definition for Accounts and Commodities           |
+| references  | Goes to references for Accounts                         |
+| rename      | Rename Accounts                                         |
+| folding     | Planned for future release                              |
+| hover       | Planned for future release                              |
 
 ### Future
 
