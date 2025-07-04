@@ -6,18 +6,19 @@ pub mod text_document {
     use crate::providers::diagnostics;
     use crate::providers::formatting;
     use crate::providers::references;
-    use crate::providers::references::ts_references;
     use crate::server::LspServerState;
     use crate::server::LspServerStateSnapshot;
     use crate::server::ProgressMsg;
     use crate::server::Task;
     use crate::to_json;
     use crate::treesitter_utils::lsp_textdocchange_to_ts_inputedit;
-    use crate::treesitter_utils::text_for_tree_sitter_node;
     use crate::utils::ToFilePath;
     use anyhow::Result;
     use crossbeam_channel::Sender;
     use itertools::Itertools;
+    use lsp_types::PartialResultParams;
+    use lsp_types::ReferenceContext;
+    use lsp_types::ReferenceParams;
     use lsp_types::notification::Notification;
     use std::path::PathBuf;
     use std::str::FromStr;
@@ -273,41 +274,17 @@ pub mod text_document {
         snapshot: LspServerStateSnapshot,
         params: lsp_types::RenameParams,
     ) -> Result<Option<lsp_types::WorkspaceEdit>> {
-        let uri = &params
-            .text_document_position
-            .text_document
-            .uri
-            .to_file_path()
-            .unwrap();
-        let line = &params.text_document_position.position.line;
-        let char = &params.text_document_position.position.character;
-        let forest = snapshot.forest;
-        let _tree = forest.get(uri).unwrap();
-        let open_docs = snapshot.open_docs;
-        let doc = open_docs.get(uri).unwrap();
-        let content = doc.clone().content;
-        let start = tree_sitter::Point {
-            row: *line as usize,
-            column: if *char == 0 {
-                *char as usize
-            } else {
-                *char as usize - 1
+        let reference_params = ReferenceParams {
+            text_document_position: params.text_document_position,
+            work_done_progress_params: params.work_done_progress_params,
+            partial_result_params: PartialResultParams {
+                partial_result_token: None,
+            },
+            context: ReferenceContext {
+                include_declaration: true,
             },
         };
-        let end = tree_sitter::Point {
-            row: *line as usize,
-            column: *char as usize,
-        };
-        let Some(node) = forest
-            .get(uri)
-            .expect("to have tree found")
-            .root_node()
-            .named_descendant_for_point_range(start, end)
-        else {
-            return Ok(None);
-        };
-        let node_text = text_for_tree_sitter_node(&content, &node);
-        let locs = ts_references(&forest, &open_docs, node_text);
+        let locs = references(snapshot, reference_params).unwrap().unwrap();
         let new_name = params.new_name;
 
         #[allow(clippy::mutable_key_type)] // Part of the lsp-types interface
