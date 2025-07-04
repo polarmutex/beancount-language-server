@@ -1,5 +1,5 @@
 use crate::document::Document;
-use crate::treesitter_utils::lsp_position_to_core;
+use crate::treesitter_utils::lsp_position_to_node;
 use crate::{
     server::LspServerStateSnapshot, treesitter_utils::text_for_tree_sitter_node, utils::ToFilePath,
 };
@@ -16,15 +16,10 @@ pub(crate) fn references(
     let uri = params.text_document_position.text_document.uri;
     let path_buf = uri.to_file_path().unwrap();
     let doc = snapshot.open_docs.get(&path_buf).unwrap();
-
-    let position =
-        lsp_position_to_core(&doc.content, params.text_document_position.position).unwrap();
     let tree = snapshot.forest.get(&path_buf).unwrap();
 
-    let node = tree
-        .root_node()
-        .descendant_for_point_range(position.point, position.point)
-        .unwrap();
+    let node =
+        lsp_position_to_node(&doc.content, params.text_document_position.position, tree).unwrap();
 
     // TODO: honor `include_declaration` from params, right now it defaults to true
 
@@ -147,7 +142,7 @@ mod tests {
 
         let references = references(test_state.snapshot, params).unwrap();
         assert!(references.is_some());
-        println!("{:?}", references);
+        println!("{references:?}");
         assert_eq!(references.expect("not to be none").len(), 3);
     }
 }

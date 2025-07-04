@@ -1,3 +1,5 @@
+use tree_sitter::{Node, Tree};
+
 pub fn lsp_textdocchange_to_ts_inputedit(
     source: &ropey::Rope,
     change: &lsp_types::TextDocumentContentChangeEvent,
@@ -117,4 +119,16 @@ pub fn text_for_tree_sitter_node(
     let end = source.byte_to_char(node.end_byte());
     let slice = source.slice(start..end);
     slice.into()
+}
+pub(crate) fn lsp_position_to_node<'t>(
+    source: &ropey::Rope,
+    position: lsp_types::Position,
+    tree: &'t Tree,
+) -> anyhow::Result<Node<'t>> {
+    let position = lsp_position_to_core(source, position)?;
+    let node = tree
+        .root_node()
+        .descendant_for_point_range(position.point, position.point)
+        .expect("node to be in range");
+    Ok(node)
 }

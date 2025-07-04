@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     server::LspServerStateSnapshot,
-    treesitter_utils::{lsp_position_to_core, text_for_tree_sitter_node},
+    treesitter_utils::{lsp_position_to_node, text_for_tree_sitter_node},
     utils::ToFilePath,
 };
 use anyhow::Result;
@@ -20,15 +20,14 @@ pub(crate) fn definition(
 
     let doc = snapshot.open_docs.get(&path_buf).unwrap();
     let data = snapshot.beancount_data.get(&path_buf).unwrap();
-    let position =
-        lsp_position_to_core(&doc.content, params.text_document_position_params.position)?.point;
 
     let tree = snapshot.forest.get(&path_buf).unwrap();
-
-    let node = tree
-        .root_node()
-        .descendant_for_point_range(position, position)
-        .unwrap();
+    let node = lsp_position_to_node(
+        &doc.content,
+        params.text_document_position_params.position,
+        tree,
+    )
+    .unwrap();
 
     debug!("providers::definition - node {:?}", node);
 
