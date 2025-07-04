@@ -24,6 +24,7 @@ pub struct BeancountData {
     pub(crate) flagged_entries: Vec<FlaggedEntry>,
     tags: Vec<String>,
     links: Vec<String>,
+    pub(crate) commodities_definitions: HashMap<String, Range>,
 }
 
 impl BeancountData {
@@ -157,12 +158,32 @@ impl BeancountData {
         links.sort();
         links.dedup();
 
+        let commodities_definitions: HashMap<String, Range> = tree
+            .root_node()
+            .children(&mut cursor)
+            .filter(|c| c.kind() == "commodity")
+            .filter_map(|node| {
+                let mut node_cursor = node.walk();
+                let account_node = node
+                    .children(&mut node_cursor)
+                    .find(|c| c.kind() == "currency")?;
+                let commodity = text_for_tree_sitter_node(content, &account_node);
+
+                let start = byte_to_lsp_position(content, account_node.start_byte());
+                let end = byte_to_lsp_position(content, account_node.end_byte());
+                let range = lsp_types::Range { start, end };
+
+                Some((commodity, range))
+            })
+            .collect();
+
         Self {
             accounts_definitions,
             narration,
             flagged_entries,
             tags,
             links,
+            commodities_definitions,
         }
     }
 

@@ -320,7 +320,7 @@ mod tests {
     use crate::providers::completion::completion;
     use crate::{
         providers::completion::{add_one_month, sub_one_month},
-        test_utils::test_utils::TestState,
+        test_utils::TestState,
     };
 
     #[test]
