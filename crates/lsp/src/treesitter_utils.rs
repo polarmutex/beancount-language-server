@@ -41,7 +41,7 @@ pub fn lsp_textdocchange_to_ts_inputedit(
     })
 }
 
-fn byte_to_lsp_position(text: &ropey::Rope, byte_idx: usize) -> lsp_types::Position {
+pub(crate) fn byte_to_lsp_position(text: &ropey::Rope, byte_idx: usize) -> lsp_types::Position {
     let line_idx = text.byte_to_line(byte_idx);
 
     let line_utf16_cu_idx = {
@@ -61,14 +61,14 @@ fn byte_to_lsp_position(text: &ropey::Rope, byte_idx: usize) -> lsp_types::Posit
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct TextPosition {
+pub(crate) struct TextPosition {
     pub char: u32,
     pub byte: u32,
     pub code: u32,
     pub point: tree_sitter::Point,
 }
 
-fn lsp_position_to_core(
+pub(crate) fn lsp_position_to_core(
     source: &ropey::Rope,
     position: lsp_types::Position,
 ) -> anyhow::Result<TextPosition> {

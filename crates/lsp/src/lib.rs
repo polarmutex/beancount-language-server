@@ -13,6 +13,9 @@ pub mod server;
 mod treesitter_utils;
 mod utils;
 
+#[cfg(test)]
+pub(crate) mod test_utils;
+
 use crate::config::Config;
 use crate::server::LspServerState;
 use anyhow::Result;

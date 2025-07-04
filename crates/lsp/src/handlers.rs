@@ -2,6 +2,7 @@ pub mod text_document {
     use crate::beancount_data::BeancountData;
     use crate::document::Document;
     use crate::providers::completion;
+    use crate::providers::definition;
     use crate::providers::diagnostics;
     use crate::providers::formatting;
     use crate::server::LspServerState;
@@ -199,6 +200,13 @@ pub mod text_document {
         params: lsp_types::DocumentFormattingParams,
     ) -> Result<Option<Vec<lsp_types::TextEdit>>> {
         formatting::formatting(snapshot, params)
+    }
+
+    pub(crate) fn definition(
+        snapshot: LspServerStateSnapshot,
+        params: lsp_types::GotoDefinitionParams,
+    ) -> Result<Option<lsp_types::GotoDefinitionResponse>> {
+        definition::definition(snapshot, params)
     }
 
     fn handle_diagnostics(
