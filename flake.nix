@@ -23,7 +23,7 @@
         "x86_64-linux"
         "aarch64-linux"
         # wind
-        # mac
+        "aarch64-darwin"
       ];
       perSystem = { pkgs, system, ... }:
         let
@@ -104,7 +104,8 @@
 
           devShells.default = pkgs.mkShell {
             buildInputs = with pkgs;
-              [ clang pkg-config systemd ] ++ commonArgs.buildInputs;
+              [ clang pkg-config ] ++ lib.optional stdenv.isLinux systemd
+              ++ commonArgs.buildInputs;
             nativeBuildInputs = with pkgs; [
               gnumake
               (rust-bin.stable.latest.default.override {

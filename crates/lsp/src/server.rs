@@ -6,13 +6,11 @@ use crate::document::Document;
 use crate::forest;
 use crate::handlers;
 use crate::progress::Progress;
-use crate::utils::ToFilePath;
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
 use lsp_types::notification::Notification;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::time::Instant;
 
 pub(crate) type RequestHandler = fn(&mut LspServerState, lsp_server::Response);
@@ -122,12 +120,17 @@ impl LspServerState {
         // init forest
         if self.config.journal_root.is_some() {
             let file = self.config.journal_root.as_ref().unwrap();
-            let journal_root =
-                lsp_types::Uri::from_str(format!("file://{}", file.to_str().unwrap()).as_str())
-                    .unwrap()
-                    .to_file_path()
-                    .unwrap();
-            // .unwrap_or_else(|()| panic!("Cannot parse URL for file '{file:?}'"));
+
+            let journal_root = if file.is_relative() {
+                self.config.root_file.join(file)
+            } else {
+                file.clone()
+            };
+
+            // Check if exists
+            if !journal_root.exists() {
+                return Err(anyhow::anyhow!("Journal root does not exist"));
+            }
 
             tracing::info!("initializing forest...");
             let snapshot = self.snapshot();
@@ -135,15 +138,6 @@ impl LspServerState {
             self.thread_pool.execute(move || {
                 forest::parse_initial_forest(snapshot, journal_root, sender).unwrap();
             });
-            /*forest::parse_initial_forest(
-                &self.session,
-                lsp_types::Url::from_file_path(
-                    self.session.root_journal_path.read().await.clone().unwrap(),
-                )
-                .unwrap(),
-            )
-            .unwrap();
-            */
         }
 
         while let Some(event) = self.next_event(&receiver) {
@@ -262,6 +256,8 @@ impl LspServerState {
             .on::<lsp_types::request::Completion>(handlers::text_document::completion)?
             .on::<lsp_types::request::Formatting>(handlers::text_document::formatting)?
             .on::<lsp_types::request::GotoDefinition>(handlers::text_document::definition)?
+            .on::<lsp_types::request::Rename>(handlers::text_document::handle_rename)?
+            .on::<lsp_types::request::References>(handlers::text_document::handle_references)?
             .finish();
         Ok(())
     }
