@@ -43,7 +43,7 @@ fn setup_logging(file: bool) {
         None => BoxMakeWriter::new(io::stderr),
     };
 
-    let filter = EnvFilter::default().add_directive(Directive::from(LevelFilter::DEBUG));
+    let filter = EnvFilter::default().add_directive(Directive::from(LevelFilter::INFO));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(writer)

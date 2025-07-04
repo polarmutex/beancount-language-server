@@ -164,13 +164,13 @@ impl BeancountData {
             .filter(|c| c.kind() == "commodity")
             .filter_map(|node| {
                 let mut node_cursor = node.walk();
-                let account_node = node
+                let currency_node = node
                     .children(&mut node_cursor)
                     .find(|c| c.kind() == "currency")?;
-                let commodity = text_for_tree_sitter_node(content, &account_node);
+                let commodity = text_for_tree_sitter_node(content, &currency_node);
 
-                let start = byte_to_lsp_position(content, account_node.start_byte());
-                let end = byte_to_lsp_position(content, account_node.end_byte());
+                let start = byte_to_lsp_position(content, currency_node.start_byte());
+                let end = byte_to_lsp_position(content, currency_node.end_byte());
                 let range = lsp_types::Range { start, end };
 
                 Some((commodity, range))
