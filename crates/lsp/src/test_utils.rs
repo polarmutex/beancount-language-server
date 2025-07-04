@@ -1,8 +1,7 @@
-use crate::server::LspServerStateSnapshot;
-//use insta::assert_yaml_snapshot;
 use crate::beancount_data::BeancountData;
 use crate::config::Config;
 use crate::document::Document;
+use crate::server::LspServerStateSnapshot;
 use crate::utils::ToFilePath;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -37,7 +36,6 @@ pub struct TestDocument {
     pub path: String,
     pub text: String,
     pub cursor: Option<lsp_types::Position>,
-    // pub ranges: Vec<lsp_types::Range>,
 }
 impl TestDocument {
     pub fn parse(input: &str) -> Self {
@@ -82,7 +80,6 @@ impl TestDocument {
             path: path.to_string(),
             text: lines.join("\n"),
             cursor,
-            // ranges,
         }
     }
 }
