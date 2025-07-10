@@ -424,13 +424,17 @@ pub mod text_document {
         let node_text = text_for_tree_sitter_node(&content, &node);
         let locs = ts_references(&forest, &open_docs, node_text);
         let new_name = params.new_name;
-        
+
         // Group locations by URI string to avoid mutable key type warning
-        let mut grouped_locs: std::collections::HashMap<String, Vec<lsp_types::Location>> = std::collections::HashMap::new();
+        let mut grouped_locs: std::collections::HashMap<String, Vec<lsp_types::Location>> =
+            std::collections::HashMap::new();
         for loc in locs {
-            grouped_locs.entry(loc.uri.to_string()).or_default().push(loc);
+            grouped_locs
+                .entry(loc.uri.to_string())
+                .or_default()
+                .push(loc);
         }
-        
+
         #[allow(clippy::mutable_key_type)]
         let mut changes = std::collections::HashMap::new();
         for (uri_str, locations) in grouped_locs {
