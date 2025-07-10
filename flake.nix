@@ -151,7 +151,7 @@
               virt-viewer
             ];
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-              pkgs.stdenv.cc.cc
+              # pkgs.stdenv.cc.cc
               # Add any missing library needed
               # You can use the nix-index package to locate them, e.g. nix-locate -w --top-level --at-root /lib/libudev.so.1
             ];
