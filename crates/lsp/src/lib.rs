@@ -59,12 +59,20 @@ pub fn run_server() -> Result<()> {
     }
 
     let config = {
-        let root_file = match initialize_params
-            .workspace_folders
-            .and_then(|wfs| wfs.first().and_then(|f| f.uri.to_file_path().ok()))
-        {
-            Some(it) => it,
-            None => std::env::current_dir()?,
+        let root_file = if let Some(workspace_folders) = &initialize_params.workspace_folders {
+            workspace_folders
+                .first()
+                .and_then(|folder| folder.uri.to_file_path().ok())
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+        } else {
+            #[allow(deprecated)]
+            match initialize_params
+                .root_uri
+                .and_then(|it| it.to_file_path().ok())
+            {
+                Some(it) => it,
+                None => std::env::current_dir()?,
+            }
         };
         let mut config = Config::new(root_file);
         if let Some(json) = initialize_params.initialization_options {
