@@ -160,7 +160,7 @@ pub(crate) fn completion(
     }
 }
 
-fn complete_date() -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
+pub(crate) fn complete_date() -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::date");
     let today = chrono::offset::Local::now().naive_local().date();
     let prev_month = sub_one_month(today).format("%Y-%m-").to_string();
@@ -200,7 +200,7 @@ fn complete_date() -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     Ok(Some(items))
 }
 
-fn complete_kind() -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
+pub(crate) fn complete_kind() -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::kind");
     let items = vec![
         lsp_types::CompletionItem {
@@ -315,7 +315,7 @@ fn complete_account_with_prefix(
 }
 
 /// Extract the current word/prefix being typed for completion
-fn extract_completion_prefix(line_text: &str, cursor_char: usize) -> String {
+pub(crate) fn extract_completion_prefix(line_text: &str, cursor_char: usize) -> String {
     let chars: Vec<char> = line_text.chars().collect();
     if cursor_char == 0 || cursor_char > chars.len() {
         return String::new();
@@ -338,7 +338,7 @@ fn extract_completion_prefix(line_text: &str, cursor_char: usize) -> String {
     chars[start..end].iter().collect()
 }
 
-fn complete_tag(
+pub(crate) fn complete_tag(
     data: HashMap<PathBuf, BeancountData>,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::tag");
@@ -356,7 +356,7 @@ fn complete_tag(
     Ok(Some(completions))
 }
 
-fn complete_link(
+pub(crate) fn complete_link(
     data: HashMap<PathBuf, BeancountData>,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::tag");
@@ -378,6 +378,7 @@ fn complete_link(
 mod tests {
     use crate::providers::completion::add_one_month;
     use crate::providers::completion::completion;
+    use crate::providers::completion::extract_completion_prefix;
     use crate::providers::completion::sub_one_month;
     use crate::server::LspServerStateSnapshot;
     //use insta::assert_yaml_snapshot;
@@ -1029,5 +1030,81 @@ mod tests {
         let path = result.unwrap();
         // Should result in root directory
         assert_eq!(path.to_string_lossy(), "/");
+    }
+
+    #[test]
+    fn test_complete_kind_function() {
+        // Test the complete_kind function directly
+        use crate::providers::completion::complete_kind;
+        
+        let items = complete_kind().unwrap().unwrap();
+        assert_eq!(items.len(), 4);
+        
+        let labels: Vec<String> = items.iter().map(|i| i.label.clone()).collect();
+        assert!(labels.contains(&"txn".to_string()));
+        assert!(labels.contains(&"balance".to_string()));
+        assert!(labels.contains(&"open".to_string()));
+        assert!(labels.contains(&"close".to_string()));
+    }
+
+    #[test]
+    fn test_extract_completion_prefix_functionality() {
+        // Test that the extract_completion_prefix function works correctly
+        // This tests the actual implementation without relying on complex fixtures
+        assert_eq!(extract_completion_prefix("Assets:Test", 11), "Assets:Test");
+        assert_eq!(extract_completion_prefix("Assets:Test", 6), "Assets");
+        assert_eq!(extract_completion_prefix("Assets:Test", 7), "Assets:");
+        assert_eq!(extract_completion_prefix("Assets:Test", 0), "");
+        assert_eq!(extract_completion_prefix("    Assets:Test", 15), "Assets:Test");
+        assert_eq!(extract_completion_prefix("Assets:Test-USD", 15), "Assets:Test-USD");
+    }
+
+    #[test]
+    fn test_completion_functions_directly() {
+        // Test the completion functions directly rather than through complex fixtures
+        use crate::providers::completion::{complete_tag, complete_link, complete_date};
+        use std::collections::HashMap;
+        
+        let data = HashMap::new();
+        
+        // Test tag completion - with empty data should return empty list
+        let tag_items = complete_tag(data.clone()).unwrap().unwrap();
+        assert_eq!(tag_items.len(), 0); // No tags in empty data
+        
+        // Test link completion - with empty data should return empty list  
+        let link_items = complete_link(data).unwrap().unwrap();
+        assert_eq!(link_items.len(), 0); // No links in empty data
+        
+        // Test date completion - this doesn't depend on data
+        let date_items = complete_date().unwrap().unwrap();
+        assert_eq!(date_items.len(), 4);
+        assert!(date_items.iter().any(|item| item.detail == Some("today".to_string())));
+        assert!(date_items.iter().any(|item| item.detail == Some("this month".to_string())));
+        assert!(date_items.iter().any(|item| item.detail == Some("prev month".to_string())));
+        assert!(date_items.iter().any(|item| item.detail == Some("next month".to_string())));
+    }
+
+    #[test]
+    fn test_unsupported_trigger_character() {
+        // Test that unsupported trigger characters return None
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Assets:Test USD
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = lsp_types::TextDocumentPositionParams {
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: lsp_types::Uri::from_str("file:///main.beancount").unwrap(),
+            },
+            position: lsp_types::Position {
+                line: 0,
+                character: 26,
+            },
+        };
+        let items = completion(test_state.snapshot, Some('x'), cursor)
+            .unwrap();
+        
+        // Should return None for unsupported trigger characters
+        assert!(items.is_none());
     }
 }
