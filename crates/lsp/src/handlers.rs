@@ -14,7 +14,6 @@ pub mod text_document {
     use crate::utils::ToFilePath;
     use anyhow::Result;
     use crossbeam_channel::Sender;
-    use itertools::Itertools;
     use lsp_types::notification::Notification;
     use lsp_types::Location;
     use std::collections::HashMap;
@@ -286,7 +285,7 @@ pub mod text_document {
                         let m = m.nodes_for_capture_index(capture_account).next()?;
                         let m_text = m.utf8_text(source).expect("");
                         if m_text == node_text {
-                            Some((url.clone(), m.into()))
+                            Some((url.clone(), m))
                         } else {
                             None
                         }
@@ -425,20 +424,26 @@ pub mod text_document {
         let node_text = text_for_tree_sitter_node(&content, &node);
         let locs = ts_references(&forest, &open_docs, node_text);
         let new_name = params.new_name;
-        let changes = locs
-            .into_iter()
-            .chunk_by(|t| t.uri.clone())
-            .into_iter()
-            .map(|(uri, g)| {
-                let edits: Vec<_> = g
-                    // Send edits ordered from the back so we do not invalidate following positions.
-                    .sorted_by_key(|l| l.range.start)
-                    .rev()
-                    .map(|l| lsp_types::TextEdit::new(l.range, new_name.clone()))
-                    .collect();
-                (uri, edits)
-            })
-            .collect();
+        
+        // Group locations by URI string to avoid mutable key type warning
+        let mut grouped_locs: std::collections::HashMap<String, Vec<lsp_types::Location>> = std::collections::HashMap::new();
+        for loc in locs {
+            grouped_locs.entry(loc.uri.to_string()).or_default().push(loc);
+        }
+        
+        #[allow(clippy::mutable_key_type)]
+        let mut changes = std::collections::HashMap::new();
+        for (uri_str, locations) in grouped_locs {
+            let uri = lsp_types::Uri::from_str(&uri_str).unwrap();
+            let mut edits: Vec<_> = locations
+                .into_iter()
+                .map(|l| lsp_types::TextEdit::new(l.range, new_name.clone()))
+                .collect();
+            // Send edits ordered from the back so we do not invalidate following positions.
+            edits.sort_by_key(|edit| edit.range.start);
+            edits.reverse();
+            changes.insert(uri, edits);
+        }
         Ok(Some(lsp_types::WorkspaceEdit::new(changes)))
     }
 }
