@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::debug;
 
-/// Provider function for LSP ``.
+/// Provider function for LSP completion.
 pub(crate) fn completion(
     snapshot: LspServerStateSnapshot,
     trigger_character: Option<char>,
@@ -40,6 +40,11 @@ pub(crate) fn completion(
     let node = tree
         .root_node()
         .named_descendant_for_point_range(start, end);
+
+    // Extract the current prefix for filtering completions
+    let current_line_text = content.line(*line as usize).to_string();
+    let prefix = extract_completion_prefix(&current_line_text, *char as usize);
+    debug!("providers::completion - prefix: '{}'", prefix);
 
     let prev_sibling_node = match node {
         Some(node) => node.prev_sibling(),
@@ -81,6 +86,10 @@ pub(crate) fn completion(
             }
             '#' => complete_tag(snapshot.beancount_data),
             '^' => complete_link(snapshot.beancount_data),
+            ':' => {
+                // Handle colon in account names - continue account completion
+                complete_account_with_prefix(snapshot.beancount_data, &prefix)
+            }
             _ => Ok(None),
         }
     } else {
@@ -99,20 +108,15 @@ pub(crate) fn completion(
                 //   complete_account(snapshot.beancount_data)
                 //} else {
                 match node.kind() {
-                    /*"ERROR" => {
+                    "ERROR" => {
                         debug!("providers::completion - handle node - handle error");
                         debug!(
                             "providers::completion - handle node - handle error {}",
                             text
                         );
-                        let prefix = text.chars().next().unwrap();
-                        debug!("providers::completion - handle node - prefix {}", prefix);
-                        if prefix == '"' {
-                            complete_txn_string(snapshot.beancount_data)
-                        } else {
-                            Ok(None)
-                        }
-                    }*/
+                        // For ERROR nodes, try account completion as it might be an incomplete account name
+                        complete_account_with_prefix(snapshot.beancount_data, &prefix)
+                    }
                     "identifier" => {
                         debug!("providers::completion - handle node - handle identifier");
                         if prev_sibling_node.is_some()
@@ -122,7 +126,7 @@ pub(crate) fn completion(
                         } else {
                             // if parent_parent_node.is_some() && parent_parent_node.unwrap().kind() ==
                             // "posting_or_kv_list" {
-                            complete_account(snapshot.beancount_data)
+                            complete_account_with_prefix(snapshot.beancount_data, &prefix)
                             //} else {
                             //    Ok(None)
                         }
@@ -253,22 +257,54 @@ fn complete_narration(
     Ok(Some(completions))
 }
 
-fn complete_account(
+fn complete_account_with_prefix(
     data: HashMap<PathBuf, BeancountData>,
+    prefix: &str,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
-    debug!("providers::completion::account");
+    debug!("providers::completion::account with prefix: '{}'", prefix);
     let mut completions = Vec::new();
+    let prefix_lower = prefix.to_lowercase();
+    
     for data in data.values() {
         for account in data.get_accounts() {
-            completions.push(lsp_types::CompletionItem {
-                label: account,
-                detail: Some("Beancount Account".to_string()),
-                kind: Some(lsp_types::CompletionItemKind::ENUM),
-                ..Default::default()
-            });
+            // Case-insensitive prefix matching
+            if prefix.is_empty() || account.to_lowercase().starts_with(&prefix_lower) {
+                completions.push(lsp_types::CompletionItem {
+                    label: account.clone(),
+                    detail: Some("Beancount Account".to_string()),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
+                    // Set filter_text to enable proper LSP client filtering
+                    filter_text: Some(account.clone()),
+                    ..Default::default()
+                });
+            }
         }
     }
     Ok(Some(completions))
+}
+
+/// Extract the current word/prefix being typed for completion
+fn extract_completion_prefix(line_text: &str, cursor_char: usize) -> String {
+    let chars: Vec<char> = line_text.chars().collect();
+    if cursor_char == 0 || cursor_char > chars.len() {
+        return String::new();
+    }
+    
+    let mut start = cursor_char.saturating_sub(1);
+    
+    // Find the start of the current word (account name)
+    // Account names can contain letters, numbers, colons, and hyphens
+    while start > 0 {
+        let c = chars[start.saturating_sub(1)];
+        if !c.is_alphanumeric() && c != ':' && c != '-' && c != '_' {
+            break;
+        }
+        start = start.saturating_sub(1);
+    }
+    
+    // Extract the prefix from start to cursor
+    let end = cursor_char.min(chars.len());
+    chars[start..end].iter().collect()
 }
 
 fn complete_tag(
@@ -678,14 +714,79 @@ mod tests {
                     label: String::from("Assets:Test"),
                     kind: Some(lsp_types::CompletionItemKind::ENUM),
                     detail: Some(String::from("Beancount Account")),
+                    filter_text: Some(String::from("Assets:Test")),
+                    ..Default::default()
+                },
+            ]
+        )
+    }
+
+    #[test]
+    fn handle_account_completion_with_colon() {
+        let fixure = r#"
+%! /main.beancount
+2023-10-01 open Assets:Test USD
+2023-10-01 open Assets:Checking USD
+2023-10-01 open Expenses:Test USD
+2023-10-01 txn  "Test Co" "Foo Bar"
+    Assets:
+           |
+           ^
+"#;
+        let test_state = TestState::new(fixure).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        println!("{} {}", cursor.position.line, cursor.position.character);
+        let items = completion(test_state.snapshot, Some(':'), cursor)
+            .unwrap()
+            .unwrap_or_default();
+        assert_eq!(
+            items,
+            [
+                lsp_types::CompletionItem {
+                    label: String::from("Assets:Test"),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
+                    detail: Some(String::from("Beancount Account")),
+                    filter_text: Some(String::from("Assets:Test")),
                     ..Default::default()
                 },
                 lsp_types::CompletionItem {
-                    label: String::from("Expenses:Test"),
+                    label: String::from("Assets:Checking"),
                     kind: Some(lsp_types::CompletionItemKind::ENUM),
                     detail: Some(String::from("Beancount Account")),
+                    filter_text: Some(String::from("Assets:Checking")),
                     ..Default::default()
-                }
+                },
+            ]
+        )
+    }
+
+    #[test]
+    fn handle_case_insensitive_completion() {
+        let fixure = r#"
+%! /main.beancount
+2023-10-01 open Assets:Test USD
+2023-10-01 open Expenses:Test USD
+2023-10-01 txn  "Test Co" "Foo Bar"
+    Asse
+        |
+        ^
+"#;
+        let test_state = TestState::new(fixure).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        println!("{} {}", cursor.position.line, cursor.position.character);
+        let items = completion(test_state.snapshot, None, cursor)
+            .unwrap()
+            .unwrap_or_default();
+        assert_eq!(
+            items,
+            [
+                lsp_types::CompletionItem {
+                    label: String::from("Assets:Test"),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
+                    detail: Some(String::from("Beancount Account")),
+                    filter_text: Some(String::from("Assets:Test")),
+                    ..Default::default()
+                },
             ]
         )
     }
