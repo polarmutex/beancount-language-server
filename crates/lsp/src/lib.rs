@@ -13,12 +13,15 @@ pub mod server;
 mod treesitter_utils;
 mod utils;
 
+#[cfg(test)]
+pub(crate) mod test_utils;
+
 use crate::config::Config;
 use crate::server::LspServerState;
 use anyhow::Result;
 use lsp_server::Connection;
 use lsp_types::InitializeParams;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use utils::ToFilePath;
 
 pub fn run_server() -> Result<()> {
