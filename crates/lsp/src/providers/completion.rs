@@ -79,7 +79,7 @@ pub(crate) fn completion(
             '2' => complete_date(),
             '"' => {
                 if prev_sibling_node.is_some() && prev_sibling_node.unwrap().kind() == "txn" {
-                    complete_narration(snapshot.beancount_data)
+                    complete_narration_with_quotes(snapshot.beancount_data, &current_line_text, cursor.position.character as usize)
                 } else {
                     Ok(None)
                 }
@@ -131,13 +131,13 @@ pub(crate) fn completion(
                             //    Ok(None)
                         }
                     }
-                    "narration" => {
-                        debug!("providers::completion - handle node - handle narration");
-                        complete_narration(snapshot.beancount_data)
-                    }
                     "payee" => {
                         debug!("providers::completion - handle node - handle payee");
-                        complete_narration(snapshot.beancount_data)
+                        complete_narration_with_quotes(snapshot.beancount_data, &current_line_text, cursor.position.character as usize)
+                    }
+                    "narration" => {
+                        debug!("providers::completion - handle node - handle narration");
+                        complete_narration_with_quotes(snapshot.beancount_data, &current_line_text, cursor.position.character as usize)
                     }
                     _ => Ok(None),
                 }
@@ -239,17 +239,34 @@ pub fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd_opt(year, month, 1).expect("valid date")
 }
 
-fn complete_narration(
+
+fn complete_narration_with_quotes(
     data: HashMap<PathBuf, BeancountData>,
+    line_text: &str,
+    cursor_char: usize,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::narration");
+    
+    // Check if there's already a closing quote after the cursor
+    let has_closing_quote = line_text.chars().skip(cursor_char).any(|c| c == '"');
+    debug!("providers::completion::narration - has_closing_quote: {}", has_closing_quote);
+    
     let mut completions = Vec::new();
     for data in data.values() {
         for txn_string in data.get_narration() {
+            let insert_text = if has_closing_quote {
+                // Remove the quotes from the stored string and don't add closing quote
+                txn_string.trim_matches('"').to_string()
+            } else {
+                // Keep the full quoted string as stored
+                txn_string.clone()
+            };
+            
             completions.push(lsp_types::CompletionItem {
-                label: txn_string,
+                label: txn_string.clone(),
                 detail: Some("Beancount Narration".to_string()),
                 kind: Some(lsp_types::CompletionItemKind::ENUM),
+                insert_text: Some(insert_text),
                 ..Default::default()
             });
         }
@@ -663,6 +680,7 @@ mod tests {
                 label: String::from("\"Test Co\""),
                 kind: Some(lsp_types::CompletionItemKind::ENUM),
                 detail: Some(String::from("Beancount Narration")),
+                insert_text: Some(String::from("\"Test Co\"")), // No closing quote exists, so keep full quoted string
                 ..Default::default()
             },]
         )
@@ -688,6 +706,66 @@ mod tests {
             .unwrap()
             .unwrap_or_default();
         assert_eq!(items, [])
+    }
+
+    #[test]
+    fn handle_narration_completion_with_existing_closing_quote() {
+        let fixure = r#"
+%! /main.beancount
+2023-10-01 open Assets:Test USD
+2023-10-01 open Expenses:Test USD
+2023-10-01 txn  "Test Co" "Foo Bar"
+    Assets:Test 1 USD
+    Expenses:Test
+2023-10-01 txn "Test Co"
+2023-10-01 txn ""
+                |
+                ^
+"#;
+        let test_state = TestState::new(fixure).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        println!("{} {}", cursor.position.line, cursor.position.character);
+        let items = completion(test_state.snapshot, Some('"'), cursor)
+            .unwrap()
+            .unwrap_or_default();
+        // Should have completions with insert_text without quotes since closing quote exists
+        assert!(!items.is_empty());
+        let test_co_completion = items.iter().find(|item| item.label == "\"Test Co\"").unwrap();
+        assert_eq!(test_co_completion.insert_text, Some(String::from("Test Co")));
+        
+        let foo_bar_completion = items.iter().find(|item| item.label == "\"Foo Bar\"").unwrap();
+        assert_eq!(foo_bar_completion.insert_text, Some(String::from("Foo Bar")));
+    }
+
+    #[test]
+    fn handle_narration_completion_without_closing_quote() {
+        let fixure = r#"
+%! /main.beancount
+2023-10-01 open Assets:Test USD
+2023-10-01 open Expenses:Test USD
+2023-10-01 txn  "Test Co" "Foo Bar"
+    Assets:Test 1 USD
+    Expenses:Test
+2023-10-01 txn "
+                |
+                ^
+"#;
+        let test_state = TestState::new(fixure).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        println!("{} {}", cursor.position.line, cursor.position.character);
+        let items = completion(test_state.snapshot, Some('"'), cursor)
+            .unwrap()
+            .unwrap_or_default();
+        assert_eq!(
+            items,
+            [lsp_types::CompletionItem {
+                label: String::from("\"Foo Bar\""),
+                kind: Some(lsp_types::CompletionItemKind::ENUM),
+                detail: Some(String::from("Beancount Narration")),
+                insert_text: Some(String::from("\"Foo Bar\"")), // Keep full quotes since no closing quote
+                ..Default::default()
+            },]
+        )
     }
 
     #[test]
