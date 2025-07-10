@@ -279,6 +279,8 @@ fn complete_account_with_prefix(
                     label: n.clone(),
                     detail: Some("Beancount Account".to_string()),
                     kind: Some(lsp_types::CompletionItemKind::ENUM),
+                    // Set filter_text to enable proper LSP client filtering
+                    filter_text: Some(n.clone()),
                     ..Default::default()
                 })
         })
@@ -581,17 +583,17 @@ mod tests {
             items,
             [
                 lsp_types::CompletionItem {
-                    label: String::from("Assets:Test"),
-                    kind: Some(lsp_types::CompletionItemKind::ENUM),
-                    detail: Some(String::from("Beancount Account")),
-                    filter_text: Some(String::from("Assets:Test")),
-                    ..Default::default()
-                },
-                lsp_types::CompletionItem {
                     label: String::from("Assets:Checking"),
                     kind: Some(lsp_types::CompletionItemKind::ENUM),
                     detail: Some(String::from("Beancount Account")),
                     filter_text: Some(String::from("Assets:Checking")),
+                    ..Default::default()
+                },
+                lsp_types::CompletionItem {
+                    label: String::from("Assets:Test"),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
+                    detail: Some(String::from("Beancount Account")),
+                    filter_text: Some(String::from("Assets:Test")),
                     ..Default::default()
                 },
             ]
@@ -628,7 +630,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Bug in tree_sitter_beancount"]
     fn handle_account_completion_case_sensitive() {
         let _ = env_logger::builder().is_test(true).try_init();
 
@@ -649,20 +650,13 @@ mod tests {
             .unwrap_or_default();
         assert_eq!(
             items,
-            [
-                lsp_types::CompletionItem {
-                    label: String::from("Assets:Test"),
-                    kind: Some(lsp_types::CompletionItemKind::ENUM),
-                    detail: Some(String::from("Beancount Account")),
-                    ..Default::default()
-                },
-                lsp_types::CompletionItem {
-                    label: String::from("Expenses:Test"),
-                    kind: Some(lsp_types::CompletionItemKind::ENUM),
-                    detail: Some(String::from("Beancount Account")),
-                    ..Default::default()
-                }
-            ]
+            [lsp_types::CompletionItem {
+                label: String::from("Assets:Test"),
+                kind: Some(lsp_types::CompletionItemKind::ENUM),
+                detail: Some(String::from("Beancount Account")),
+                filter_text: Some(String::from("Assets:Test")),
+                ..Default::default()
+            },]
         )
     }
 
