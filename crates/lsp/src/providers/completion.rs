@@ -474,6 +474,22 @@ mod tests {
         snapshot: LspServerStateSnapshot,
     }
     impl TestState {
+        /// Converts a test fixture path to a PathBuf, handling cross-platform compatibility.
+        /// On Windows, converts Unix-style paths like "/main.beancount" to "C:\main.beancount"
+        fn path_from_fixture(path: &str) -> Result<PathBuf> {
+            let uri_str = if cfg!(windows) && path.starts_with('/') {
+                // On Windows, convert Unix-style absolute paths to Windows-style
+                format!("file://C:{path}")
+            } else {
+                format!("file://{path}")
+            };
+            
+            lsp_types::Uri::from_str(&uri_str)
+                .map_err(|e| anyhow::anyhow!("Invalid URI: {}", e))?
+                .to_file_path()
+                .map_err(|_| anyhow::anyhow!("Failed to convert URI to file path: {}", uri_str))
+        }
+
         pub fn new(fixture: &str) -> Result<Self> {
             let fixture = Fixture::parse(fixture);
             let forest: HashMap<PathBuf, tree_sitter::Tree> = fixture
@@ -481,47 +497,38 @@ mod tests {
                 .iter()
                 .map(|document| {
                     let path = document.path.as_str();
-                    let k = lsp_types::Uri::from_str(format!("file://{path}").as_str())
-                        .unwrap()
-                        .to_file_path()
-                        .unwrap();
+                    let k = Self::path_from_fixture(path)?;
                     let mut parser = tree_sitter::Parser::new();
                     parser
                         .set_language(&tree_sitter_beancount::language())
                         .unwrap();
                     let v = parser.parse(document.text.clone(), None).unwrap();
-                    (k, v)
+                    Ok((k, v))
                 })
-                .collect();
+                .collect::<Result<HashMap<_, _>>>()?;
             let beancount_data: HashMap<PathBuf, BeancountData> = fixture
                 .documents
                 .iter()
                 .map(|document| {
                     let path = document.path.as_str();
-                    let k = lsp_types::Uri::from_str(format!("file://{path}").as_str())
-                        .unwrap()
-                        .to_file_path()
-                        .unwrap();
+                    let k = Self::path_from_fixture(path)?;
                     let content = ropey::Rope::from(document.text.clone());
                     let v = BeancountData::new(forest.get(&k).unwrap(), &content);
-                    (k, v)
+                    Ok((k, v))
                 })
-                .collect();
+                .collect::<Result<HashMap<_, _>>>()?;
             let open_docs: HashMap<PathBuf, Document> = fixture
                 .documents
                 .iter()
                 .map(|document| {
                     let path = document.path.as_str();
-                    let k = lsp_types::Uri::from_str(format!("file://{path}").as_str())
-                        .unwrap()
-                        .to_file_path()
-                        .unwrap();
+                    let k = Self::path_from_fixture(path)?;
                     let v = Document {
                         content: ropey::Rope::from(document.text.clone()),
                     };
-                    (k, v)
+                    Ok((k, v))
                 })
-                .collect();
+                .collect::<Result<HashMap<_, _>>>()?;
             Ok(TestState {
                 fixture,
                 snapshot: LspServerStateSnapshot {
@@ -949,5 +956,78 @@ mod tests {
                 ..Default::default()
             },]
         )
+    }
+
+    #[test]
+    fn test_path_from_fixture_unix_style() {
+        let result = TestState::path_from_fixture("/main.beancount");
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        
+        if cfg!(windows) {
+            // On Windows, should convert to C:\main.beancount
+            assert_eq!(path.to_string_lossy(), "C:\\main.beancount");
+        } else {
+            // On Unix, should remain /main.beancount
+            assert_eq!(path.to_string_lossy(), "/main.beancount");
+        }
+    }
+
+    #[test]
+    fn test_path_from_fixture_relative_path() {
+        // Relative paths without leading slash create invalid file URIs 
+        // (they become hostnames), so they should fail
+        let result = TestState::path_from_fixture("main.beancount");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_path_from_fixture_dot_relative_path() {
+        // Test relative path starting with ./ - this also fails because 
+        // the dot becomes a hostname in the file URI
+        let result = TestState::path_from_fixture("./main.beancount");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_path_from_fixture_nested_unix_path() {
+        let result = TestState::path_from_fixture("/some/nested/path.beancount");
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        
+        if cfg!(windows) {
+            // On Windows, should convert to C:\some\nested\path.beancount
+            assert_eq!(path.to_string_lossy(), "C:\\some\\nested\\path.beancount");
+        } else {
+            // On Unix, should remain /some/nested/path.beancount
+            assert_eq!(path.to_string_lossy(), "/some/nested/path.beancount");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_path_from_fixture_windows_style() {
+        // Test that Windows-style paths work correctly
+        let result = TestState::path_from_fixture("C:\\main.beancount");
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert_eq!(path.to_string_lossy(), "C:\\main.beancount");
+    }
+
+    #[test]
+    fn test_path_from_fixture_invalid_uri() {
+        // Test with a path that would create an invalid URI
+        let result = TestState::path_from_fixture("invalid uri with spaces and special chars: <>");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_path_from_fixture_empty_path() {
+        let result = TestState::path_from_fixture("");
+        // Empty paths create file:// which converts to root path, so it succeeds
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        // Should result in root directory
+        assert_eq!(path.to_string_lossy(), "/");
     }
 }
