@@ -26,7 +26,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
                 "\"".into(),
                 "#".into(),
                 "^".into(),
-                //":".into(),
+                ":".into(),
             ]),
             ..Default::default()
         }),
