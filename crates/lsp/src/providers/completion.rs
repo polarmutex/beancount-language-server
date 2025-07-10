@@ -79,7 +79,11 @@ pub(crate) fn completion(
             '2' => complete_date(),
             '"' => {
                 if prev_sibling_node.is_some() && prev_sibling_node.unwrap().kind() == "txn" {
-                    complete_narration_with_quotes(snapshot.beancount_data, &current_line_text, cursor.position.character as usize)
+                    complete_narration_with_quotes(
+                        snapshot.beancount_data,
+                        &current_line_text,
+                        cursor.position.character as usize,
+                    )
                 } else {
                     Ok(None)
                 }
@@ -133,11 +137,19 @@ pub(crate) fn completion(
                     }
                     "payee" => {
                         debug!("providers::completion - handle node - handle payee");
-                        complete_narration_with_quotes(snapshot.beancount_data, &current_line_text, cursor.position.character as usize)
+                        complete_narration_with_quotes(
+                            snapshot.beancount_data,
+                            &current_line_text,
+                            cursor.position.character as usize,
+                        )
                     }
                     "narration" => {
                         debug!("providers::completion - handle node - handle narration");
-                        complete_narration_with_quotes(snapshot.beancount_data, &current_line_text, cursor.position.character as usize)
+                        complete_narration_with_quotes(
+                            snapshot.beancount_data,
+                            &current_line_text,
+                            cursor.position.character as usize,
+                        )
                     }
                     _ => Ok(None),
                 }
@@ -239,18 +251,20 @@ pub fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd_opt(year, month, 1).expect("valid date")
 }
 
-
 fn complete_narration_with_quotes(
     data: HashMap<PathBuf, BeancountData>,
     line_text: &str,
     cursor_char: usize,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::narration");
-    
+
     // Check if there's already a closing quote after the cursor
     let has_closing_quote = line_text.chars().skip(cursor_char).any(|c| c == '"');
-    debug!("providers::completion::narration - has_closing_quote: {}", has_closing_quote);
-    
+    debug!(
+        "providers::completion::narration - has_closing_quote: {}",
+        has_closing_quote
+    );
+
     let mut completions = Vec::new();
     for data in data.values() {
         for txn_string in data.get_narration() {
@@ -261,7 +275,7 @@ fn complete_narration_with_quotes(
                 // Keep the full quoted string as stored
                 txn_string.clone()
             };
-            
+
             completions.push(lsp_types::CompletionItem {
                 label: txn_string.clone(),
                 detail: Some("Beancount Narration".to_string()),
@@ -281,7 +295,7 @@ fn complete_account_with_prefix(
     debug!("providers::completion::account with prefix: '{}'", prefix);
     let mut completions = Vec::new();
     let prefix_lower = prefix.to_lowercase();
-    
+
     for data in data.values() {
         for account in data.get_accounts() {
             // Case-insensitive prefix matching
@@ -306,9 +320,9 @@ fn extract_completion_prefix(line_text: &str, cursor_char: usize) -> String {
     if cursor_char == 0 || cursor_char > chars.len() {
         return String::new();
     }
-    
+
     let mut start = cursor_char.saturating_sub(1);
-    
+
     // Find the start of the current word (account name)
     // Account names can contain letters, numbers, colons, and hyphens
     while start > 0 {
@@ -318,7 +332,7 @@ fn extract_completion_prefix(line_text: &str, cursor_char: usize) -> String {
         }
         start = start.saturating_sub(1);
     }
-    
+
     // Extract the prefix from start to cursor
     let end = cursor_char.min(chars.len());
     chars[start..end].iter().collect()
@@ -730,11 +744,23 @@ mod tests {
             .unwrap_or_default();
         // Should have completions with insert_text without quotes since closing quote exists
         assert!(!items.is_empty());
-        let test_co_completion = items.iter().find(|item| item.label == "\"Test Co\"").unwrap();
-        assert_eq!(test_co_completion.insert_text, Some(String::from("Test Co")));
-        
-        let foo_bar_completion = items.iter().find(|item| item.label == "\"Foo Bar\"").unwrap();
-        assert_eq!(foo_bar_completion.insert_text, Some(String::from("Foo Bar")));
+        let test_co_completion = items
+            .iter()
+            .find(|item| item.label == "\"Test Co\"")
+            .unwrap();
+        assert_eq!(
+            test_co_completion.insert_text,
+            Some(String::from("Test Co"))
+        );
+
+        let foo_bar_completion = items
+            .iter()
+            .find(|item| item.label == "\"Foo Bar\"")
+            .unwrap();
+        assert_eq!(
+            foo_bar_completion.insert_text,
+            Some(String::from("Foo Bar"))
+        );
     }
 
     #[test]
@@ -787,15 +813,13 @@ mod tests {
             .unwrap_or_default();
         assert_eq!(
             items,
-            [
-                lsp_types::CompletionItem {
-                    label: String::from("Assets:Test"),
-                    kind: Some(lsp_types::CompletionItemKind::ENUM),
-                    detail: Some(String::from("Beancount Account")),
-                    filter_text: Some(String::from("Assets:Test")),
-                    ..Default::default()
-                },
-            ]
+            [lsp_types::CompletionItem {
+                label: String::from("Assets:Test"),
+                kind: Some(lsp_types::CompletionItemKind::ENUM),
+                detail: Some(String::from("Beancount Account")),
+                filter_text: Some(String::from("Assets:Test")),
+                ..Default::default()
+            },]
         )
     }
 
@@ -857,15 +881,13 @@ mod tests {
             .unwrap_or_default();
         assert_eq!(
             items,
-            [
-                lsp_types::CompletionItem {
-                    label: String::from("Assets:Test"),
-                    kind: Some(lsp_types::CompletionItemKind::ENUM),
-                    detail: Some(String::from("Beancount Account")),
-                    filter_text: Some(String::from("Assets:Test")),
-                    ..Default::default()
-                },
-            ]
+            [lsp_types::CompletionItem {
+                label: String::from("Assets:Test"),
+                kind: Some(lsp_types::CompletionItemKind::ENUM),
+                detail: Some(String::from("Beancount Account")),
+                filter_text: Some(String::from("Assets:Test")),
+                ..Default::default()
+            },]
         )
     }
 
