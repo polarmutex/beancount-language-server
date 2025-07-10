@@ -1,5 +1,8 @@
-use crate::treesitter_utils::text_for_tree_sitter_node;
-use std::collections::HashSet;
+use lsp_types::Range;
+use streaming_iterator::{StreamingIterator, convert};
+
+use crate::treesitter_utils::{byte_to_lsp_position, text_for_tree_sitter_node};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
 pub struct FlaggedEntry {
@@ -15,16 +18,17 @@ pub struct FlaggedEntry {
 
 #[derive(Clone, Debug)]
 pub struct BeancountData {
-    accounts: Vec<String>,
+    // Assumption: an account can only have a definition within a beancount file.
+    pub(crate) accounts_definitions: HashMap<String, Range>,
     narration: Vec<String>,
-    pub flagged_entries: Vec<FlaggedEntry>,
+    pub(crate) flagged_entries: Vec<FlaggedEntry>,
     tags: Vec<String>,
     links: Vec<String>,
+    pub(crate) commodities_definitions: HashMap<String, Range>,
 }
 
 impl BeancountData {
     pub fn new(tree: &tree_sitter::Tree, content: &ropey::Rope) -> Self {
-        let mut accounts = vec![];
         let mut narration = vec![];
         let mut flagged_entries = vec![];
 
@@ -32,8 +36,9 @@ impl BeancountData {
 
         // Update account opens
         tracing::debug!("beancount_data:: get account nodes");
-        tracing::debug!("beancount_data:: get account strings");
-        let account_strings = tree
+        tracing::debug!("beancount_data:: get account definitions");
+
+        let accounts_definitions: HashMap<String, Range> = tree
             .root_node()
             .children(&mut cursor)
             .filter(|c| c.kind() == "open")
@@ -43,15 +48,14 @@ impl BeancountData {
                     .children(&mut node_cursor)
                     .find(|c| c.kind() == "account")?;
                 let account = text_for_tree_sitter_node(content, &account_node);
-                Some(account)
-            });
 
-        tracing::debug!("beancount_data:: update accounts");
-        accounts.clear();
+                let start = byte_to_lsp_position(content, account_node.start_byte());
+                let end = byte_to_lsp_position(content, account_node.end_byte());
+                let range = lsp_types::Range { start, end };
 
-        for account in account_strings {
-            accounts.push(account);
-        }
+                Some((account, range))
+            })
+            .collect();
 
         // Update account opens
         tracing::debug!("beancount_data:: get narration nodes");
@@ -127,18 +131,16 @@ impl BeancountData {
         let binding = content.clone().to_string();
         let matches = cursor_qry.matches(&query, tree.root_node(), binding.as_bytes());
         let mut tags: Vec<_> = matches
-            .into_iter()
             .flat_map(|m| {
-                m.captures
-                    .iter()
-                    .map(|capture| text_for_tree_sitter_node(content, &capture.node))
+                convert(m.captures).map(|capture| text_for_tree_sitter_node(content, &capture.node))
             })
+            .cloned()
             .collect();
         tags.sort();
         tags.dedup();
 
         // Update links
-        tracing::debug!("beancount_data:: get tags");
+        tracing::debug!("beancount_data:: get links");
         let query_string = r#"
         (link) @link
         "#;
@@ -148,31 +150,45 @@ impl BeancountData {
         let binding = content.clone().to_string();
         let matches = cursor_qry.matches(&query, tree.root_node(), binding.as_bytes());
         let mut links: Vec<_> = matches
-            .into_iter()
             .flat_map(|m| {
-                m.captures
-                    .iter()
-                    .map(|capture| text_for_tree_sitter_node(content, &capture.node))
+                convert(m.captures).map(|capture| text_for_tree_sitter_node(content, &capture.node))
             })
+            .cloned()
             .collect();
         links.sort();
         links.dedup();
 
+        let commodities_definitions: HashMap<String, Range> = tree
+            .root_node()
+            .children(&mut cursor)
+            .filter(|c| c.kind() == "commodity")
+            .filter_map(|node| {
+                let mut node_cursor = node.walk();
+                let currency_node = node
+                    .children(&mut node_cursor)
+                    .find(|c| c.kind() == "currency")?;
+                let commodity = text_for_tree_sitter_node(content, &currency_node);
+
+                let start = byte_to_lsp_position(content, currency_node.start_byte());
+                let end = byte_to_lsp_position(content, currency_node.end_byte());
+                let range = lsp_types::Range { start, end };
+
+                Some((commodity, range))
+            })
+            .collect();
+
         Self {
-            accounts,
+            accounts_definitions,
             narration,
             flagged_entries,
             tags,
             links,
+            commodities_definitions,
         }
     }
 
-    pub fn get_accounts(&self) -> Vec<String> {
-        self.accounts.clone()
-    }
-
-    pub fn get_narration(&self) -> Vec<String> {
-        self.narration.clone()
+    pub fn get_narration(&self) -> &Vec<String> {
+        &self.narration
     }
 
     pub fn get_tags(&self) -> Vec<String> {

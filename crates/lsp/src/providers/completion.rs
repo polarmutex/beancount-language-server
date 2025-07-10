@@ -4,6 +4,7 @@ use crate::treesitter_utils::text_for_tree_sitter_node;
 use crate::utils::ToFilePath;
 use anyhow::Result;
 use chrono::Datelike;
+use lsp_types::CompletionItem;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::debug;
@@ -40,6 +41,12 @@ pub(crate) fn completion(
     let node = tree
         .root_node()
         .named_descendant_for_point_range(start, end);
+    debug!("providers::completion - node {:?}", node);
+
+    // Extract the current prefix for filtering completions
+    let current_line_text = content.line(*line as usize).to_string();
+    let prefix = extract_completion_prefix(&current_line_text, *char as usize);
+    debug!("providers::completion - prefix: '{}'", prefix);
 
     // Extract the current prefix for filtering completions
     let current_line_text = content.line(*line as usize).to_string();
@@ -103,7 +110,7 @@ pub(crate) fn completion(
                 let text = text_for_tree_sitter_node(&content, &node);
                 debug!("providers::completion - text {}", text);
 
-                debug!("providers::completion - handle node");
+                debug!("providers::completion - handle node - {}", node.kind());
 
                 //if parent_parent_node.is_some()
                 //    && parent_parent_node.unwrap().kind() == "posting_or_kv_list"
@@ -265,26 +272,29 @@ fn complete_narration_with_quotes(
         has_closing_quote
     );
 
-    let mut completions = Vec::new();
-    for data in data.values() {
-        for txn_string in data.get_narration() {
-            let insert_text = if has_closing_quote {
-                // Remove the quotes from the stored string and don't add closing quote
-                txn_string.trim_matches('"').to_string()
-            } else {
-                // Keep the full quoted string as stored
-                txn_string.clone()
-            };
+    let completions: Vec<CompletionItem> = data
+        .values()
+        .flat_map(|d| {
+            d.get_narration().iter().map(|n| {
+                let insert_text = if has_closing_quote {
+                    // Remove the quotes from the stored string and don't add closing quote
+                    n.trim_matches('"').to_string()
+                } else {
+                    // Keep the full quoted string as stored
+                    n.clone()
+                };
 
-            completions.push(lsp_types::CompletionItem {
-                label: txn_string.clone(),
-                detail: Some("Beancount Narration".to_string()),
-                kind: Some(lsp_types::CompletionItemKind::ENUM),
-                insert_text: Some(insert_text),
-                ..Default::default()
-            });
-        }
-    }
+                lsp_types::CompletionItem {
+                    label: n.clone(),
+                    detail: Some("Beancount Narration".to_string()),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
+                    insert_text: Some(insert_text),
+                    ..Default::default()
+                }
+            })
+        })
+        .collect();
+
     Ok(Some(completions))
 }
 
@@ -292,25 +302,28 @@ fn complete_account_with_prefix(
     data: HashMap<PathBuf, BeancountData>,
     prefix: &str,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
-    debug!("providers::completion::account with prefix: '{}'", prefix);
-    let mut completions = Vec::new();
+    debug!("providers::completion::account");
     let prefix_lower = prefix.to_lowercase();
 
-    for data in data.values() {
-        for account in data.get_accounts() {
-            // Case-insensitive prefix matching
-            if prefix.is_empty() || account.to_lowercase().starts_with(&prefix_lower) {
-                completions.push(lsp_types::CompletionItem {
-                    label: account.clone(),
+    let mut completions: Vec<CompletionItem> = data
+        .values()
+        .flat_map(|d| {
+            d.accounts_definitions
+                .keys()
+                // Case-insensitive prefix matching
+                .filter(|&s| prefix.is_empty() || s.to_lowercase().starts_with(&prefix_lower))
+                .map(|n| lsp_types::CompletionItem {
+                    label: n.clone(),
                     detail: Some("Beancount Account".to_string()),
                     kind: Some(lsp_types::CompletionItemKind::ENUM),
                     // Set filter_text to enable proper LSP client filtering
-                    filter_text: Some(account.clone()),
+                    filter_text: Some(n.clone()),
                     ..Default::default()
-                });
-            }
-        }
-    }
+                })
+        })
+        .collect();
+    completions.dedup();
+    completions.sort_by(|x, y| x.label.cmp(&y.label));
     Ok(Some(completions))
 }
 
@@ -376,183 +389,11 @@ fn complete_link(
 
 #[cfg(test)]
 mod tests {
-    use crate::providers::completion::add_one_month;
     use crate::providers::completion::completion;
-    use crate::providers::completion::sub_one_month;
-    use crate::server::LspServerStateSnapshot;
-    //use insta::assert_yaml_snapshot;
-    use crate::beancount_data::BeancountData;
-    use crate::config::Config;
-    use crate::document::Document;
-    use crate::utils::ToFilePath;
-    use anyhow::Result;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
-    use std::str::FromStr;
-    use test_log::test;
-
-    #[derive(Debug)]
-    pub struct Fixture {
-        pub documents: Vec<TestDocument>,
-    }
-    impl Fixture {
-        pub fn parse(input: &str) -> Self {
-            let mut documents = Vec::new();
-            let mut start = 0;
-            if !input.is_empty() {
-                for end in input
-                    .match_indices("%!")
-                    .skip(1)
-                    .map(|(i, _)| i)
-                    .chain(std::iter::once(input.len()))
-                {
-                    documents.push(TestDocument::parse(&input[start..end]));
-                    start = end;
-                }
-            }
-            Self { documents }
-        }
-    }
-
-    #[derive(Debug)]
-    pub struct TestDocument {
-        pub path: String,
-        pub text: String,
-        pub cursor: Option<lsp_types::Position>,
-        // pub ranges: Vec<lsp_types::Range>,
-    }
-    impl TestDocument {
-        pub fn parse(input: &str) -> Self {
-            let mut lines = Vec::new();
-
-            let (path, input) = input
-                .trim()
-                .strip_prefix("%! ")
-                .map(|input| input.split_once('\n').unwrap_or((input, "")))
-                .unwrap();
-
-            let mut ranges = Vec::new();
-            let mut cursor = None;
-
-            for line in input.lines() {
-                if line.chars().all(|c| matches!(c, ' ' | '^' | '|' | '!')) && !line.is_empty() {
-                    let index = (lines.len() - 1) as u32;
-
-                    cursor = cursor.or_else(|| {
-                        let character = line.find('|')?;
-                        Some(lsp_types::Position::new(index, character as u32))
-                    });
-
-                    if let Some(start) = line.find('!') {
-                        let position = lsp_types::Position::new(index, start as u32);
-                        ranges.push(lsp_types::Range::new(position, position));
-                    }
-
-                    if let Some(start) = line.find('^') {
-                        let end = line.rfind('^').unwrap() + 1;
-                        ranges.push(lsp_types::Range::new(
-                            lsp_types::Position::new(index, start as u32),
-                            lsp_types::Position::new(index, end as u32),
-                        ));
-                    }
-                } else {
-                    lines.push(line);
-                }
-            }
-
-            Self {
-                path: path.to_string(),
-                text: lines.join("\n"),
-                cursor,
-                // ranges,
-            }
-        }
-    }
-
-    pub struct TestState {
-        fixture: Fixture,
-        snapshot: LspServerStateSnapshot,
-    }
-    impl TestState {
-        /// Converts a test fixture path to a PathBuf, handling cross-platform compatibility.
-        /// On Windows, converts Unix-style paths like "/main.beancount" to "C:\main.beancount"
-        fn path_from_fixture(path: &str) -> Result<PathBuf> {
-            let uri_str = if cfg!(windows) && path.starts_with('/') {
-                // On Windows, convert Unix-style absolute paths to Windows-style
-                format!("file://C:{path}")
-            } else {
-                format!("file://{path}")
-            };
-            
-            lsp_types::Uri::from_str(&uri_str)
-                .map_err(|e| anyhow::anyhow!("Invalid URI: {}", e))?
-                .to_file_path()
-                .map_err(|_| anyhow::anyhow!("Failed to convert URI to file path: {}", uri_str))
-        }
-
-        pub fn new(fixture: &str) -> Result<Self> {
-            let fixture = Fixture::parse(fixture);
-            let forest: HashMap<PathBuf, tree_sitter::Tree> = fixture
-                .documents
-                .iter()
-                .map(|document| {
-                    let path = document.path.as_str();
-                    let k = Self::path_from_fixture(path)?;
-                    let mut parser = tree_sitter::Parser::new();
-                    parser
-                        .set_language(&tree_sitter_beancount::language())
-                        .unwrap();
-                    let v = parser.parse(document.text.clone(), None).unwrap();
-                    Ok((k, v))
-                })
-                .collect::<Result<HashMap<_, _>>>()?;
-            let beancount_data: HashMap<PathBuf, BeancountData> = fixture
-                .documents
-                .iter()
-                .map(|document| {
-                    let path = document.path.as_str();
-                    let k = Self::path_from_fixture(path)?;
-                    let content = ropey::Rope::from(document.text.clone());
-                    let v = BeancountData::new(forest.get(&k).unwrap(), &content);
-                    Ok((k, v))
-                })
-                .collect::<Result<HashMap<_, _>>>()?;
-            let open_docs: HashMap<PathBuf, Document> = fixture
-                .documents
-                .iter()
-                .map(|document| {
-                    let path = document.path.as_str();
-                    let k = Self::path_from_fixture(path)?;
-                    let v = Document {
-                        content: ropey::Rope::from(document.text.clone()),
-                    };
-                    Ok((k, v))
-                })
-                .collect::<Result<HashMap<_, _>>>()?;
-            Ok(TestState {
-                fixture,
-                snapshot: LspServerStateSnapshot {
-                    beancount_data,
-                    config: Config::new(std::env::current_dir()?),
-                    forest,
-                    open_docs,
-                },
-            })
-        }
-
-        pub fn cursor(&self) -> Option<lsp_types::TextDocumentPositionParams> {
-            let (document, cursor) = self
-                .fixture
-                .documents
-                .iter()
-                .find_map(|document| document.cursor.map(|cursor| (document, cursor)))?;
-
-            let path = document.path.as_str();
-            let uri = lsp_types::Uri::from_str(format!("file://{path}").as_str()).unwrap();
-            let id = lsp_types::TextDocumentIdentifier::new(uri);
-            Some(lsp_types::TextDocumentPositionParams::new(id, cursor))
-        }
-    }
+    use crate::{
+        providers::completion::{add_one_month, sub_one_month},
+        test_utils::TestState,
+    };
 
     #[test]
     fn handle_sub_one_month() {
@@ -852,17 +693,17 @@ mod tests {
             items,
             [
                 lsp_types::CompletionItem {
-                    label: String::from("Assets:Test"),
-                    kind: Some(lsp_types::CompletionItemKind::ENUM),
-                    detail: Some(String::from("Beancount Account")),
-                    filter_text: Some(String::from("Assets:Test")),
-                    ..Default::default()
-                },
-                lsp_types::CompletionItem {
                     label: String::from("Assets:Checking"),
                     kind: Some(lsp_types::CompletionItemKind::ENUM),
                     detail: Some(String::from("Beancount Account")),
                     filter_text: Some(String::from("Assets:Checking")),
+                    ..Default::default()
+                },
+                lsp_types::CompletionItem {
+                    label: String::from("Assets:Test"),
+                    kind: Some(lsp_types::CompletionItemKind::ENUM),
+                    detail: Some(String::from("Beancount Account")),
+                    filter_text: Some(String::from("Assets:Test")),
                     ..Default::default()
                 },
             ]
@@ -879,6 +720,37 @@ mod tests {
     Asse
         |
         ^
+"#;
+        let test_state = TestState::new(fixure).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        println!("{} {}", cursor.position.line, cursor.position.character);
+        let items = completion(test_state.snapshot, None, cursor)
+            .unwrap()
+            .unwrap_or_default();
+        assert_eq!(
+            items,
+            [lsp_types::CompletionItem {
+                label: String::from("Assets:Test"),
+                kind: Some(lsp_types::CompletionItemKind::ENUM),
+                detail: Some(String::from("Beancount Account")),
+                filter_text: Some(String::from("Assets:Test")),
+                ..Default::default()
+            },]
+        )
+    }
+
+    #[test]
+    fn handle_account_completion_case_sensitive() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let fixure = r#"
+%! /main.beancount
+2023-10-01 open Assets:Test USD
+2023-10-01 open Expenses:Test USD
+2023-10-01 txn  "Test Co" "Foo Bar"
+    A
+     |
+     ^
 "#;
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
@@ -963,7 +835,7 @@ mod tests {
         let result = TestState::path_from_fixture("/main.beancount");
         assert!(result.is_ok());
         let path = result.unwrap();
-        
+
         if cfg!(windows) {
             // On Windows, should convert to C:\main.beancount
             assert_eq!(path.to_string_lossy(), "C:\\main.beancount");
@@ -975,7 +847,7 @@ mod tests {
 
     #[test]
     fn test_path_from_fixture_relative_path() {
-        // Relative paths without leading slash create invalid file URIs 
+        // Relative paths without leading slash create invalid file URIs
         // (they become hostnames), so they should fail
         let result = TestState::path_from_fixture("main.beancount");
         assert!(result.is_err());
@@ -983,7 +855,7 @@ mod tests {
 
     #[test]
     fn test_path_from_fixture_dot_relative_path() {
-        // Test relative path starting with ./ - this also fails because 
+        // Test relative path starting with ./ - this also fails because
         // the dot becomes a hostname in the file URI
         let result = TestState::path_from_fixture("./main.beancount");
         assert!(result.is_err());
@@ -994,7 +866,7 @@ mod tests {
         let result = TestState::path_from_fixture("/some/nested/path.beancount");
         assert!(result.is_ok());
         let path = result.unwrap();
-        
+
         if cfg!(windows) {
             // On Windows, should convert to C:\some\nested\path.beancount
             assert_eq!(path.to_string_lossy(), "C:\\some\\nested\\path.beancount");

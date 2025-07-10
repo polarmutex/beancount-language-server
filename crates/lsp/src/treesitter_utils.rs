@@ -1,3 +1,5 @@
+use tree_sitter::{Node, Tree};
+
 pub fn lsp_textdocchange_to_ts_inputedit(
     source: &ropey::Rope,
     change: &lsp_types::TextDocumentContentChangeEvent,
@@ -41,7 +43,7 @@ pub fn lsp_textdocchange_to_ts_inputedit(
     })
 }
 
-fn byte_to_lsp_position(text: &ropey::Rope, byte_idx: usize) -> lsp_types::Position {
+pub(crate) fn byte_to_lsp_position(text: &ropey::Rope, byte_idx: usize) -> lsp_types::Position {
     let line_idx = text.byte_to_line(byte_idx);
 
     let line_utf16_cu_idx = {
@@ -61,14 +63,14 @@ fn byte_to_lsp_position(text: &ropey::Rope, byte_idx: usize) -> lsp_types::Posit
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct TextPosition {
+pub(crate) struct TextPosition {
     pub char: u32,
     pub byte: u32,
     pub code: u32,
     pub point: tree_sitter::Point,
 }
 
-fn lsp_position_to_core(
+pub(crate) fn lsp_position_to_core(
     source: &ropey::Rope,
     position: lsp_types::Position,
 ) -> anyhow::Result<TextPosition> {
@@ -117,4 +119,16 @@ pub fn text_for_tree_sitter_node(
     let end = source.byte_to_char(node.end_byte());
     let slice = source.slice(start..end);
     slice.into()
+}
+pub(crate) fn lsp_position_to_node<'t>(
+    source: &ropey::Rope,
+    position: lsp_types::Position,
+    tree: &'t Tree,
+) -> anyhow::Result<Node<'t>> {
+    let position = lsp_position_to_core(source, position)?;
+    let node = tree
+        .root_node()
+        .descendant_for_point_range(position.point, position.point)
+        .expect("node to be in range");
+    Ok(node)
 }
