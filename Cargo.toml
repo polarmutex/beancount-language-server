@@ -6,7 +6,30 @@ resolver = "2"
 
 [workspace.package]
 version = "1.3.7"
-edition = "2024"
+edition = "2021"
+rust-version = "1.75.0"
+
+[workspace.dependencies]
+# Core functionality
+anyhow = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+
+# LSP and server functionality
+lsp-server = "0.7"
+lsp-types = "0.97"
+crossbeam-channel = "0.5"
+
+# Text processing
+ropey = "1.6"
+regex = "1.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Testing
+insta = { version = "1.0", features = ["yaml"] }
 
 [workspace.metadata.crane]
 name = "beancount-language-server-workspace"
@@ -14,13 +37,20 @@ name = "beancount-language-server-workspace"
 # Config for 'cargo dist'
 [workspace.metadata.dist]
 # The preferred cargo-dist version to use in CI (Cargo.toml SemVer syntax)
-cargo-dist-version = "0.0.4"
+cargo-dist-version = "0.22.1"
 # The preferred Rust toolchain to use in CI (rustup toolchain syntax)
-rust-toolchain-version = "1.67.1"
+rust-toolchain-version = "1.82.0"
 # CI backends to support (see 'cargo dist generate-ci')
 ci = ["github"]
 # Target platforms to build apps for (Rust target-triple syntax)
-targets = ["x86_64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-msvc", "aarch64-apple-darwin", "loongarch64-unknown-linux-gnu"]
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu", 
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "loongarch64-unknown-linux-gnu"
+]
 
 # The profile that 'cargo dist' will build with
 [profile.dist]
