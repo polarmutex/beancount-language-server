@@ -1,10 +1,10 @@
-use clap::{arg, Command};
+use clap::{Command, arg};
 use std::fs;
 use std::io;
 use std::sync::Arc;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
-use tracing_subscriber::{filter::Directive, EnvFilter};
+use tracing_subscriber::{EnvFilter, filter::Directive};
 
 fn main() {
     let matches = Command::new("beancount-language-server")
@@ -43,7 +43,7 @@ fn setup_logging(file: bool) {
         None => BoxMakeWriter::new(io::stderr),
     };
 
-    let filter = EnvFilter::default().add_directive(Directive::from(LevelFilter::DEBUG));
+    let filter = EnvFilter::default().add_directive(Directive::from(LevelFilter::INFO));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(writer)
