@@ -122,12 +122,23 @@ pub(crate) fn formatting(
             &formateable_lines,
             &format_config,
             snapshot.config.formatting.number_currency_spacing,
+            snapshot.config.formatting.indent_width,
             &doc,
         )
     };
 
-    debug!("Generated {} text edits for formatting", text_edits.len());
-    Ok(Some(text_edits))
+    // Apply indent normalization to remaining lines if configured
+    let final_text_edits = if let Some(indent_width) = snapshot.config.formatting.indent_width {
+        apply_indent_normalization_to_remaining_lines(&doc, &tree, indent_width, text_edits)?
+    } else {
+        text_edits
+    };
+
+    debug!(
+        "Generated {} text edits for formatting",
+        final_text_edits.len()
+    );
+    Ok(Some(final_text_edits))
 }
 
 /// Gets the document and tree from the snapshot, with error handling
@@ -333,6 +344,7 @@ fn generate_template_edits(
     formateable_lines: &[FormatableLine],
     config: &FormatConfig,
     number_currency_spacing: usize,
+    indent_width: Option<usize>,
     doc: &crate::document::Document,
 ) -> Vec<lsp_types::TextEdit> {
     let mut text_edits = Vec::new();
@@ -353,13 +365,63 @@ fn generate_template_edits(
             format!(" {rest_content}")
         };
 
-        // Template: "{:<prefix_width}  {:>num_width}{custom_rest}"
+        // Apply custom indentation if specified, but only for postings, not top-level directives
+        let (indent_str, account_name) = if let Some(target_indent) = indent_width {
+            let account_part = line.prefix.trim_start().trim_end();
+
+            // Check if this is a top-level directive (like balance) that shouldn't be indented
+            // Get the full line to check for directive keywords
+            let line_start_char = doc.content.line_to_char(line.line_num);
+            let line_end_char = if line.line_num + 1 < doc.content.len_lines() {
+                doc.content.line_to_char(line.line_num + 1)
+            } else {
+                doc.content.len_chars()
+            };
+            let full_line = doc
+                .content
+                .slice(line_start_char..line_end_char)
+                .to_string();
+
+            // More comprehensive check for balance/price directives
+            let line_content = full_line.trim();
+            let is_top_level_directive = line_content.contains("balance ")
+                || line_content.contains("price ")
+                || (line_content.starts_with("20")
+                    && (line_content.contains(" balance ") || line_content.contains(" price ")));
+
+            if is_top_level_directive {
+                // Don't indent top-level directives
+                ("".to_string(), account_part)
+            } else {
+                // Apply custom indentation for postings
+                (" ".repeat(target_indent), account_part)
+            }
+        } else {
+            // Preserve original indentation by finding the leading whitespace
+            let account_part = line.prefix.trim_end();
+            let original_indent = if line.prefix.len() > account_part.len() {
+                &line.prefix[..(line.prefix.len() - account_part.len())]
+            } else {
+                ""
+            };
+            (original_indent.to_string(), account_part)
+        };
+
+        // Template: "{indent}{account_name:<adjusted_width}  {:>num_width}{custom_rest}"
+        // Adjust the prefix width to account for the custom indentation
+        let adjusted_prefix_width = if config.final_prefix_width > indent_str.len() {
+            config.final_prefix_width - indent_str.len()
+        } else {
+            account_name.len() // fallback to actual account name length
+        };
+
         let formatted_line = format!(
-            "{:<width$}  {:>num_width$}{}",
-            line.prefix.trim_end(),
+            "{}{:<width$}  {:>num_width$}{}",
+            indent_str,
+            account_name,
             line.number,
             formatted_rest,
-            width = config.final_prefix_width,
+            width = adjusted_prefix_width,
             num_width = config.final_num_width
         );
 
@@ -407,6 +469,80 @@ fn create_line_replacement_edit(
         },
         new_text: new_content.trim_end().to_string(),
     })
+}
+
+/// Applies indent normalization to lines not already handled by main formatting
+/// This ensures that indent changes don't conflict with amount/currency formatting
+fn apply_indent_normalization_to_remaining_lines(
+    doc: &crate::document::Document,
+    _tree: &tree_sitter::Tree,
+    target_indent_width: usize,
+    mut existing_edits: Vec<lsp_types::TextEdit>,
+) -> Result<Vec<lsp_types::TextEdit>> {
+    use std::collections::HashSet;
+
+    let target_indent = " ".repeat(target_indent_width);
+
+    // Collect line numbers that already have edits from main formatting
+    let edited_lines: HashSet<u32> = existing_edits
+        .iter()
+        .map(|edit| edit.range.start.line)
+        .collect();
+
+    // Process all lines in the document
+    for line_num in 0..doc.content.len_lines() {
+        let line_num_u32 = line_num as u32;
+
+        // Skip lines that already have formatting edits
+        if edited_lines.contains(&line_num_u32) {
+            continue;
+        }
+
+        let line_start_char = doc.content.line_to_char(line_num);
+        let line_end_char = if line_num + 1 < doc.content.len_lines() {
+            doc.content.line_to_char(line_num + 1)
+        } else {
+            doc.content.len_chars()
+        };
+
+        let current_line = doc
+            .content
+            .slice(line_start_char..line_end_char)
+            .to_string();
+
+        // Only process lines that start with whitespace AND are likely to be postings/metadata
+        // Don't normalize lines that contain top-level directive keywords at the start
+        if current_line.starts_with(char::is_whitespace) {
+            let trimmed_line = current_line.trim_start();
+            if !trimmed_line.is_empty() {
+                // Skip lines that appear to be top-level directives that are just indented
+                // Look for common directive keywords after trimming
+                let starts_with_directive = trimmed_line.starts_with("balance ")
+                    || trimmed_line.starts_with("pad ")
+                    || trimmed_line.starts_with("price ")
+                    || trimmed_line.starts_with("open ")
+                    || trimmed_line.starts_with("close ")
+                    || trimmed_line.starts_with("note ")
+                    || trimmed_line.starts_with("document ")
+                    || trimmed_line.contains(" * \"")
+                    || trimmed_line.contains(" ! \"")
+                    || trimmed_line.contains(" txn \"");
+
+                if !starts_with_directive {
+                    let new_line = format!("{}{}", target_indent, trimmed_line);
+
+                    // Only create edit if indentation actually changes
+                    if current_line.trim_end() != new_line.trim_end() {
+                        if let Some(edit) = create_line_replacement_edit(line_num, &new_line, doc) {
+                            existing_edits.push(edit);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(existing_edits)
 }
 
 #[cfg(test)]
@@ -802,6 +938,7 @@ mod tests {
             currency_column: None,
             account_amount_spacing: 2,
             number_currency_spacing: 1,
+            indent_width: None,
         };
 
         let state = TestState::new_with_config(content, format_config).unwrap();
@@ -844,6 +981,7 @@ mod tests {
             currency_column: None,
             account_amount_spacing: 2,
             number_currency_spacing: 1,
+            indent_width: None,
         };
 
         let state = TestState::new_with_config(content, format_config).unwrap();
@@ -889,6 +1027,7 @@ mod tests {
             currency_column: Some(50),
             account_amount_spacing: 2,
             number_currency_spacing: 1,
+            indent_width: None,
         };
 
         let state = TestState::new_with_config(content, format_config).unwrap();
@@ -924,6 +1063,7 @@ mod tests {
             currency_column: Some(40),
             account_amount_spacing: 3,
             number_currency_spacing: 1,
+            indent_width: None,
         };
 
         let state = TestState::new_with_config(content, format_config).unwrap();
@@ -958,6 +1098,7 @@ mod tests {
             currency_column: None,
             account_amount_spacing: 5,
             number_currency_spacing: 1,
+            indent_width: None,
         };
 
         let state = TestState::new_with_config(content, format_config).unwrap();
@@ -1006,6 +1147,7 @@ mod tests {
             currency_column: None,
             account_amount_spacing: 2,
             number_currency_spacing: 1,
+            indent_width: None,
         };
 
         let state = TestState::new_with_config(content, format_config).unwrap();
@@ -1059,6 +1201,7 @@ mod tests {
             currency_column: None,
             account_amount_spacing: 2,
             number_currency_spacing: 2,
+            indent_width: None,
         };
 
         let state = TestState::new_with_config(content, format_config).unwrap();
@@ -1103,6 +1246,7 @@ mod tests {
             currency_column: None,
             account_amount_spacing: 2,
             number_currency_spacing: 0,
+            indent_width: None,
         };
 
         let state = TestState::new_with_config(content, format_config).unwrap();
@@ -1138,6 +1282,7 @@ mod tests {
             currency_column: None,
             account_amount_spacing: 2,
             number_currency_spacing: 1,
+            indent_width: None,
         };
 
         let state = TestState::new_with_config(content, format_config).unwrap();
@@ -1186,6 +1331,7 @@ mod tests {
             currency_column: None,
             account_amount_spacing: 2,
             number_currency_spacing: 1,
+            indent_width: None,
         };
 
         let state = TestState::new_with_config(content, format_config).unwrap();
@@ -1248,6 +1394,7 @@ mod tests {
             currency_column: None,
             account_amount_spacing: 2, // Should have at least 2 spaces
             number_currency_spacing: 1,
+            indent_width: None,
         };
 
         let state = TestState::new_with_config(content, format_config).unwrap();
@@ -1452,6 +1599,7 @@ mod tests {
             currency_column: Some(30),
             account_amount_spacing: 2,
             number_currency_spacing: 1,
+            indent_width: None,
         };
 
         let state = TestState::new_with_config(content, format_config).unwrap();
@@ -1467,6 +1615,151 @@ mod tests {
                 let usd_pos = line.find("USD").unwrap();
                 println!("       USD at column: {usd_pos}");
                 assert_eq!(usd_pos, 30, "Currency should be exactly at column 30");
+            }
+        }
+    }
+
+    #[test]
+    fn test_indent_normalization_disabled_by_default() {
+        let content = r#"2023-01-01 * "Mixed indentation"
+      Assets:Cash   100.00 USD
+        Expenses:Food   50.0 USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        // Without indent_width config, original indentation should be preserved
+        assert!(formatted.contains("      Assets:Cash"));
+        assert!(formatted.contains("        Expenses:Food"));
+    }
+
+    #[test]
+    fn test_indent_normalization_to_four_spaces() {
+        let content = r#"2023-01-01 * "Mixed indentation"
+      Assets:Cash   100.00 USD
+        Expenses:Food   50.0 USD
+	Other:Account		75.0 USD
+"#;
+
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: None,
+            account_amount_spacing: 2,
+            number_currency_spacing: 1,
+            indent_width: Some(4),
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        println!("Indent normalized:\n{formatted}");
+
+        // All indented lines should now use exactly 4 spaces
+        let lines: Vec<&str> = formatted.lines().collect();
+        for line in &lines[1..] {
+            if !line.trim().is_empty() && line.starts_with(char::is_whitespace) {
+                assert!(
+                    line.starts_with("    "),
+                    "Line should start with exactly 4 spaces: '{line}'"
+                );
+                // Should not start with 5 or more spaces (unless it's nested metadata)
+                let trimmed = line.trim_start();
+                let leading_spaces = line.len() - trimmed.len();
+                if !trimmed.starts_with('"') && !trimmed.starts_with("description:") {
+                    // Regular postings should have exactly 4 spaces
+                    assert_eq!(
+                        leading_spaces, 4,
+                        "Expected exactly 4 spaces for posting line: '{line}'"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_indent_normalization_to_two_spaces() {
+        let content = r#"2023-01-01 * "Test transaction"
+    Assets:Cash 100.00 USD
+      Expenses:Food 50.0 USD
+"#;
+
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: None,
+            account_amount_spacing: 2,
+            number_currency_spacing: 1,
+            indent_width: Some(2),
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        println!("Indent normalized to 2 spaces:\n{formatted}");
+
+        // All postings should use exactly 2 spaces
+        let lines: Vec<&str> = formatted.lines().collect();
+        for line in &lines[1..] {
+            if !line.trim().is_empty() && line.starts_with(char::is_whitespace) {
+                assert!(
+                    line.starts_with("  "),
+                    "Line should start with exactly 2 spaces: '{line}'"
+                );
+                assert!(
+                    !line.starts_with("   "),
+                    "Line should not start with 3 or more spaces: '{line}'"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_indent_normalization_preserves_top_level() {
+        let content = r#"2023-01-01 * "Test transaction"
+    Assets:Cash 100.00 USD
+    Expenses:Food 50.0 USD
+
+2023-01-02 balance Assets:Cash 150.00 USD
+"#;
+
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: None,
+            account_amount_spacing: 2,
+            number_currency_spacing: 1,
+            indent_width: Some(2),
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        println!("Formatted with preserved top-level:\n{formatted}");
+
+        // Top-level transactions and balance directives should remain at column 0
+        let lines: Vec<&str> = formatted.lines().collect();
+        for line in &lines {
+            if line.contains("2023-01-01 *") || line.contains("2023-01-02 balance") {
+                assert!(
+                    !line.starts_with(char::is_whitespace),
+                    "Top-level directive should not be indented: '{line}'"
+                );
+            }
+        }
+
+        // Postings should be indented to 2 spaces
+        for line in &lines {
+            if line.trim().starts_with("Assets:") || line.trim().starts_with("Expenses:") {
+                assert!(
+                    line.starts_with("  "),
+                    "Posting should be indented to 2 spaces: '{line}'"
+                );
             }
         }
     }

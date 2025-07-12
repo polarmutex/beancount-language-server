@@ -30,6 +30,11 @@ pub struct FormattingConfig {
     /// Number of spaces between the number and currency (default: 1).
     /// Controls whitespace like "100.00 USD" vs "100.00  USD".
     pub number_currency_spacing: usize,
+
+    /// Enforce consistent indentation width for postings and directives.
+    /// If specified, all indentation will be normalized to this number of spaces.
+    /// If None, indentation is left unchanged.
+    pub indent_width: Option<usize>,
 }
 
 impl FormattingConfig {
@@ -40,6 +45,7 @@ impl FormattingConfig {
             currency_column: None,
             account_amount_spacing: 2,  // Default spacing like bean-format
             number_currency_spacing: 1, // Default 1 space between number and currency
+            indent_width: None,         // Default: no indent normalization
         }
     }
 }
@@ -81,6 +87,9 @@ impl Config {
                 if let Some(spacing) = formatting.number_currency_spacing {
                     self.formatting.number_currency_spacing = spacing;
                 }
+                if let Some(indent_width) = formatting.indent_width {
+                    self.formatting.indent_width = Some(indent_width);
+                }
             }
         }
 
@@ -110,6 +119,9 @@ pub struct FormattingOptions {
 
     /// Number of spaces between the number and currency.
     pub number_currency_spacing: Option<usize>,
+
+    /// Enforce consistent indentation width for postings and directives.
+    pub indent_width: Option<usize>,
 }
 
 #[cfg(test)]
