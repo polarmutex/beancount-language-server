@@ -106,6 +106,8 @@ jobs:
         env:
           # Avoid -D warnings on nightly builds
           RUSTFLAGS: ""
+          # Enable backtraces to help debug Windows test failures
+          RUST_BACKTRACE: "1"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

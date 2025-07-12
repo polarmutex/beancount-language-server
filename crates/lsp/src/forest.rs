@@ -101,10 +101,24 @@ pub(crate) fn parse_initial_forest(
                     } else {
                         path.to_path_buf()
                     };
-                    let path_url = lsp_types::Uri::from_str(
-                        format!("file://{}", path.to_str().unwrap()).as_str(),
-                    )
-                    .unwrap();
+                    let path_url = {
+                        // Handle cross-platform file URI creation
+                        let file_path_str = path.to_str().unwrap();
+                        let uri_str = if cfg!(windows)
+                            && file_path_str.len() > 1
+                            && file_path_str.chars().nth(1) == Some(':')
+                        {
+                            // Windows absolute path like "C:\path"
+                            format!("file:///{}", file_path_str.replace('\\', "/"))
+                        } else if cfg!(windows) && file_path_str.starts_with('/') {
+                            // Unix-style path on Windows, convert to Windows style
+                            format!("file:///C:{}", file_path_str.replace('\\', "/"))
+                        } else {
+                            // Unix path or other platforms
+                            format!("file://{file_path_str}")
+                        };
+                        lsp_types::Uri::from_str(&uri_str).unwrap()
+                    };
 
                     Some(path_url)
                 });
@@ -117,12 +131,25 @@ pub(crate) fn parse_initial_forest(
                 {
                     match entry {
                         Ok(path) => {
-                            let url = lsp_types::Uri::from_str(
-                                format!("file://{}", path.to_str().unwrap()).as_str(),
-                            )
-                            .unwrap()
-                            .to_file_path()
-                            .unwrap();
+                            // Handle cross-platform file URI creation
+                            let path_str = path.to_str().unwrap();
+                            let uri_str = if cfg!(windows)
+                                && path_str.len() > 1
+                                && path_str.chars().nth(1) == Some(':')
+                            {
+                                // Windows absolute path like "C:\path"
+                                format!("file:///{}", path_str.replace('\\', "/"))
+                            } else if cfg!(windows) && path_str.starts_with('/') {
+                                // Unix-style path on Windows, convert to Windows style
+                                format!("file:///C:{}", path_str.replace('\\', "/"))
+                            } else {
+                                // Unix path or other platforms
+                                format!("file://{path_str}")
+                            };
+                            let url = lsp_types::Uri::from_str(&uri_str)
+                                .unwrap()
+                                .to_file_path()
+                                .unwrap();
                             if !snapshot.forest.contains_key(&url) {
                                 total += 1;
                                 new_to_processs.push_back(url);

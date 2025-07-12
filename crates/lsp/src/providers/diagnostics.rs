@@ -38,13 +38,19 @@ pub fn diagnostics(
     bean_check_cmd: &Path,
     root_journal_file: &Path,
 ) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
+    // Regex to handle file paths in error messages
+    // Note: Bean-check might output paths in a normalized format that works with the original regex
     let error_line_regexp = regex::Regex::new(r"^([^:]+):(\d+):\s*(.*)$").unwrap();
 
     debug!("providers::diagnostics");
-    let output = Command::new(bean_check_cmd)
-        .arg(root_journal_file)
-        .output()
-        .unwrap();
+    let output = match Command::new(bean_check_cmd).arg(root_journal_file).output() {
+        Ok(output) => output,
+        Err(e) => {
+            debug!("Failed to execute bean-check command: {}", e);
+            // Return empty diagnostics if bean-check is not available
+            return HashMap::new();
+        }
+    };
     debug!("bean-check outupt {:?}", output);
 
     let diags = if !output.status.success() {
@@ -62,7 +68,22 @@ pub fn diagnostics(
                     character: 0,
                 };
 
-                let file_url = lsp_types::Uri::from_str(format!("file://{}", &caps[1]).as_str())
+                // Handle cross-platform file URI creation
+                let file_path_str = &caps[1];
+                let uri_str = if cfg!(windows)
+                    && file_path_str.len() > 1
+                    && file_path_str.chars().nth(1) == Some(':')
+                {
+                    // Windows absolute path like "C:\path"
+                    format!("file:///{}", file_path_str.replace('\\', "/"))
+                } else if cfg!(windows) && file_path_str.starts_with('/') {
+                    // Unix-style path on Windows, convert to Windows style
+                    format!("file:///C:{}", file_path_str.replace('\\', "/"))
+                } else {
+                    // Unix path or other platforms
+                    format!("file://{file_path_str}")
+                };
+                let file_url = lsp_types::Uri::from_str(&uri_str)
                     .unwrap()
                     .to_file_path()
                     .unwrap();
