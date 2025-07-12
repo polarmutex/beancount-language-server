@@ -1,15 +1,15 @@
 {
-  description = "Build a cargo project";
+  description = "Beancount Language Server";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
-    rust-overlay = {
-      url = "github:oxalica/rust-overlay";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     crane = {
       url = "github:ipetkov/crane";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     advisory-db = {
@@ -23,20 +23,22 @@
     nixpkgs,
     crane,
     flake-parts,
-    advisory-db,
     rust-overlay,
+    advisory-db,
     ...
-  }: let
-    GIT_HASH = self.shortRev or (self.dirtyShortRev or "dirty");
-  in
+  }:
     flake-parts.lib.mkFlake {inherit inputs;} {
       systems = [
         "x86_64-linux"
         "aarch64-linux"
-        # wind
         "aarch64-darwin"
+        "x86_64-darwin"
       ];
+
       perSystem = {
+        config,
+        self',
+        inputs',
         pkgs,
         system,
         ...
@@ -45,16 +47,7 @@
           inherit system;
           overlays = [(import rust-overlay)];
         };
-
-        commonArgs =
-          {
-            src = craneLib.cleanCargoSource (craneLib.path ./.);
-
-            buildInputs = with pkgs; [];
-
-            inherit GIT_HASH;
-          }
-          // (craneLib.crateNameFromCargoToml {cargoToml = ./crates/lsp/Cargo.toml;});
+        inherit (pkgs) lib;
 
         craneLib = (crane.mkLib pkgs).overrideToolchain (pkgs.rust-bin.stable.latest.default.override {
           extensions = [
@@ -67,14 +60,28 @@
           ];
         });
 
+        src = craneLib.cleanCargoSource ./.;
+
+        commonArgs = {
+          inherit src;
+          strictDeps = true;
+          buildInputs = with pkgs;
+            []
+            ++ lib.optionals stdenv.isDarwin [libiconv];
+
+          # Pass git hash as environment variable
+          GIT_HASH = self.shortRev or (self.dirtyShortRev or "dirty");
+        };
+
         cargoArtifacts = craneLib.buildDepsOnly (commonArgs
           // {
-            panme = "beancount-language-server-deps";
+            pname = "beancount-language-server-deps";
           });
 
         beancount-language-server = craneLib.buildPackage (commonArgs
           // {
             inherit cargoArtifacts;
+            inherit (craneLib.crateNameFromCargoToml {cargoToml = ./crates/lsp/Cargo.toml;}) pname version;
           });
       in {
         checks = {
@@ -82,11 +89,7 @@
           inherit beancount-language-server;
 
           # Run clippy (and deny all warnings) on the crate source,
-          # again, resuing the dependency artifacts from above.
-          #
-          # Note that this is done as a separate derivation so that
-          # we can block the CI if there are issues here, but not
-          # prevent downstream consumers from building our crate by itself.
+          # again, reusing the dependency artifacts from above.
           beancount-language-server-clippy = craneLib.cargoClippy (commonArgs
             // {
               inherit cargoArtifacts;
@@ -99,9 +102,9 @@
             });
 
           # Check formatting
-          beancount-language-server-fmt = craneLib.cargoFmt (commonArgs
-            // {
-            });
+          beancount-language-server-fmt = craneLib.cargoFmt {
+            inherit src;
+          };
 
           # Audit dependencies
           beancount-language-server-audit = craneLib.cargoAudit (commonArgs
@@ -110,8 +113,6 @@
             });
 
           # Run tests with cargo-nextest
-          # Consider setting `doCheck = false` on `my-crate` if you do not want
-          # the tests to run twice
           beancount-language-server-nextest = craneLib.cargoNextest (commonArgs
             // {
               inherit cargoArtifacts;
@@ -125,18 +126,14 @@
           default = beancount-language-server;
         };
 
-        devShells.default =
-          pkgs.mkShell
-          {
-            buildInputs = with pkgs;
-              [
-                clang
-                pkg-config
-              ]
-              ++ lib.optional stdenv.isLinux systemd
-              ++ commonArgs.buildInputs;
-            nativeBuildInputs = with pkgs; [
-              gnumake
+        devShells.default = craneLib.devShell {
+          # Inherit inputs from checks
+          checks = self'.checks;
+
+          # Additional dev dependencies
+          packages = with pkgs;
+            [
+              git-cliff
               (rust-bin.stable.latest.default.override {
                 extensions = [
                   "cargo"
@@ -147,40 +144,12 @@
                   "rustfmt"
                 ];
               })
-              git-cliff
-              virt-viewer
-            ];
-            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-              # pkgs.stdenv.cc.cc
-              # Add any missing library needed
-              # You can use the nix-index package to locate them, e.g. nix-locate -w --top-level --at-root /lib/libudev.so.1
-            ];
+            ]
+            ++ lib.optionals stdenv.isLinux [systemd];
 
-            shellHook = ''
-            '';
-
-            inherit GIT_HASH;
-          };
+          # Environment variables
+          GIT_HASH = self.shortRev or (self.dirtyShortRev or "dirty");
+        };
       };
     };
-  #packages.default = beancount-language-server-crate;
-
-  #apps.default = flake-utils.lib.mkApp {
-  #  drv = beancount-language-server-crate;
-  #};
-
-  #devShells.default = pkgs.mkShell {
-  #  inputsFrom = builtins.attrValues self.checks;
-
-  #  # Extra inputs can be added here
-  #  nativeBuildInputs = with pkgs; [
-  #    cargo
-  #    cargo-dist
-  #    rustc
-  #    rustfmt
-  #    clippy
-  #    git-cliff
-  #    #nodejs-16_x
-  #    #python310
-  #  ];
 }
