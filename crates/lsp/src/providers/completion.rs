@@ -482,7 +482,7 @@ mod tests {
         fn path_from_fixture(path: &str) -> Result<PathBuf> {
             let uri_str = if cfg!(windows) && path.starts_with('/') {
                 // On Windows, convert Unix-style absolute paths to Windows-style
-                format!("file://C:{path}")
+                format!("file:///C:{path}")
             } else {
                 format!("file://{path}")
             };
@@ -551,7 +551,13 @@ mod tests {
                 .find_map(|document| document.cursor.map(|cursor| (document, cursor)))?;
 
             let path = document.path.as_str();
-            let uri = lsp_types::Uri::from_str(format!("file://{path}").as_str()).unwrap();
+            let uri_str = if cfg!(windows) && path.starts_with('/') {
+                // On Windows, convert Unix-style absolute paths to Windows-style
+                format!("file:///C:{path}")
+            } else {
+                format!("file://{path}")
+            };
+            let uri = lsp_types::Uri::from_str(&uri_str).unwrap();
             let id = lsp_types::TextDocumentIdentifier::new(uri);
             Some(lsp_types::TextDocumentPositionParams::new(id, cursor))
         }
@@ -1116,10 +1122,18 @@ mod tests {
 2023-10-01 open Assets:Test USD
 "#;
         let test_state = TestState::new(fixture).unwrap();
+
+        // Create a cross-platform compatible file URI
+        let uri_str = if cfg!(windows) {
+            // On Windows, convert Unix-style absolute paths to Windows-style
+            "file:///C:/main.beancount"
+        } else {
+            "file:///main.beancount"
+        };
+        let uri = lsp_types::Uri::from_str(uri_str).unwrap();
+
         let cursor = lsp_types::TextDocumentPositionParams {
-            text_document: lsp_types::TextDocumentIdentifier {
-                uri: lsp_types::Uri::from_str("file:///main.beancount").unwrap(),
-            },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             position: lsp_types::Position {
                 line: 0,
                 character: 26,
