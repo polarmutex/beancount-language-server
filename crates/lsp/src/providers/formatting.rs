@@ -147,7 +147,7 @@ pub(crate) fn formatting(
 
     // Get formatting configuration from the LSP snapshot
     let format_config = &snapshot.config.formatting;
-    
+
     // Calculate maximum widths like bean-format does
     let auto_max_prefix_width = match_pairs
         .iter()
@@ -166,17 +166,17 @@ pub(crate) fn formatting(
     // Use configuration overrides if provided (like bean-format's -w and -W options)
     let max_prefix_width = format_config.prefix_width.unwrap_or(auto_max_prefix_width);
     let max_number_width = format_config.num_width.unwrap_or(auto_max_number_width);
-    
+
     // Account-amount spacing (like bean-format's default)
     let spacing = format_config.account_amount_spacing;
 
     let mut text_edits = Vec::new();
-    
+
     // Handle currency column alignment if specified (like bean-format's -c option)
     if let Some(currency_col) = format_config.currency_column {
         // Currency column mode: align currencies at the specified column
-        for match_pair in match_pairs {
-            if let (Some(prefix), Some(number)) = (match_pair.prefix, match_pair.number) {
+        for match_pair in &match_pairs {
+            if let (Some(prefix), Some(number)) = (&match_pair.prefix, &match_pair.number) {
                 // Find the actual currency position in the text to properly calculate alignment
                 let line_start_char = doc.content.line_to_char(number.end.row);
                 let line_end_char = if number.end.row + 1 < doc.content.len_lines() {
@@ -184,26 +184,31 @@ pub(crate) fn formatting(
                 } else {
                     doc.content.len_chars()
                 };
-                let line_text = doc.content.slice(line_start_char..line_end_char).to_string();
-                
+                let line_text = doc
+                    .content
+                    .slice(line_start_char..line_end_char)
+                    .to_string();
+
                 // Find where the currency actually starts in this line
-                let currency_start_in_line = if let Some(pos) = line_text[number.end.column..].find(char::is_alphabetic) {
-                    number.end.column + pos
-                } else {
-                    // Fallback: assume currency is right after number with one space
-                    number.end.column + 1
-                };
-                
+                let currency_start_in_line =
+                    if let Some(pos) = line_text[number.end.column..].find(char::is_alphabetic) {
+                        number.end.column + pos
+                    } else {
+                        // Fallback: assume currency is right after number with configured spacing
+                        number.end.column + format_config.number_currency_spacing
+                    };
+
                 // Calculate how much we need to move the number to align the currency at the target column
                 let target_number_start = if currency_start_in_line >= currency_col {
                     // Currency is already past the target, don't try to fix it
                     number.start.column
                 } else {
                     let currency_offset = currency_start_in_line - number.end.column;
-                    currency_col.saturating_sub((number.end.column - number.start.column) + currency_offset)
+                    currency_col
+                        .saturating_sub((number.end.column - number.start.column) + currency_offset)
                 };
                 let current_number_start = number.start.column;
-                
+
                 let insert_pos = lsp_types::Position {
                     line: prefix.end.row as u32,
                     character: prefix.end.column as u32,
@@ -227,7 +232,7 @@ pub(crate) fn formatting(
                             line: insert_pos.line,
                             character: insert_pos.character + spaces_to_remove as u32,
                         };
-                        
+
                         if let Some(edit) = create_removal_edit(&doc.content, insert_pos, end_pos) {
                             text_edits.push(edit);
                         }
@@ -241,15 +246,15 @@ pub(crate) fn formatting(
     } else {
         // Default mode: right-align numbers like bean-format's default behavior
         let number_start_column = max_prefix_width + spacing;
-        
-        for match_pair in match_pairs {
-            if let (Some(prefix), Some(number)) = (match_pair.prefix, match_pair.number) {
+
+        for match_pair in &match_pairs {
+            if let (Some(prefix), Some(number)) = (&match_pair.prefix, &match_pair.number) {
                 let num_len = number.end.column - number.start.column;
                 let current_number_start = number.start.column;
-                
+
                 // Right-align: position number so it ends at the same column
                 let target_number_start = number_start_column + (max_number_width - num_len);
-                
+
                 let insert_pos = lsp_types::Position {
                     line: prefix.end.row as u32,
                     character: prefix.end.column as u32,
@@ -273,13 +278,76 @@ pub(crate) fn formatting(
                             line: insert_pos.line,
                             character: insert_pos.character + spaces_to_remove as u32,
                         };
-                        
+
                         if let Some(edit) = create_removal_edit(&doc.content, insert_pos, end_pos) {
                             text_edits.push(edit);
                         }
                     }
                     Ordering::Equal => {
                         // Already properly aligned
+                    }
+                }
+            }
+        }
+    }
+
+    // Adjust spacing between numbers and currencies if configured
+    if format_config.number_currency_spacing != 1 {
+        for match_pair in &match_pairs {
+            if let Some(number) = &match_pair.number {
+                let line_start_char = doc.content.line_to_char(number.end.row);
+                let line_end_char = if number.end.row + 1 < doc.content.len_lines() {
+                    doc.content.line_to_char(number.end.row + 1)
+                } else {
+                    doc.content.len_chars()
+                };
+                let line_text = doc
+                    .content
+                    .slice(line_start_char..line_end_char)
+                    .to_string();
+
+                // Find where the currency starts after the number
+                if let Some(currency_pos) = line_text[number.end.column..].find(char::is_alphabetic)
+                {
+                    let actual_currency_start = number.end.column + currency_pos;
+                    let current_spacing = currency_pos;
+                    let target_spacing = format_config.number_currency_spacing;
+
+                    if current_spacing != target_spacing {
+                        let number_end_pos = lsp_types::Position {
+                            line: number.end.row as u32,
+                            character: number.end.column as u32,
+                        };
+                        let currency_start_pos = lsp_types::Position {
+                            line: number.end.row as u32,
+                            character: actual_currency_start as u32,
+                        };
+
+                        if current_spacing > target_spacing {
+                            // Remove excess spaces
+                            let spaces_to_remove = current_spacing - target_spacing;
+                            let remove_end_pos = lsp_types::Position {
+                                line: number.end.row as u32,
+                                character: (number.end.column + spaces_to_remove) as u32,
+                            };
+
+                            if let Some(edit) =
+                                create_removal_edit(&doc.content, number_end_pos, remove_end_pos)
+                            {
+                                text_edits.push(edit);
+                            }
+                        } else {
+                            // Add more spaces
+                            let spaces_to_add = target_spacing - current_spacing;
+                            let edit = lsp_types::TextEdit {
+                                range: lsp_types::Range {
+                                    start: number_end_pos,
+                                    end: number_end_pos,
+                                },
+                                new_text: " ".repeat(spaces_to_add),
+                            };
+                            text_edits.push(edit);
+                        }
                     }
                 }
             }
@@ -299,7 +367,7 @@ fn create_removal_edit(
 ) -> Option<lsp_types::TextEdit> {
     let start_char = content.line_to_char(start_pos.line as usize) + start_pos.character as usize;
     let end_char = content.line_to_char(end_pos.line as usize) + end_pos.character as usize;
-    
+
     if end_char <= content.len_chars() {
         let text_to_remove = content.slice(start_char..end_char);
         // Only remove if it's all whitespace
@@ -367,7 +435,10 @@ mod tests {
             Ok(TestState { snapshot })
         }
 
-        fn new_with_config(content: &str, format_config: crate::config::FormattingConfig) -> anyhow::Result<Self> {
+        fn new_with_config(
+            content: &str,
+            format_config: crate::config::FormattingConfig,
+        ) -> anyhow::Result<Self> {
             let path = PathBuf::from("/test.beancount");
             let rope_content = ropey::Rope::from_str(content);
 
@@ -719,7 +790,7 @@ mod tests {
             if line.trim().is_empty() || !line.contains("USD") {
                 continue;
             }
-            
+
             if let Some(amount_pos) = line.find(char::is_numeric) {
                 // The amount should start at or after column 30 + spacing
                 assert!(
@@ -871,13 +942,14 @@ mod tests {
             if line.trim().is_empty() || !line.contains("USD") {
                 continue;
             }
-            
+
             // Find the end of the account name (before the spaces)
             let account_part = line.trim_start();
             if let Some(first_space) = account_part.find(' ') {
                 let spaces_after_account = &account_part[first_space..];
-                let actual_spacing = spaces_after_account.len() - spaces_after_account.trim_start().len();
-                
+                let actual_spacing =
+                    spaces_after_account.len() - spaces_after_account.trim_start().len();
+
                 assert!(
                     actual_spacing >= 5,
                     "Should have at least 5 spaces between account and amount, but found {actual_spacing}"
@@ -916,7 +988,89 @@ mod tests {
                 let end1 = pos1 + "1000.00".len();
                 let end2 = pos2 + "500.0".len();
                 // Numbers in balance directives should be right-aligned
-                assert_eq!(end1, end2, "Balance amounts should be right-aligned with bean-format config");
+                assert_eq!(
+                    end1, end2,
+                    "Balance amounts should be right-aligned with bean-format config"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_number_currency_spacing() {
+        let content = r#"2023-01-01 * "Test"
+  Assets:Cash     100.00 USD
+  Expenses:Food 50.0   USD
+"#;
+
+        // Test with 2 spaces between number and currency
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: None,
+            account_amount_spacing: 2,
+            number_currency_spacing: 2,
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        println!("Number-currency spacing formatted:\n{formatted}");
+
+        // Verify that there are exactly 2 spaces between numbers and currencies
+        let lines: Vec<&str> = formatted.lines().collect();
+        for line in &lines[1..] {
+            if line.contains("USD") {
+                // Find the pattern "number  USD" (with exactly 2 spaces)
+                if let Some(usd_pos) = line.find("USD") {
+                    let before_usd = &line[..usd_pos];
+                    // Should end with exactly 2 spaces
+                    assert!(
+                        before_usd.ends_with("  "),
+                        "Should have exactly 2 spaces before USD in line: '{line}'"
+                    );
+                    // Should not have 3 or more spaces
+                    assert!(
+                        !before_usd.ends_with("   "),
+                        "Should not have 3 or more spaces before USD in line: '{line}'"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_number_currency_spacing_zero() {
+        let content = r#"2023-01-01 * "Test"
+  Assets:Cash     100.00 USD
+  Expenses:Food 50.0 USD
+"#;
+
+        // Test with 0 spaces between number and currency (no space)
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: None,
+            account_amount_spacing: 2,
+            number_currency_spacing: 0,
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        println!("Zero spacing formatted:\n{formatted}");
+
+        // Verify that there are no spaces between numbers and currencies
+        let lines: Vec<&str> = formatted.lines().collect();
+        for line in &lines[1..] {
+            if line.contains("USD") {
+                // Should find pattern like "100.00USD" (no space)
+                assert!(
+                    line.contains("100.00USD") || line.contains("50.0USD"),
+                    "Should have no space between number and USD in line: '{line}'"
+                );
             }
         }
     }
@@ -941,7 +1095,7 @@ mod tests {
         let formatted = apply_edits(content, &edits);
 
         println!("Precise currency alignment:\n{formatted}");
-        
+
         // Print each line with column numbers for debugging
         for (i, line) in formatted.lines().enumerate() {
             println!("Line {i}: '{line}'");
