@@ -81,7 +81,8 @@
         beancount-language-server = craneLib.buildPackage (commonArgs
           // {
             inherit cargoArtifacts;
-            inherit (craneLib.crateNameFromCargoToml {cargoToml = ./crates/lsp/Cargo.toml;}) pname version;
+            inherit (craneLib.crateNameFromCargoToml {cargoToml = ./Cargo.toml;}) version;
+            pname = "beancount-language-server";
           });
       in {
         checks = {
