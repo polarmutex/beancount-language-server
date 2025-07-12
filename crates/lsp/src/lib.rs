@@ -18,7 +18,7 @@ use crate::server::LspServerState;
 use anyhow::Result;
 use lsp_server::Connection;
 use lsp_types::InitializeParams;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use utils::ToFilePath;
 
 pub fn run_server() -> Result<()> {

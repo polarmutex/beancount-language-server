@@ -3,8 +3,8 @@ use crate::server::LspServerState;
 use crate::server::LspServerStateSnapshot;
 use crate::server::Task;
 use anyhow::Result;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 fn result_to_response<R>(
     id: lsp_server::RequestId,

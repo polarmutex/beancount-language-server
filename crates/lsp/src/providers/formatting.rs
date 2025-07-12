@@ -3,6 +3,8 @@ use crate::utils::ToFilePath;
 use anyhow::Result;
 use std::cmp::Ordering;
 use tracing::debug;
+use tree_sitter::StreamingIterator;
+use tree_sitter_beancount::tree_sitter;
 
 struct TSRange {
     pub start: tree_sitter::Point,
@@ -74,14 +76,14 @@ pub(crate) fn formatting(
 
     let query = tree_sitter::Query::new(&tree.language(), QUERY_STR).unwrap();
     let mut query_cursor = tree_sitter::QueryCursor::new();
-    let matches = query_cursor.matches(
+    let mut matches = query_cursor.matches(
         &query,
         tree.root_node(),
         RopeProvider(doc.content.get_slice(..).unwrap()),
     );
 
     let mut match_pairs: Vec<Match> = Vec::new();
-    for matched in matches {
+    while let Some(matched) = matches.next() {
         let mut prefix: Option<TSRange> = None;
         let mut number: Option<TSRange> = None;
         for capture in matched.captures {

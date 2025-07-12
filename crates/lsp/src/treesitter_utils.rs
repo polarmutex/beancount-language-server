@@ -1,3 +1,5 @@
+use tree_sitter_beancount::tree_sitter;
+
 pub fn lsp_textdocchange_to_ts_inputedit(
     source: &ropey::Rope,
     change: &lsp_types::TextDocumentContentChangeEvent,

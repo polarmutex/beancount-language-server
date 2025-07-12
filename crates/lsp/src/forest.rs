@@ -11,6 +11,7 @@ use std::path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::error;
+use tree_sitter_beancount::tree_sitter;
 
 // Issus to look at if running into issues with this
 // https://github.com/silvanshade/lspower/issues/8

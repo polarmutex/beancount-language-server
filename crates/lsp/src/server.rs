@@ -12,6 +12,7 @@ use lsp_types::notification::Notification;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
+use tree_sitter_beancount::tree_sitter;
 
 pub(crate) type RequestHandler = fn(&mut LspServerState, lsp_server::Response);
 

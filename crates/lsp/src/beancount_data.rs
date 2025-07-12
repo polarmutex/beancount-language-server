@@ -1,5 +1,7 @@
 use crate::treesitter_utils::text_for_tree_sitter_node;
 use std::collections::HashSet;
+use tree_sitter::StreamingIterator;
+use tree_sitter_beancount::tree_sitter;
 
 #[derive(Clone, Debug)]
 pub struct FlaggedEntry {
@@ -125,15 +127,16 @@ impl BeancountData {
             .unwrap_or_else(|_| panic!("get_position_by_query invalid query {query_string}"));
         let mut cursor_qry = tree_sitter::QueryCursor::new();
         let binding = content.clone().to_string();
-        let matches = cursor_qry.matches(&query, tree.root_node(), binding.as_bytes());
-        let mut tags: Vec<_> = matches
-            .into_iter()
-            .flat_map(|m| {
-                m.captures
-                    .iter()
-                    .map(|capture| text_for_tree_sitter_node(content, &capture.node))
-            })
-            .collect();
+        let mut matches = cursor_qry.matches(&query, tree.root_node(), binding.as_bytes());
+        let mut tags: Vec<_> = {
+            let mut results = Vec::new();
+            while let Some(m) = matches.next() {
+                for capture in m.captures {
+                    results.push(text_for_tree_sitter_node(content, &capture.node));
+                }
+            }
+            results
+        };
         tags.sort();
         tags.dedup();
 
@@ -146,15 +149,16 @@ impl BeancountData {
             .unwrap_or_else(|_| panic!("get_position_by_query invalid query {query_string}"));
         let mut cursor_qry = tree_sitter::QueryCursor::new();
         let binding = content.clone().to_string();
-        let matches = cursor_qry.matches(&query, tree.root_node(), binding.as_bytes());
-        let mut links: Vec<_> = matches
-            .into_iter()
-            .flat_map(|m| {
-                m.captures
-                    .iter()
-                    .map(|capture| text_for_tree_sitter_node(content, &capture.node))
-            })
-            .collect();
+        let mut matches = cursor_qry.matches(&query, tree.root_node(), binding.as_bytes());
+        let mut links: Vec<_> = {
+            let mut results = Vec::new();
+            while let Some(m) = matches.next() {
+                for capture in m.captures {
+                    results.push(text_for_tree_sitter_node(content, &capture.node));
+                }
+            }
+            results
+        };
         links.sort();
         links.dedup();
 
