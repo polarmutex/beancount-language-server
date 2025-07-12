@@ -30,6 +30,7 @@ threadpool = "1.8"
 ropey.workspace = true
 tree-sitter-beancount = { git = "https://github.com/polarmutex/tree-sitter-beancount.git", branch = "devel" }
 regex.workspace = true
+nucleo-matcher = "0.3.1"
 
 # Serialization and configuration
 serde.workspace = true

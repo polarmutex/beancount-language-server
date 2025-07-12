@@ -4,6 +4,7 @@ use crate::treesitter_utils::text_for_tree_sitter_node;
 use crate::utils::ToFilePath;
 use anyhow::Result;
 use chrono::Datelike;
+use nucleo_matcher::{Matcher, Config, pattern::{Pattern, CaseMatching, Normalization}};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::debug;
@@ -388,77 +389,28 @@ fn fuzzy_search_accounts(accounts: &[String], query: &str) -> Vec<(String, f32)>
         return accounts.iter().map(|acc| (acc.clone(), 1.0)).collect();
     }
 
-    let query_lower = query.to_lowercase();
-    let mut matches = Vec::new();
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+    
+    // Use the high-level match_list API for better performance
+    let matches = pattern.match_list(accounts.iter().map(|s| s.as_str()), &mut matcher);
+    
+    // Convert to the expected format with f32 scores
+    let mut result: Vec<(String, f32)> = matches
+        .into_iter()
+        .map(|(account, score)| (account.to_string(), score as f32))
+        .collect();
 
-    for account in accounts {
-        let score = calculate_fuzzy_score(account, &query_lower);
-        if score > 0.0 {
-            matches.push((account.clone(), score));
-        }
-    }
-
-    // Sort by score descending, then alphabetically
-    matches.sort_by(|a, b| {
+    // Sort by score descending, then alphabetically  
+    result.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.0.cmp(&b.0))
     });
 
     // Return top 20 matches to avoid overwhelming the user
-    matches.truncate(20);
-    matches
-}
-
-fn calculate_fuzzy_score(account: &str, query: &str) -> f32 {
-    let account_lower = account.to_lowercase();
-
-    // Exact match gets highest score
-    if account_lower == query {
-        return 1.0;
-    }
-
-    // Prefix match gets high score
-    if account_lower.starts_with(query) {
-        return 0.9;
-    }
-
-    // Check if query appears as substring
-    if account_lower.contains(query) {
-        return 0.7;
-    }
-
-    // Advanced fuzzy matching - check if all characters of query appear in order
-    let mut query_chars = query.chars().peekable();
-    let mut account_chars = account_lower.chars();
-    let mut matched_chars = 0;
-    let mut position_bonus = 0.0;
-    let mut current_pos = 0;
-
-    while let Some(query_char) = query_chars.peek() {
-        if let Some(account_char) = account_chars.next() {
-            current_pos += 1;
-            if account_char == *query_char {
-                matched_chars += 1;
-                // Bonus for matches at word boundaries or start of account parts
-                if current_pos == 1 || account.chars().nth(current_pos - 2) == Some(':') {
-                    position_bonus += 0.1;
-                }
-                query_chars.next();
-            }
-        } else {
-            break;
-        }
-    }
-
-    // Only consider it a match if all query characters were found
-    if matched_chars == query.len() {
-        let base_score = (matched_chars as f32) / (account.len() as f32);
-        let length_penalty = 1.0 - (account.len() as f32 - query.len() as f32) / 100.0;
-        (base_score + position_bonus).min(1.0) * length_penalty.max(0.1)
-    } else {
-        0.0
-    }
+    result.truncate(20);
+    result
 }
 
 fn create_completion_item(account: String, score: f32) -> lsp_types::CompletionItem {
@@ -467,8 +419,8 @@ fn create_completion_item(account: String, score: f32) -> lsp_types::CompletionI
         detail: Some("Beancount Account".to_string()),
         kind: Some(lsp_types::CompletionItemKind::ENUM),
         filter_text: Some(account.clone()),
-        // Use score for sorting (convert to string with padding for lexicographic sort)
-        sort_text: Some(format!("{:05.2}", score)),
+        // Use score for sorting (higher scores first, so invert for lexicographic sort)
+        sort_text: Some(format!("{:010.0}", 99999.0 - score.min(99999.0))),
         // Let the LSP client handle text replacement based on filter_text
         ..Default::default()
     }
@@ -1374,33 +1326,121 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_fuzzy_score() {
-        use crate::providers::completion::calculate_fuzzy_score;
+    fn test_nucleo_fuzzy_matching() {
+        use crate::providers::completion::fuzzy_search_accounts;
 
-        // Exact match should get highest score
-        assert_eq!(calculate_fuzzy_score("assets", "assets"), 1.0);
+        let accounts = vec![
+            "Assets:Cash:Checking".to_string(),
+            "Assets:Cash:Savings".to_string(),
+            "Expenses:Food:Groceries".to_string(),
+            "Liabilities:CreditCard".to_string(),
+        ];
 
-        // Prefix match should get high score
-        let prefix_score = calculate_fuzzy_score("Assets:Cash", "assets");
-        assert!(prefix_score > 0.8);
+        // Exact match should work
+        let matches = fuzzy_search_accounts(&accounts, "cash");
+        assert!(!matches.is_empty());
+        
+        // Should find accounts containing "cash"
+        let cash_matches: Vec<&(String, f32)> = matches
+            .iter()
+            .filter(|(acc, _)| acc.to_lowercase().contains("cash"))
+            .collect();
+        assert!(!cash_matches.is_empty());
 
-        // Substring match should get decent score
-        let substring_score = calculate_fuzzy_score("Assets:Cash:Checking", "cash");
-        assert!(substring_score > 0.6);
-        assert!(substring_score < prefix_score);
+        // Should match against full account name - test "assets" should match "Assets:Cash:Checking"
+        let assets_matches = fuzzy_search_accounts(&accounts, "assets");
+        let assets_found = assets_matches
+            .iter()
+            .any(|(acc, _)| acc.starts_with("Assets"));
+        assert!(assets_found, "Should find accounts starting with Assets");
 
-        // Fuzzy match should work
-        let fuzzy_score = calculate_fuzzy_score("Assets:Cash:Checking", "chk");
-        assert!(fuzzy_score > 0.0);
-        assert!(fuzzy_score < substring_score);
+        // Should match "assetchk" against "Assets:Cash:Checking" (fuzzy across full name)
+        let fuzzy_full_matches = fuzzy_search_accounts(&accounts, "assetchk");
+        let assetchk_found = fuzzy_full_matches
+            .iter()
+            .any(|(acc, _)| acc == "Assets:Cash:Checking");
+        assert!(assetchk_found, "Should fuzzy match across full account name");
 
-        // No match should get zero score
-        assert_eq!(calculate_fuzzy_score("Assets:Cash", "xyz"), 0.0);
+        // Fuzzy matching should work
+        let fuzzy_matches = fuzzy_search_accounts(&accounts, "chk");
+        assert!(!fuzzy_matches.is_empty());
 
-        // Shorter accounts should score higher than longer ones for same match quality
-        let short_score = calculate_fuzzy_score("Assets", "assets");
-        let long_score = calculate_fuzzy_score("Assets:Cash:Checking:SubAccount", "assets");
-        assert!(short_score > long_score);
+        // No match should return empty
+        let no_matches = fuzzy_search_accounts(&accounts, "xyz123");
+        assert!(no_matches.is_empty());
+    }
+
+    #[test]
+    fn test_fuzzy_matching_full_account_names() {
+        use crate::providers::completion::fuzzy_search_accounts;
+
+        let accounts = vec![
+            "Assets:Cash:Checking".to_string(),
+            "Assets:Investments:Stocks".to_string(),
+            "Expenses:Food:Groceries".to_string(),
+            "Expenses:Transportation:Gas".to_string(),
+            "Liabilities:CreditCard:Visa".to_string(),
+        ];
+
+        // Test matching across account segments
+        let matches = fuzzy_search_accounts(&accounts, "assetsinv");
+        let found = matches.iter().any(|(acc, _)| acc == "Assets:Investments:Stocks");
+        assert!(found, "Should match 'assetsinv' to 'Assets:Investments:Stocks'");
+
+        // Test matching with partial segments
+        let matches = fuzzy_search_accounts(&accounts, "exptrans");
+        let found = matches.iter().any(|(acc, _)| acc == "Expenses:Transportation:Gas");
+        assert!(found, "Should match 'exptrans' to 'Expenses:Transportation:Gas'");
+
+        // Test case insensitive matching across full name
+        let matches = fuzzy_search_accounts(&accounts, "LIABCRED");
+        let found = matches.iter().any(|(acc, _)| acc == "Liabilities:CreditCard:Visa");
+        assert!(found, "Should match 'LIABCRED' to 'Liabilities:CreditCard:Visa'");
+
+        // Test matching with mixed separators
+        let matches = fuzzy_search_accounts(&accounts, "foodgroc");
+        let found = matches.iter().any(|(acc, _)| acc == "Expenses:Food:Groceries");
+        assert!(found, "Should match 'foodgroc' to 'Expenses:Food:Groceries'");
+    }
+
+    #[test]
+    fn test_deep_account_fuzzy_matching() {
+        use crate::providers::completion::fuzzy_search_accounts;
+
+        let accounts = vec![
+            "Expenses:Fixed:Food:Groceries".to_string(),
+            "Expenses:Variable:Food:Restaurants".to_string(),
+            "Assets:Cash:Checking".to_string(),
+            "Income:Salary:Base".to_string(),
+        ];
+
+        // Test that 'food' matches both food-related accounts
+        let matches = fuzzy_search_accounts(&accounts, "food");
+        println!("Matches for 'food': {:?}", matches);
+        
+        let food_groceries_found = matches.iter().any(|(acc, _)| acc == "Expenses:Fixed:Food:Groceries");
+        let food_restaurants_found = matches.iter().any(|(acc, _)| acc == "Expenses:Variable:Food:Restaurants");
+        
+        assert!(food_groceries_found, "Should match 'food' to 'Expenses:Fixed:Food:Groceries'");
+        assert!(food_restaurants_found, "Should match 'food' to 'Expenses:Variable:Food:Restaurants'");
+
+        // Test that 'groceries' matches the groceries account
+        let matches = fuzzy_search_accounts(&accounts, "groceries");
+        println!("Matches for 'groceries': {:?}", matches);
+        let groceries_found = matches.iter().any(|(acc, _)| acc == "Expenses:Fixed:Food:Groceries");
+        assert!(groceries_found, "Should match 'groceries' to 'Expenses:Fixed:Food:Groceries'");
+
+        // Test fuzzy matching across multiple segments
+        let matches = fuzzy_search_accounts(&accounts, "expfoodgroc");
+        println!("Matches for 'expfoodgroc': {:?}", matches);
+        let fuzzy_found = matches.iter().any(|(acc, _)| acc == "Expenses:Fixed:Food:Groceries");
+        assert!(fuzzy_found, "Should fuzzy match 'expfoodgroc' to 'Expenses:Fixed:Food:Groceries'");
+
+        // Test search mode determination
+        use crate::providers::completion::{determine_search_mode, SearchMode};
+        assert_eq!(determine_search_mode("food"), SearchMode::Fuzzy);
+        assert_eq!(determine_search_mode("FOOD"), SearchMode::Prefix);
+        assert_eq!(determine_search_mode("Food"), SearchMode::Exact);
     }
 
     #[test]
