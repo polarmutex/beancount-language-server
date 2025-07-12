@@ -2,55 +2,66 @@
 name = "beancount-language-server"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors = ["Brian Ryall <polarmutex@users.noreply.github.com>"]
 license = "MIT"
-readme = "README.md"
+readme = "../../README.md"
 repository = "https://github.com/polarmutex/beancount-language-server"
-keywords = ["beancount", "lsp"]
-description = """
-A language server for the beancount language
-"""
+homepage = "https://github.com/polarmutex/beancount-language-server"
+documentation = "https://docs.rs/beancount-language-server"
+keywords = ["beancount", "lsp", "language-server", "accounting", "finance"]
+categories = ["development-tools", "text-editors"]
+description = "A Language Server Protocol implementation for Beancount, providing rich editing features like completions, diagnostics, and formatting"
 publish = false
 
 [dependencies]
-anyhow = "1.0"
-bytes = "1.10"
-chrono = { version = "0", default-features = false, features = ["clock"] }
-clap = "4"
-crossbeam-channel = "0.5.15"
-dashmap = "6.1"
-glob = "0.3"
-itertools = "^0.14"
-lsp-server = "0.7.8"
-lsp-types = "0.97.0"
-regex = "1"
-ropey = "1.6"
-thiserror = "2.0"
-serde = "1.0"
-serde_json = "1.0"
-shellexpand = "3.1.1"
-linked-list = "0.1.0"
-tracing = "0.1.41"
-#tree-sitter-beancount = "2"
-tree-sitter-beancount = {git = "https://github.com/polarmutex/tree-sitter-beancount.git", branch="devel"}
-threadpool = "1.8.1"
-url = "2"
+# Core functionality
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
 
-[dependencies.tracing-subscriber]
-version = "0.3.19"
-default-features = false
-features = [
+# LSP and server functionality
+lsp-server.workspace = true
+lsp-types.workspace = true
+crossbeam-channel.workspace = true
+threadpool = "1.8"
+
+# Text processing and parsing
+ropey.workspace = true
+tree-sitter-beancount = { git = "https://github.com/polarmutex/tree-sitter-beancount.git", branch = "devel" }
+regex.workspace = true
+
+# Serialization and configuration
+serde.workspace = true
+serde_json.workspace = true
+
+# Utilities
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clap = { version = "4.0", features = ["derive"] }
+itertools = "0.14"
+shellexpand = "3.1"
+glob = "0.3"
+url = "2.0"
+
+# Data structures
+dashmap = "6.1"
+bytes = "1.10"
+linked-list = "0.1"
+
+# Logging
+tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
-    "fmt",
+    "fmt", 
     "smallvec",
     "std",
     "tracing-log",
-]
+] }
 
 [dev-dependencies]
-env_logger = "0.11.6"
-insta = { version = "1.41.1", features = ["yaml"] }
-test-log = { version = "0.2.18", features = ["trace"] }
+# Testing utilities
+env_logger = "0.11"
+insta.workspace = true
+test-log = { version = "0.2", features = ["trace"] }
 
 [package.metadata.release]
 tag = true
