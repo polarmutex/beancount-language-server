@@ -65,10 +65,11 @@ impl<'a> tree_sitter::TextProvider<&'a [u8]> for RopeProvider<'a> {
 
 /// Provider function for LSP `textDocument/formatting`.
 ///
-/// This function performs targeted formatting on Beancount files by:
-/// 1. Aligning amounts in postings and balance directives
-/// 2. Maintaining consistent spacing and indentation
-/// 3. Generating minimal text edits that only modify what needs to change
+/// This function behaves like bean-format by default, performing targeted formatting on Beancount files:
+/// 1. Aligning amounts in postings and balance directives like bean-format
+/// 2. Supporting bean-format's prefix-width, num-width, and currency-column options
+/// 3. Maintaining consistent spacing and indentation
+/// 4. Generating minimal text edits that only modify what needs to change
 pub(crate) fn formatting(
     snapshot: LspServerStateSnapshot,
     params: lsp_types::DocumentFormattingParams,
@@ -144,83 +145,142 @@ pub(crate) fn formatting(
         return Ok(Some(vec![]));
     }
 
-    // Find the maximum width of prefixes and numbers for proper alignment
-    let mut max_prefix_width = 0;
-    let mut max_number_width = 0;
+    // Get formatting configuration from the LSP snapshot
+    let format_config = &snapshot.config.formatting;
+    
+    // Calculate maximum widths like bean-format does
+    let auto_max_prefix_width = match_pairs
+        .iter()
+        .filter_map(|m| m.prefix.as_ref())
+        .map(|prefix| prefix.end.column)
+        .max()
+        .unwrap_or(0);
 
-    for match_pair in match_pairs.iter() {
-        if let (Some(prefix), Some(number)) = (&match_pair.prefix, &match_pair.number) {
-            let prefix_len = prefix.end.column;
-            if prefix_len > max_prefix_width {
-                max_prefix_width = prefix_len;
-            }
-            let number_len = number.end.column - number.start.column;
-            if number_len > max_number_width {
-                max_number_width = number_len;
-            }
-        }
-    }
+    let auto_max_number_width = match_pairs
+        .iter()
+        .filter_map(|m| m.number.as_ref())
+        .map(|number| number.end.column - number.start.column)
+        .max()
+        .unwrap_or(0);
 
-    // Configuration: spacing between account and amount
-    let prefix_number_buffer = 2;
-    let correct_number_placement = max_prefix_width + prefix_number_buffer;
+    // Use configuration overrides if provided (like bean-format's -w and -W options)
+    let max_prefix_width = format_config.prefix_width.unwrap_or(auto_max_prefix_width);
+    let max_number_width = format_config.num_width.unwrap_or(auto_max_number_width);
+    
+    // Account-amount spacing (like bean-format's default)
+    let spacing = format_config.account_amount_spacing;
 
     let mut text_edits = Vec::new();
-    for match_pair in match_pairs {
-        if let (Some(prefix), Some(number)) = (match_pair.prefix, match_pair.number) {
-            let num_len = number.end.column - number.start.column;
-            let num_col_pos = number.start.column;
-            let new_num_pos = correct_number_placement + (max_number_width - num_len);
+    
+    // Handle currency column alignment if specified (like bean-format's -c option)
+    if let Some(currency_col) = format_config.currency_column {
+        // Currency column mode: align currencies at the specified column
+        for match_pair in match_pairs {
+            if let (Some(prefix), Some(number)) = (match_pair.prefix, match_pair.number) {
+                // Find the actual currency position in the text to properly calculate alignment
+                let line_start_char = doc.content.line_to_char(number.end.row);
+                let line_end_char = if number.end.row + 1 < doc.content.len_lines() {
+                    doc.content.line_to_char(number.end.row + 1)
+                } else {
+                    doc.content.len_chars()
+                };
+                let line_text = doc.content.slice(line_start_char..line_end_char).to_string();
+                
+                // Find where the currency actually starts in this line
+                let currency_start_in_line = if let Some(pos) = line_text[number.end.column..].find(char::is_alphabetic) {
+                    number.end.column + pos
+                } else {
+                    // Fallback: assume currency is right after number with one space
+                    number.end.column + 1
+                };
+                
+                // Calculate how much we need to move the number to align the currency at the target column
+                let target_number_start = if currency_start_in_line >= currency_col {
+                    // Currency is already past the target, don't try to fix it
+                    number.start.column
+                } else {
+                    let currency_offset = currency_start_in_line - number.end.column;
+                    currency_col.saturating_sub((number.end.column - number.start.column) + currency_offset)
+                };
+                let current_number_start = number.start.column;
+                
+                let insert_pos = lsp_types::Position {
+                    line: prefix.end.row as u32,
+                    character: prefix.end.column as u32,
+                };
 
-            let insert_pos = lsp_types::Position {
-                line: prefix.end.row as u32,
-                character: prefix.end.column as u32,
-            };
-
-            match new_num_pos.cmp(&num_col_pos) {
-                Ordering::Greater => {
-                    // Insert spaces to align numbers properly
-                    let spaces_needed = new_num_pos - num_col_pos;
-                    let edit = lsp_types::TextEdit {
-                        range: lsp_types::Range {
-                            start: insert_pos,
-                            end: insert_pos,
-                        },
-                        new_text: " ".repeat(spaces_needed),
-                    };
-                    text_edits.push(edit);
-                }
-                Ordering::Less => {
-                    // Remove excess spaces
-                    let spaces_to_remove = num_col_pos - new_num_pos;
-                    let end_pos = lsp_types::Position {
-                        line: insert_pos.line,
-                        character: insert_pos.character + spaces_to_remove as u32,
-                    };
-
-                    // Validate that we're only removing whitespace
-                    let start_char = doc.content.line_to_char(insert_pos.line as usize)
-                        + insert_pos.character as usize;
-                    let end_char = doc.content.line_to_char(end_pos.line as usize)
-                        + end_pos.character as usize;
-
-                    if end_char <= doc.content.len_chars() {
-                        let text_to_remove = doc.content.slice(start_char..end_char);
-                        // Only remove if it's all whitespace
-                        if text_to_remove.to_string().trim().is_empty() {
-                            let edit = lsp_types::TextEdit {
-                                range: lsp_types::Range {
-                                    start: insert_pos,
-                                    end: end_pos,
-                                },
-                                new_text: String::new(),
-                            };
+                match target_number_start.cmp(&current_number_start) {
+                    Ordering::Greater => {
+                        let spaces_needed = target_number_start - current_number_start;
+                        let edit = lsp_types::TextEdit {
+                            range: lsp_types::Range {
+                                start: insert_pos,
+                                end: insert_pos,
+                            },
+                            new_text: " ".repeat(spaces_needed),
+                        };
+                        text_edits.push(edit);
+                    }
+                    Ordering::Less => {
+                        let spaces_to_remove = current_number_start - target_number_start;
+                        let end_pos = lsp_types::Position {
+                            line: insert_pos.line,
+                            character: insert_pos.character + spaces_to_remove as u32,
+                        };
+                        
+                        if let Some(edit) = create_removal_edit(&doc.content, insert_pos, end_pos) {
                             text_edits.push(edit);
                         }
                     }
+                    Ordering::Equal => {
+                        // Already properly aligned
+                    }
                 }
-                Ordering::Equal => {
-                    // Already properly aligned, no edit needed
+            }
+        }
+    } else {
+        // Default mode: right-align numbers like bean-format's default behavior
+        let number_start_column = max_prefix_width + spacing;
+        
+        for match_pair in match_pairs {
+            if let (Some(prefix), Some(number)) = (match_pair.prefix, match_pair.number) {
+                let num_len = number.end.column - number.start.column;
+                let current_number_start = number.start.column;
+                
+                // Right-align: position number so it ends at the same column
+                let target_number_start = number_start_column + (max_number_width - num_len);
+                
+                let insert_pos = lsp_types::Position {
+                    line: prefix.end.row as u32,
+                    character: prefix.end.column as u32,
+                };
+
+                match target_number_start.cmp(&current_number_start) {
+                    Ordering::Greater => {
+                        let spaces_needed = target_number_start - current_number_start;
+                        let edit = lsp_types::TextEdit {
+                            range: lsp_types::Range {
+                                start: insert_pos,
+                                end: insert_pos,
+                            },
+                            new_text: " ".repeat(spaces_needed),
+                        };
+                        text_edits.push(edit);
+                    }
+                    Ordering::Less => {
+                        let spaces_to_remove = current_number_start - target_number_start;
+                        let end_pos = lsp_types::Position {
+                            line: insert_pos.line,
+                            character: insert_pos.character + spaces_to_remove as u32,
+                        };
+                        
+                        if let Some(edit) = create_removal_edit(&doc.content, insert_pos, end_pos) {
+                            text_edits.push(edit);
+                        }
+                    }
+                    Ordering::Equal => {
+                        // Already properly aligned
+                    }
                 }
             }
         }
@@ -228,6 +288,32 @@ pub(crate) fn formatting(
 
     debug!("Generated {} text edits for formatting", text_edits.len());
     Ok(Some(text_edits))
+}
+
+/// Helper function to create a text edit that removes whitespace safely.
+/// Returns None if the text to remove contains non-whitespace characters.
+fn create_removal_edit(
+    content: &ropey::Rope,
+    start_pos: lsp_types::Position,
+    end_pos: lsp_types::Position,
+) -> Option<lsp_types::TextEdit> {
+    let start_char = content.line_to_char(start_pos.line as usize) + start_pos.character as usize;
+    let end_char = content.line_to_char(end_pos.line as usize) + end_pos.character as usize;
+    
+    if end_char <= content.len_chars() {
+        let text_to_remove = content.slice(start_char..end_char);
+        // Only remove if it's all whitespace
+        if text_to_remove.to_string().trim().is_empty() {
+            return Some(lsp_types::TextEdit {
+                range: lsp_types::Range {
+                    start: start_pos,
+                    end: end_pos,
+                },
+                new_text: String::new(),
+            });
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -274,6 +360,43 @@ mod tests {
             let snapshot = LspServerStateSnapshot {
                 beancount_data,
                 config: Config::new(PathBuf::from("/test")),
+                forest,
+                open_docs,
+            };
+
+            Ok(TestState { snapshot })
+        }
+
+        fn new_with_config(content: &str, format_config: crate::config::FormattingConfig) -> anyhow::Result<Self> {
+            let path = PathBuf::from("/test.beancount");
+            let rope_content = ropey::Rope::from_str(content);
+
+            // Parse the content with tree-sitter
+            let mut parser = tree_sitter::Parser::new();
+            parser.set_language(&tree_sitter_beancount::language())?;
+            let tree = parser.parse(content, None).unwrap();
+
+            // Create the necessary data structures
+            let mut forest = HashMap::new();
+            forest.insert(path.clone(), tree.clone());
+
+            let mut open_docs = HashMap::new();
+            open_docs.insert(
+                path.clone(),
+                Document {
+                    content: rope_content.clone(),
+                },
+            );
+
+            let mut beancount_data = HashMap::new();
+            beancount_data.insert(path.clone(), BeancountData::new(&tree, &rope_content));
+
+            let mut config = Config::new(PathBuf::from("/test"));
+            config.formatting = format_config;
+
+            let snapshot = LspServerStateSnapshot {
+                beancount_data,
+                config,
                 forest,
                 open_docs,
             };
@@ -564,6 +687,268 @@ mod tests {
                     edit.range.end.character >= edit.range.start.character,
                     "End character should be >= start character on same line"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn test_bean_format_prefix_width_override() {
+        let content = r#"2023-01-01 * "Test transaction"
+  Assets:Cash     100.00 USD
+  Expenses:Food 50.0 USD
+  Assets:Bank
+"#;
+
+        // Test with custom prefix width of 30
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: Some(30),
+            num_width: None,
+            currency_column: None,
+            account_amount_spacing: 2,
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        println!("Prefix width 30 formatted:\n{formatted}");
+
+        // Verify that accounts are aligned to at least column 30
+        let lines: Vec<&str> = formatted.lines().collect();
+        for line in lines.iter().skip(1) {
+            if line.trim().is_empty() || !line.contains("USD") {
+                continue;
+            }
+            
+            if let Some(amount_pos) = line.find(char::is_numeric) {
+                // The amount should start at or after column 30 + spacing
+                assert!(
+                    amount_pos >= 30 + 2,
+                    "Amount should start at column {} or later, but found at {}",
+                    30 + 2,
+                    amount_pos
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_bean_format_num_width_override() {
+        let content = r#"2023-01-01 * "Test transaction"
+  Assets:Cash     100.00 USD
+  Expenses:Food 5.0 USD
+  Income:Job -1000.00 USD
+"#;
+
+        // Test with custom number width of 12
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: Some(12),
+            currency_column: None,
+            account_amount_spacing: 2,
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        println!("Number width 12 formatted:\n{formatted}");
+
+        // Verify that all numbers are right-aligned within the 12-character width
+        let lines: Vec<&str> = formatted.lines().collect();
+        let mut number_end_positions = Vec::new();
+
+        for line in &lines[1..] {
+            if let Some(usd_pos) = line.find(" USD") {
+                number_end_positions.push(usd_pos);
+            }
+        }
+
+        // All numbers should end at the same position (right-aligned)
+        if number_end_positions.len() > 1 {
+            let first_end = number_end_positions[0];
+            for &end_pos in &number_end_positions[1..] {
+                assert_eq!(
+                    end_pos, first_end,
+                    "All numbers should be right-aligned at the same end column with num-width override"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_bean_format_currency_column_alignment() {
+        let content = r#"2023-01-01 * "Test transaction"
+  Assets:Cash     100.00 USD
+  Expenses:Food 50.0 USD
+  Income:Job -1000.00 USD
+"#;
+
+        // Test with currency column alignment at column 50
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: Some(50),
+            account_amount_spacing: 2,
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        println!("Currency column 50 formatted:\n{formatted}");
+
+        // Verify that currencies are aligned at column 50
+        let lines: Vec<&str> = formatted.lines().collect();
+        for line in &lines[1..] {
+            if let Some(usd_pos) = line.find("USD") {
+                assert_eq!(
+                    usd_pos, 50,
+                    "Currency should be aligned at column 50, but found at {usd_pos}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_bean_format_combined_options() {
+        let content = r#"2023-01-01 * "Test transaction"
+  Assets:Cash     100.00 USD
+  Expenses:Food 50.0 USD
+  Assets:Bank
+"#;
+
+        // Test with combined prefix-width and currency-column
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: Some(25),
+            num_width: None,
+            currency_column: Some(40),
+            account_amount_spacing: 3,
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        println!("Combined options formatted:\n{formatted}");
+
+        // Verify that currencies are aligned at the specified column
+        let lines: Vec<&str> = formatted.lines().collect();
+        for line in &lines[1..] {
+            if let Some(usd_pos) = line.find("USD") {
+                assert_eq!(
+                    usd_pos, 40,
+                    "Currency should be aligned at column 40 with combined options"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_bean_format_account_amount_spacing() {
+        let content = r#"2023-01-01 * "Test transaction"
+  Assets:Cash 100.00 USD
+  Expenses:Food 50.0 USD
+"#;
+
+        // Test with custom account-amount spacing
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: None,
+            account_amount_spacing: 5,
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        println!("Custom spacing formatted:\n{formatted}");
+
+        // Verify that there's at least the specified spacing between account and amount
+        let lines: Vec<&str> = formatted.lines().collect();
+        for line in &lines[1..] {
+            if line.trim().is_empty() || !line.contains("USD") {
+                continue;
+            }
+            
+            // Find the end of the account name (before the spaces)
+            let account_part = line.trim_start();
+            if let Some(first_space) = account_part.find(' ') {
+                let spaces_after_account = &account_part[first_space..];
+                let actual_spacing = spaces_after_account.len() - spaces_after_account.trim_start().len();
+                
+                assert!(
+                    actual_spacing >= 5,
+                    "Should have at least 5 spaces between account and amount, but found {actual_spacing}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_bean_format_balance_directive_formatting() {
+        let content = r#"2023-01-01 balance Assets:Cash 1000.00 USD
+2023-01-01 balance Assets:Bank:Checking 500.0 USD
+"#;
+
+        // Test bean-format configuration with balance directives
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: Some(35),
+            num_width: None,
+            currency_column: None,
+            account_amount_spacing: 2,
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        println!("Balance directive formatted:\n{formatted}");
+
+        // Verify balance directives are formatted with bean-format options
+        let lines: Vec<&str> = formatted.lines().collect();
+        if lines.len() >= 2 {
+            let line1 = lines[0];
+            let line2 = lines[1];
+
+            if let (Some(pos1), Some(pos2)) = (line1.find("1000.00"), line2.find("500.0")) {
+                let end1 = pos1 + "1000.00".len();
+                let end2 = pos2 + "500.0".len();
+                // Numbers in balance directives should be right-aligned
+                assert_eq!(end1, end2, "Balance amounts should be right-aligned with bean-format config");
+            }
+        }
+    }
+
+    #[test]
+    fn test_currency_alignment_precision() {
+        let content = r#"2023-01-01 * "Test"
+  Assets:Cash     100.00 USD
+  Expenses:Food 50.0 USD
+"#;
+
+        // Test currency alignment at an exact column
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: Some(30),
+            account_amount_spacing: 2,
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        println!("Precise currency alignment:\n{formatted}");
+        
+        // Print each line with column numbers for debugging
+        for (i, line) in formatted.lines().enumerate() {
+            println!("Line {i}: '{line}'");
+            if line.contains("USD") {
+                let usd_pos = line.find("USD").unwrap();
+                println!("       USD at column: {usd_pos}");
+                assert_eq!(usd_pos, 30, "Currency should be exactly at column 30");
             }
         }
     }
