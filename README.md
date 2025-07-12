@@ -16,7 +16,7 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 |-------------|-------------|---------|
 | **Completions** | Smart autocompletion for accounts, payees, dates, narration, tags, links, and transaction types | ✅ |
 | **Diagnostics** | Real-time error checking and validation via beancount Python integration | ✅ |
-| **Formatting** | Document formatting similar to `bean-format` | ✅ |
+| **Formatting** | Document formatting compatible with `bean-format`, with support for prefix-width, num-width, and currency-column options | ✅ |
 | **Rename** | Rename symbols across files | ✅ |
 | **References** | Find all references to accounts, payees, etc. | ✅ |
 
@@ -99,7 +99,7 @@ The binary will be available at `target/release/beancount-language-server`.
   ```
 
 ### Optional
-- **Bean-format**: For enhanced formatting capabilities
+- **Bean-format**: The language server includes built-in formatting that's fully compatible with bean-format. Installing bean-format is optional for comparison or standalone use
   ```bash
   pip install bean-format
   ```
@@ -110,7 +110,13 @@ The language server accepts configuration via LSP initialization options:
 
 ```json
 {
-  "journal_file": "/path/to/main.beancount"
+  "journal_file": "/path/to/main.beancount",
+  "formatting": {
+    "prefix_width": 30,
+    "num_width": 10,
+    "currency_column": 60,
+    "account_amount_spacing": 2
+  }
 }
 ```
 
@@ -120,6 +126,65 @@ The language server accepts configuration via LSP initialization options:
 |--------|------|-------------|---------|
 | `journal_file` | string | Path to the main beancount journal file | None |
 
+### Formatting Options
+
+| Option | Type | Description | Default | Bean-format Equivalent |
+|--------|------|-------------|---------|----------------------|
+| `prefix_width` | number | Fixed width for account names (overrides auto-detection) | Auto-calculated | `--prefix-width` (`-w`) |
+| `num_width` | number | Fixed width for number alignment (overrides auto-detection) | Auto-calculated | `--num-width` (`-W`) |
+| `currency_column` | number | Align currencies at this specific column | None (right-align) | `--currency-column` (`-c`) |
+| `account_amount_spacing` | number | Minimum spaces between account names and amounts | 2 | N/A |
+
+#### Formatting Modes
+
+**Default Mode** (no `currency_column` specified):
+- Accounts are left-aligned
+- Numbers are right-aligned with consistent end positions
+- Behaves like `bean-format` with no special options
+
+**Currency Column Mode** (`currency_column` specified):
+- Currencies are aligned at the specified column
+- Numbers are positioned to place currencies at the target column
+- Equivalent to `bean-format --currency-column N`
+
+#### Examples
+
+**Basic formatting with auto-detection:**
+```json
+{
+  "formatting": {}
+}
+```
+
+**Fixed prefix width (like `bean-format -w 25`):**
+```json
+{
+  "formatting": {
+    "prefix_width": 25
+  }
+}
+```
+
+**Currency column alignment (like `bean-format -c 60`):**
+```json
+{
+  "formatting": {
+    "currency_column": 60
+  }
+}
+```
+
+**Combined options:**
+```json
+{
+  "formatting": {
+    "prefix_width": 30,
+    "currency_column": 65,
+    "account_amount_spacing": 3
+  }
+}
+```
+
 ## 🖥️ Editor Setup
 
 ### Visual Studio Code
@@ -128,7 +193,11 @@ The language server accepts configuration via LSP initialization options:
 2. Configure in `settings.json`:
    ```json
    {
-     "beancount.journal_file": "/path/to/main.beancount"
+     "beancount.journal_file": "/path/to/main.beancount",
+     "beancount.formatting": {
+       "prefix_width": 30,
+       "currency_column": 60
+     }
    }
    ```
 
@@ -142,6 +211,10 @@ local lspconfig = require('lspconfig')
 lspconfig.beancount.setup({
   init_options = {
     journal_file = "/path/to/main.beancount",
+    formatting = {
+      prefix_width = 30,
+      currency_column = 60,
+    },
   },
 })
 ```
@@ -164,7 +237,13 @@ Add to your `languages.toml`:
 [language-server.beancount-language-server]
 command = "beancount-language-server"
 args = ["--stdio"]
-config.journal_file = "/path/to/main.beancount"
+
+[language-server.beancount-language-server.config]
+journal_file = "/path/to/main.beancount"
+
+[language-server.beancount-language-server.config.formatting]
+prefix_width = 30
+currency_column = 60
 
 [[language]]
 name = "beancount"
@@ -185,7 +264,8 @@ Using [lsp-mode](https://github.com/emacs-lsp/lsp-mode):
     :major-modes '(beancount-mode)
     :server-id 'beancount-language-server
     :initialization-options
-    (lambda () (list :journal_file "/path/to/main.beancount")))))
+    (lambda () (list :journal_file "/path/to/main.beancount"
+                     :formatting '(:prefix_width 30 :currency_column 60))))))
 ```
 
 ### Vim
@@ -199,7 +279,11 @@ if executable('beancount-language-server')
         \ 'cmd': {server_info->['beancount-language-server']},
         \ 'allowlist': ['beancount'],
         \ 'initialization_options': {
-        \   'journal_file': '/path/to/main.beancount'
+        \   'journal_file': '/path/to/main.beancount',
+        \   'formatting': {
+        \     'prefix_width': 30,
+        \     'currency_column': 60
+        \   }
         \ }
     \ })
 endif
@@ -218,7 +302,11 @@ Add to LSP settings:
       "command": ["beancount-language-server"],
       "selector": "source.beancount",
       "initializationOptions": {
-        "journal_file": "/path/to/main.beancount"
+        "journal_file": "/path/to/main.beancount",
+        "formatting": {
+          "prefix_width": 30,
+          "currency_column": 60
+        }
       }
     }
   }
@@ -246,7 +334,7 @@ Add to LSP settings:
 - **Tree-sitter Parser**: Fast, incremental parsing of Beancount syntax
 - **Completion Engine**: Smart autocompletion with context awareness
 - **Diagnostic Provider**: Integration with beancount Python for validation
-- **Formatter**: Code formatting compatible with bean-format
+- **Formatter**: Code formatting fully compatible with bean-format, supporting prefix-width, num-width, and currency-column options
 
 ### Project Structure
 
