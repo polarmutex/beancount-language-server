@@ -115,7 +115,8 @@ The language server accepts configuration via LSP initialization options:
     "prefix_width": 30,
     "num_width": 10,
     "currency_column": 60,
-    "account_amount_spacing": 2
+    "account_amount_spacing": 2,
+    "number_currency_spacing": 1
   }
 }
 ```
@@ -134,6 +135,7 @@ The language server accepts configuration via LSP initialization options:
 | `num_width` | number | Fixed width for number alignment (overrides auto-detection) | Auto-calculated | `--num-width` (`-W`) |
 | `currency_column` | number | Align currencies at this specific column | None (right-align) | `--currency-column` (`-c`) |
 | `account_amount_spacing` | number | Minimum spaces between account names and amounts | 2 | N/A |
+| `number_currency_spacing` | number | Number of spaces between number and currency | 1 | N/A |
 
 #### Formatting Modes
 
@@ -174,13 +176,28 @@ The language server accepts configuration via LSP initialization options:
 }
 ```
 
+**Number-currency spacing control:**
+```json
+{
+  "formatting": {
+    "number_currency_spacing": 2
+  }
+}
+```
+
+This controls the whitespace between numbers and currency codes:
+- `0`: No space (`100.00USD`)
+- `1`: Single space (`100.00 USD`) - default
+- `2`: Two spaces (`100.00  USD`)
+
 **Combined options:**
 ```json
 {
   "formatting": {
     "prefix_width": 30,
     "currency_column": 65,
-    "account_amount_spacing": 3
+    "account_amount_spacing": 3,
+    "number_currency_spacing": 1
   }
 }
 ```
@@ -196,7 +213,8 @@ The language server accepts configuration via LSP initialization options:
      "beancount.journal_file": "/path/to/main.beancount",
      "beancount.formatting": {
        "prefix_width": 30,
-       "currency_column": 60
+       "currency_column": 60,
+       "number_currency_spacing": 1
      }
    }
    ```
@@ -214,6 +232,7 @@ lspconfig.beancount.setup({
     formatting = {
       prefix_width = 30,
       currency_column = 60,
+      number_currency_spacing = 1,
     },
   },
 })
@@ -244,6 +263,7 @@ journal_file = "/path/to/main.beancount"
 [language-server.beancount-language-server.config.formatting]
 prefix_width = 30
 currency_column = 60
+number_currency_spacing = 1
 
 [[language]]
 name = "beancount"
@@ -265,7 +285,7 @@ Using [lsp-mode](https://github.com/emacs-lsp/lsp-mode):
     :server-id 'beancount-language-server
     :initialization-options
     (lambda () (list :journal_file "/path/to/main.beancount"
-                     :formatting '(:prefix_width 30 :currency_column 60))))))
+                     :formatting '(:prefix_width 30 :currency_column 60 :number_currency_spacing 1))))))
 ```
 
 ### Vim
@@ -282,7 +302,8 @@ if executable('beancount-language-server')
         \   'journal_file': '/path/to/main.beancount',
         \   'formatting': {
         \     'prefix_width': 30,
-        \     'currency_column': 60
+        \     'currency_column': 60,
+        \     'number_currency_spacing': 1
         \   }
         \ }
     \ })
@@ -305,7 +326,8 @@ Add to LSP settings:
         "journal_file": "/path/to/main.beancount",
         "formatting": {
           "prefix_width": 30,
-          "currency_column": 60
+          "currency_column": 60,
+          "number_currency_spacing": 1
         }
       }
     }

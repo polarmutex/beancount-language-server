@@ -1,10 +1,10 @@
-use clap::{Command, arg};
+use clap::{arg, Command};
 use std::fs;
 use std::io;
 use std::sync::Arc;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
-use tracing_subscriber::{EnvFilter, filter::Directive};
+use tracing_subscriber::{filter::Directive, EnvFilter};
 
 fn main() {
     let matches = Command::new("beancount-language-server")

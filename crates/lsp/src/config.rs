@@ -14,19 +14,19 @@ pub struct FormattingConfig {
     /// Use this prefix width instead of determining an optimal value automatically.
     /// Corresponds to bean-format's --prefix-width (-w) option.
     pub prefix_width: Option<usize>,
-    
+
     /// Use this width to render numbers instead of determining an optimal value.
     /// Corresponds to bean-format's --num-width (-W) option.
     pub num_width: Option<usize>,
-    
+
     /// Align currencies in this column.
     /// Corresponds to bean-format's --currency-column (-c) option.
     pub currency_column: Option<usize>,
-    
+
     /// Spacing between account names and amounts (default: 2).
     /// This is the minimum number of spaces between the account and the amount.
     pub account_amount_spacing: usize,
-    
+
     /// Number of spaces between the number and currency (default: 1).
     /// Controls whitespace like "100.00 USD" vs "100.00  USD".
     pub number_currency_spacing: usize,
@@ -38,7 +38,7 @@ impl FormattingConfig {
             prefix_width: None,
             num_width: None,
             currency_column: None,
-            account_amount_spacing: 2, // Default spacing like bean-format
+            account_amount_spacing: 2,  // Default spacing like bean-format
             number_currency_spacing: 1, // Default 1 space between number and currency
         }
     }
@@ -63,7 +63,7 @@ impl Config {
                     shellexpand::tilde(&beancount_lsp_settings.journal_file.unwrap()).as_ref(),
                 ));
             }
-            
+
             // Update formatting configuration
             if let Some(formatting) = beancount_lsp_settings.formatting {
                 if let Some(prefix_width) = formatting.prefix_width {
@@ -98,16 +98,16 @@ pub struct BeancountLspOptions {
 pub struct FormattingOptions {
     /// Use this prefix width instead of determining an optimal value automatically.
     pub prefix_width: Option<usize>,
-    
+
     /// Use this width to render numbers instead of determining an optimal value.
     pub num_width: Option<usize>,
-    
+
     /// Align currencies in this column.
     pub currency_column: Option<usize>,
-    
+
     /// Spacing between account names and amounts.
     pub account_amount_spacing: Option<usize>,
-    
+
     /// Number of spaces between the number and currency.
     pub number_currency_spacing: Option<usize>,
 }
