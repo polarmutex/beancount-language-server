@@ -7,6 +7,7 @@ use chrono::Datelike;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::debug;
+use tree_sitter_beancount::tree_sitter;
 
 /// Provider function for LSP completion.
 pub(crate) fn completion(
@@ -381,6 +382,7 @@ mod tests {
     use crate::providers::completion::extract_completion_prefix;
     use crate::providers::completion::sub_one_month;
     use crate::server::LspServerStateSnapshot;
+    use tree_sitter_beancount::tree_sitter;
     //use insta::assert_yaml_snapshot;
     use crate::beancount_data::BeancountData;
     use crate::config::Config;
@@ -484,7 +486,7 @@ mod tests {
             } else {
                 format!("file://{path}")
             };
-            
+
             lsp_types::Uri::from_str(&uri_str)
                 .map_err(|e| anyhow::anyhow!("Invalid URI: {}", e))?
                 .to_file_path()
@@ -964,7 +966,7 @@ mod tests {
         let result = TestState::path_from_fixture("/main.beancount");
         assert!(result.is_ok());
         let path = result.unwrap();
-        
+
         if cfg!(windows) {
             // On Windows, should convert to C:\main.beancount
             assert_eq!(path.to_string_lossy(), "C:\\main.beancount");
@@ -976,7 +978,7 @@ mod tests {
 
     #[test]
     fn test_path_from_fixture_relative_path() {
-        // Relative paths without leading slash create invalid file URIs 
+        // Relative paths without leading slash create invalid file URIs
         // (they become hostnames), so they should fail
         let result = TestState::path_from_fixture("main.beancount");
         assert!(result.is_err());
@@ -984,7 +986,7 @@ mod tests {
 
     #[test]
     fn test_path_from_fixture_dot_relative_path() {
-        // Test relative path starting with ./ - this also fails because 
+        // Test relative path starting with ./ - this also fails because
         // the dot becomes a hostname in the file URI
         let result = TestState::path_from_fixture("./main.beancount");
         assert!(result.is_err());
@@ -995,7 +997,7 @@ mod tests {
         let result = TestState::path_from_fixture("/some/nested/path.beancount");
         assert!(result.is_ok());
         let path = result.unwrap();
-        
+
         if cfg!(windows) {
             // On Windows, should convert to C:\some\nested\path.beancount
             assert_eq!(path.to_string_lossy(), "C:\\some\\nested\\path.beancount");
@@ -1036,10 +1038,10 @@ mod tests {
     fn test_complete_kind_function() {
         // Test the complete_kind function directly
         use crate::providers::completion::complete_kind;
-        
+
         let items = complete_kind().unwrap().unwrap();
         assert_eq!(items.len(), 4);
-        
+
         let labels: Vec<String> = items.iter().map(|i| i.label.clone()).collect();
         assert!(labels.contains(&"txn".to_string()));
         assert!(labels.contains(&"balance".to_string()));
@@ -1055,33 +1057,55 @@ mod tests {
         assert_eq!(extract_completion_prefix("Assets:Test", 6), "Assets");
         assert_eq!(extract_completion_prefix("Assets:Test", 7), "Assets:");
         assert_eq!(extract_completion_prefix("Assets:Test", 0), "");
-        assert_eq!(extract_completion_prefix("    Assets:Test", 15), "Assets:Test");
-        assert_eq!(extract_completion_prefix("Assets:Test-USD", 15), "Assets:Test-USD");
+        assert_eq!(
+            extract_completion_prefix("    Assets:Test", 15),
+            "Assets:Test"
+        );
+        assert_eq!(
+            extract_completion_prefix("Assets:Test-USD", 15),
+            "Assets:Test-USD"
+        );
     }
 
     #[test]
     fn test_completion_functions_directly() {
         // Test the completion functions directly rather than through complex fixtures
-        use crate::providers::completion::{complete_tag, complete_link, complete_date};
+        use crate::providers::completion::{complete_date, complete_link, complete_tag};
         use std::collections::HashMap;
-        
+
         let data = HashMap::new();
-        
+
         // Test tag completion - with empty data should return empty list
         let tag_items = complete_tag(data.clone()).unwrap().unwrap();
         assert_eq!(tag_items.len(), 0); // No tags in empty data
-        
-        // Test link completion - with empty data should return empty list  
+
+        // Test link completion - with empty data should return empty list
         let link_items = complete_link(data).unwrap().unwrap();
         assert_eq!(link_items.len(), 0); // No links in empty data
-        
+
         // Test date completion - this doesn't depend on data
         let date_items = complete_date().unwrap().unwrap();
         assert_eq!(date_items.len(), 4);
-        assert!(date_items.iter().any(|item| item.detail == Some("today".to_string())));
-        assert!(date_items.iter().any(|item| item.detail == Some("this month".to_string())));
-        assert!(date_items.iter().any(|item| item.detail == Some("prev month".to_string())));
-        assert!(date_items.iter().any(|item| item.detail == Some("next month".to_string())));
+        assert!(
+            date_items
+                .iter()
+                .any(|item| item.detail == Some("today".to_string()))
+        );
+        assert!(
+            date_items
+                .iter()
+                .any(|item| item.detail == Some("this month".to_string()))
+        );
+        assert!(
+            date_items
+                .iter()
+                .any(|item| item.detail == Some("prev month".to_string()))
+        );
+        assert!(
+            date_items
+                .iter()
+                .any(|item| item.detail == Some("next month".to_string()))
+        );
     }
 
     #[test]
@@ -1101,9 +1125,8 @@ mod tests {
                 character: 26,
             },
         };
-        let items = completion(test_state.snapshot, Some('x'), cursor)
-            .unwrap();
-        
+        let items = completion(test_state.snapshot, Some('x'), cursor).unwrap();
+
         // Should return None for unsupported trigger characters
         assert!(items.is_none());
     }

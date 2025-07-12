@@ -31,9 +31,8 @@ serde_json = "1.0"
 shellexpand = "3.1.1"
 linked-list = "0.1.0"
 tracing = "0.1.41"
-tree-sitter = "0.22"
-tree-sitter-beancount = "2"
-#tree-sitter-beancount = {git = "https://github.com/polarmutex/tree-sitter-beancount.git", branch="devel"}
+#tree-sitter-beancount = "2"
+tree-sitter-beancount = {git = "https://github.com/polarmutex/tree-sitter-beancount.git", branch="devel"}
 threadpool = "1.8.1"
 url = "2"
 

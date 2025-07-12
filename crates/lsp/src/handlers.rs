@@ -14,12 +14,14 @@ pub mod text_document {
     use crate::utils::ToFilePath;
     use anyhow::Result;
     use crossbeam_channel::Sender;
-    use lsp_types::notification::Notification;
     use lsp_types::Location;
+    use lsp_types::notification::Notification;
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::str::FromStr;
     use tracing::debug;
+    use tree_sitter::StreamingIterator;
+    use tree_sitter_beancount::tree_sitter;
 
     /// handler for `textDocument/didOpen`.
     pub(crate) fn did_open(
@@ -279,18 +281,20 @@ pub mod text_document {
                     std::fs::read_to_string(url).expect("")
                 };
                 let source = text.as_bytes();
-                tree_sitter::QueryCursor::new()
-                    .matches(&query, tree.root_node(), source)
-                    .filter_map(|m| {
-                        let m = m.nodes_for_capture_index(capture_account).next()?;
-                        let m_text = m.utf8_text(source).expect("");
-                        if m_text == node_text {
-                            Some((url.clone(), m))
-                        } else {
-                            None
+                {
+                    let mut query_cursor = tree_sitter::QueryCursor::new();
+                    let mut matches = query_cursor.matches(&query, tree.root_node(), source);
+                    let mut results = Vec::new();
+                    while let Some(m) = matches.next() {
+                        if let Some(node) = m.nodes_for_capture_index(capture_account).next() {
+                            let m_text = node.utf8_text(source).expect("");
+                            if m_text == node_text {
+                                results.push((url.clone(), node));
+                            }
                         }
-                    })
-                    .collect()
+                    }
+                    results
+                }
                 // vec![]
             })
             .map(|(url, node): (PathBuf, tree_sitter::Node)| {
