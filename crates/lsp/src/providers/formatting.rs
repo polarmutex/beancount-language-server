@@ -104,7 +104,7 @@ pub(crate) fn formatting(
     };
 
     // Extract formateable lines using tree-sitter
-    let formateable_lines = extract_formateable_lines(&doc, &tree)?;
+    let formateable_lines = extract_formateable_lines(doc, tree)?;
 
     if formateable_lines.is_empty() {
         debug!("No formateable lines found");
@@ -116,20 +116,20 @@ pub(crate) fn formatting(
 
     // Generate text edits based on formatting mode
     let text_edits = if let Some(currency_col) = snapshot.config.formatting.currency_column {
-        generate_currency_column_edits(&formateable_lines, currency_col, &doc)
+        generate_currency_column_edits(&formateable_lines, currency_col, doc)
     } else {
         generate_template_edits(
             &formateable_lines,
             &format_config,
             snapshot.config.formatting.number_currency_spacing,
             snapshot.config.formatting.indent_width,
-            &doc,
+            doc,
         )
     };
 
     // Apply indent normalization to remaining lines if configured
     let final_text_edits = if let Some(indent_width) = snapshot.config.formatting.indent_width {
-        apply_indent_normalization_to_remaining_lines(&doc, &tree, indent_width, text_edits)?
+        apply_indent_normalization_to_remaining_lines(doc, tree, indent_width, text_edits)?
     } else {
         text_edits
     };
@@ -211,7 +211,7 @@ fn extract_formateable_lines(
         }
 
         if let (Some(prefix), Some(number)) = (prefix_node, number_node) {
-            if let Some(line) = extract_line_components(&doc, prefix, number) {
+            if let Some(line) = extract_line_components(doc, prefix, number) {
                 formateable_lines.push(line);
             }
         }
@@ -529,7 +529,7 @@ fn apply_indent_normalization_to_remaining_lines(
                     || trimmed_line.contains(" txn \"");
 
                 if !starts_with_directive {
-                    let new_line = format!("{}{}", target_indent, trimmed_line);
+                    let new_line = format!("{target_indent}{trimmed_line}");
 
                     // Only create edit if indentation actually changes
                     if current_line.trim_end() != new_line.trim_end() {
@@ -553,7 +553,6 @@ mod tests {
     use crate::document::Document;
     use crate::server::LspServerStateSnapshot;
     use std::collections::HashMap;
-    use std::path::PathBuf;
     use std::str::FromStr;
     use tree_sitter_beancount::tree_sitter;
 
@@ -563,7 +562,8 @@ mod tests {
 
     impl TestState {
         fn new(content: &str) -> anyhow::Result<Self> {
-            let path = PathBuf::from("/test.beancount");
+            // Use a consistent path that works across platforms
+            let path = std::env::current_dir()?.join("test.beancount");
             let rope_content = ropey::Rope::from_str(content);
 
             // Parse the content with tree-sitter
@@ -588,7 +588,7 @@ mod tests {
 
             let snapshot = LspServerStateSnapshot {
                 beancount_data,
-                config: Config::new(PathBuf::from("/test")),
+                config: Config::new(std::env::current_dir()?),
                 forest,
                 open_docs,
             };
@@ -600,7 +600,8 @@ mod tests {
             content: &str,
             format_config: crate::config::FormattingConfig,
         ) -> anyhow::Result<Self> {
-            let path = PathBuf::from("/test.beancount");
+            // Use a consistent path that works across platforms
+            let path = std::env::current_dir()?.join("test.beancount");
             let rope_content = ropey::Rope::from_str(content);
 
             // Parse the content with tree-sitter
@@ -623,7 +624,7 @@ mod tests {
             let mut beancount_data = HashMap::new();
             beancount_data.insert(path.clone(), BeancountData::new(&tree, &rope_content));
 
-            let mut config = Config::new(PathBuf::from("/test"));
+            let mut config = Config::new(std::env::current_dir()?);
             config.formatting = format_config;
 
             let snapshot = LspServerStateSnapshot {
@@ -637,10 +638,15 @@ mod tests {
         }
 
         fn format(&self) -> anyhow::Result<Option<Vec<lsp_types::TextEdit>>> {
+            // Use the same path strategy as in construction
+            let path = std::env::current_dir()?.join("test.beancount");
+            let url = url::Url::from_file_path(&path)
+                .map_err(|_| anyhow::anyhow!("Failed to convert path to URL: {:?}", path))?;
+            let uri = lsp_types::Uri::from_str(url.as_str())
+                .map_err(|e| anyhow::anyhow!("Failed to create URI: {:?}", e))?;
+
             let params = lsp_types::DocumentFormattingParams {
-                text_document: lsp_types::TextDocumentIdentifier {
-                    uri: lsp_types::Uri::from_str("file:///test.beancount").unwrap(),
-                },
+                text_document: lsp_types::TextDocumentIdentifier { uri },
                 options: lsp_types::FormattingOptions {
                     tab_size: 4,
                     insert_spaces: true,
@@ -1353,7 +1359,7 @@ mod tests {
                         if before_currency
                             .chars()
                             .last()
-                            .map_or(false, |c| c.is_numeric())
+                            .is_some_and(|c| c.is_numeric())
                         {
                             // No space between number and currency - this would be wrong with default spacing
                             panic!("Found number directly followed by currency without space in: '{line}'");
