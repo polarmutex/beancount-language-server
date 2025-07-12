@@ -1,7 +1,7 @@
 [package]
 name = "beancount-language-server"
-version = "1.3.7"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 authors = ["Brian Ryall <polarmutex@users.noreply.github.com>"]
 license = "MIT"
 readme = "README.md"
@@ -10,6 +10,7 @@ keywords = ["beancount", "lsp"]
 description = """
 A language server for the beancount language
 """
+publish = false
 
 [dependencies]
 anyhow = "1.0"
