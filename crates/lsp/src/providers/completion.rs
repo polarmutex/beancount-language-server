@@ -301,24 +301,177 @@ fn complete_account_with_prefix(
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::account with prefix: '{}'", prefix);
     let mut completions = Vec::new();
-    let prefix_lower = prefix.to_lowercase();
+
+    // Determine search mode based on capitalization
+    let search_mode = determine_search_mode(prefix);
+    debug!("Search mode: {:?} for prefix: '{}'", search_mode, prefix);
 
     for data in data.values() {
-        for account in data.get_accounts() {
-            // Case-insensitive prefix matching
-            if prefix.is_empty() || account.to_lowercase().starts_with(&prefix_lower) {
-                completions.push(lsp_types::CompletionItem {
-                    label: account.clone(),
-                    detail: Some("Beancount Account".to_string()),
-                    kind: Some(lsp_types::CompletionItemKind::ENUM),
-                    // Set filter_text to enable proper LSP client filtering
-                    filter_text: Some(account.clone()),
-                    ..Default::default()
-                });
+        let accounts: Vec<String> = data.get_accounts().into_iter().collect();
+
+        match search_mode {
+            SearchMode::Prefix => {
+                // Capital letter typed - show all accounts that start with the prefix
+                for account in &accounts {
+                    if prefix.is_empty() || account.starts_with(prefix) {
+                        completions.push(create_completion_item(account.clone(), 1.0));
+                    }
+                }
+            }
+            SearchMode::Fuzzy => {
+                // Lowercase letter typed - fuzzy search all accounts
+                let fuzzy_matches = fuzzy_search_accounts(&accounts, prefix);
+                for (account, score) in fuzzy_matches {
+                    completions.push(create_completion_item(account, score));
+                }
+            }
+            SearchMode::Exact => {
+                // No prefix or mixed case - use exact prefix matching
+                let prefix_lower = prefix.to_lowercase();
+                for account in accounts {
+                    if prefix.is_empty() || account.to_lowercase().starts_with(&prefix_lower) {
+                        completions.push(create_completion_item(account, 1.0));
+                    }
+                }
             }
         }
     }
+
+    // Sort by score (higher is better) and then alphabetically
+    completions.sort_by(|a, b| {
+        let score_a = a
+            .sort_text
+            .as_ref()
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(0.0);
+        let score_b = b
+            .sort_text
+            .as_ref()
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(0.0);
+        score_b
+            .partial_cmp(&score_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.label.cmp(&b.label))
+    });
+
     Ok(Some(completions))
+}
+
+#[derive(Debug, PartialEq)]
+enum SearchMode {
+    Prefix,   // Capital letter - show all accounts with exact prefix match
+    Fuzzy,    // Lowercase letter - fuzzy search all accounts
+    Exact,    // Empty or mixed case - exact prefix matching
+}
+
+fn determine_search_mode(prefix: &str) -> SearchMode {
+    if prefix.is_empty() {
+        SearchMode::Exact
+    } else if prefix
+        .chars()
+        .all(|c| c.is_uppercase() || !c.is_alphabetic())
+    {
+        SearchMode::Prefix
+    } else if prefix
+        .chars()
+        .all(|c| c.is_lowercase() || !c.is_alphabetic())
+    {
+        SearchMode::Fuzzy
+    } else {
+        SearchMode::Exact
+    }
+}
+
+fn fuzzy_search_accounts(accounts: &[String], query: &str) -> Vec<(String, f32)> {
+    if query.is_empty() {
+        return accounts.iter().map(|acc| (acc.clone(), 1.0)).collect();
+    }
+
+    let query_lower = query.to_lowercase();
+    let mut matches = Vec::new();
+
+    for account in accounts {
+        let score = calculate_fuzzy_score(account, &query_lower);
+        if score > 0.0 {
+            matches.push((account.clone(), score));
+        }
+    }
+
+    // Sort by score descending, then alphabetically
+    matches.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+
+    // Return top 20 matches to avoid overwhelming the user
+    matches.truncate(20);
+    matches
+}
+
+fn calculate_fuzzy_score(account: &str, query: &str) -> f32 {
+    let account_lower = account.to_lowercase();
+
+    // Exact match gets highest score
+    if account_lower == query {
+        return 1.0;
+    }
+
+    // Prefix match gets high score
+    if account_lower.starts_with(query) {
+        return 0.9;
+    }
+
+    // Check if query appears as substring
+    if account_lower.contains(query) {
+        return 0.7;
+    }
+
+    // Advanced fuzzy matching - check if all characters of query appear in order
+    let mut query_chars = query.chars().peekable();
+    let mut account_chars = account_lower.chars();
+    let mut matched_chars = 0;
+    let mut position_bonus = 0.0;
+    let mut current_pos = 0;
+
+    while let Some(query_char) = query_chars.peek() {
+        if let Some(account_char) = account_chars.next() {
+            current_pos += 1;
+            if account_char == *query_char {
+                matched_chars += 1;
+                // Bonus for matches at word boundaries or start of account parts
+                if current_pos == 1 || account.chars().nth(current_pos - 2) == Some(':') {
+                    position_bonus += 0.1;
+                }
+                query_chars.next();
+            }
+        } else {
+            break;
+        }
+    }
+
+    // Only consider it a match if all query characters were found
+    if matched_chars == query.len() {
+        let base_score = (matched_chars as f32) / (account.len() as f32);
+        let length_penalty = 1.0 - (account.len() as f32 - query.len() as f32) / 100.0;
+        (base_score + position_bonus).min(1.0) * length_penalty.max(0.1)
+    } else {
+        0.0
+    }
+}
+
+fn create_completion_item(account: String, score: f32) -> lsp_types::CompletionItem {
+    lsp_types::CompletionItem {
+        label: account.clone(),
+        detail: Some("Beancount Account".to_string()),
+        kind: Some(lsp_types::CompletionItemKind::ENUM),
+        filter_text: Some(account.clone()),
+        // Use score for sorting (convert to string with padding for lexicographic sort)
+        sort_text: Some(format!("{:05.2}", score)),
+        // Let the LSP client handle text replacement based on filter_text
+        ..Default::default()
+    }
 }
 
 /// Extract the current word/prefix being typed for completion
@@ -874,16 +1027,11 @@ mod tests {
         let items = completion(test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
-        assert_eq!(
-            items,
-            [lsp_types::CompletionItem {
-                label: String::from("Assets:Test"),
-                kind: Some(lsp_types::CompletionItemKind::ENUM),
-                detail: Some(String::from("Beancount Account")),
-                filter_text: Some(String::from("Assets:Test")),
-                ..Default::default()
-            },]
-        )
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "Assets:Test");
+        assert_eq!(items[0].kind, Some(lsp_types::CompletionItemKind::ENUM));
+        assert_eq!(items[0].detail, Some("Beancount Account".to_string()));
+        assert_eq!(items[0].filter_text, Some("Assets:Test".to_string()));
     }
 
     #[test]
@@ -904,25 +1052,19 @@ mod tests {
         let items = completion(test_state.snapshot, Some(':'), cursor)
             .unwrap()
             .unwrap_or_default();
-        assert_eq!(
-            items,
-            [
-                lsp_types::CompletionItem {
-                    label: String::from("Assets:Test"),
-                    kind: Some(lsp_types::CompletionItemKind::ENUM),
-                    detail: Some(String::from("Beancount Account")),
-                    filter_text: Some(String::from("Assets:Test")),
-                    ..Default::default()
-                },
-                lsp_types::CompletionItem {
-                    label: String::from("Assets:Checking"),
-                    kind: Some(lsp_types::CompletionItemKind::ENUM),
-                    detail: Some(String::from("Beancount Account")),
-                    filter_text: Some(String::from("Assets:Checking")),
-                    ..Default::default()
-                },
-            ]
-        )
+        assert_eq!(items.len(), 2);
+
+        // Should have both Assets accounts
+        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+        assert!(labels.contains(&&"Assets:Test".to_string()));
+        assert!(labels.contains(&&"Assets:Checking".to_string()));
+
+        // Check properties of all items
+        for item in &items {
+            assert_eq!(item.kind, Some(lsp_types::CompletionItemKind::ENUM));
+            assert_eq!(item.detail, Some("Beancount Account".to_string()));
+            assert!(item.label.starts_with("Assets:"));
+        }
     }
 
     #[test]
@@ -942,16 +1084,11 @@ mod tests {
         let items = completion(test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
-        assert_eq!(
-            items,
-            [lsp_types::CompletionItem {
-                label: String::from("Assets:Test"),
-                kind: Some(lsp_types::CompletionItemKind::ENUM),
-                detail: Some(String::from("Beancount Account")),
-                filter_text: Some(String::from("Assets:Test")),
-                ..Default::default()
-            },]
-        )
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "Assets:Test");
+        assert_eq!(items[0].kind, Some(lsp_types::CompletionItemKind::ENUM));
+        assert_eq!(items[0].detail, Some("Beancount Account".to_string()));
+        assert_eq!(items[0].filter_text, Some("Assets:Test".to_string()));
     }
 
     #[test]
@@ -1161,6 +1298,169 @@ mod tests {
         assert!(date_items
             .iter()
             .any(|item| item.detail == Some("next month".to_string())));
+    }
+
+    #[test]
+    fn test_search_mode_determination() {
+        use crate::providers::completion::{determine_search_mode, SearchMode};
+
+        // Capital letters should trigger prefix search
+        assert_eq!(determine_search_mode("A"), SearchMode::Prefix);
+        assert_eq!(determine_search_mode("AS"), SearchMode::Prefix);
+        assert_eq!(determine_search_mode("ASSETS"), SearchMode::Prefix);
+
+        // Lowercase letters should trigger fuzzy search
+        assert_eq!(determine_search_mode("a"), SearchMode::Fuzzy);
+        assert_eq!(determine_search_mode("as"), SearchMode::Fuzzy);
+        assert_eq!(determine_search_mode("assets"), SearchMode::Fuzzy);
+        assert_eq!(determine_search_mode("checking"), SearchMode::Fuzzy);
+
+        // Mixed case should use exact matching
+        assert_eq!(determine_search_mode("As"), SearchMode::Exact);
+        assert_eq!(determine_search_mode("Assets"), SearchMode::Exact);
+        assert_eq!(determine_search_mode("AssetS"), SearchMode::Exact);
+
+        // Empty prefix should use exact matching
+        assert_eq!(determine_search_mode(""), SearchMode::Exact);
+
+        // Non-alphabetic characters should not affect mode determination
+        assert_eq!(determine_search_mode("A:"), SearchMode::Prefix);
+        assert_eq!(determine_search_mode("a-"), SearchMode::Fuzzy);
+    }
+
+    #[test]
+    fn test_fuzzy_search_accounts() {
+        use crate::providers::completion::fuzzy_search_accounts;
+
+        let accounts = vec![
+            "Assets:Cash:Checking".to_string(),
+            "Assets:Cash:Savings".to_string(),
+            "Assets:Investments:Stocks".to_string(),
+            "Liabilities:CreditCard:Visa".to_string(),
+            "Expenses:Food:Groceries".to_string(),
+            "Expenses:Food:Restaurants".to_string(),
+            "Income:Salary".to_string(),
+        ];
+
+        // Test exact match
+        let matches = fuzzy_search_accounts(&accounts, "cash");
+        assert!(!matches.is_empty());
+        let cash_matches: Vec<&String> = matches
+            .iter()
+            .filter(|(acc, _)| acc.contains("Cash"))
+            .map(|(acc, _)| acc)
+            .collect();
+        assert_eq!(cash_matches.len(), 2);
+
+        // Test substring match
+        let matches = fuzzy_search_accounts(&accounts, "food");
+        assert!(!matches.is_empty());
+        let food_matches: Vec<&String> = matches
+            .iter()
+            .filter(|(acc, _)| acc.contains("Food"))
+            .map(|(acc, _)| acc)
+            .collect();
+        assert_eq!(food_matches.len(), 2);
+
+        // Test fuzzy match (characters in order)
+        let matches = fuzzy_search_accounts(&accounts, "chk");
+        assert!(!matches.is_empty());
+        let checking_match = matches.iter().find(|(acc, _)| acc.contains("Checking"));
+        assert!(checking_match.is_some());
+
+        // Test no matches
+        let matches = fuzzy_search_accounts(&accounts, "xyz");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_calculate_fuzzy_score() {
+        use crate::providers::completion::calculate_fuzzy_score;
+
+        // Exact match should get highest score
+        assert_eq!(calculate_fuzzy_score("assets", "assets"), 1.0);
+
+        // Prefix match should get high score
+        let prefix_score = calculate_fuzzy_score("Assets:Cash", "assets");
+        assert!(prefix_score > 0.8);
+
+        // Substring match should get decent score
+        let substring_score = calculate_fuzzy_score("Assets:Cash:Checking", "cash");
+        assert!(substring_score > 0.6);
+        assert!(substring_score < prefix_score);
+
+        // Fuzzy match should work
+        let fuzzy_score = calculate_fuzzy_score("Assets:Cash:Checking", "chk");
+        assert!(fuzzy_score > 0.0);
+        assert!(fuzzy_score < substring_score);
+
+        // No match should get zero score
+        assert_eq!(calculate_fuzzy_score("Assets:Cash", "xyz"), 0.0);
+
+        // Shorter accounts should score higher than longer ones for same match quality
+        let short_score = calculate_fuzzy_score("Assets", "assets");
+        let long_score = calculate_fuzzy_score("Assets:Cash:Checking:SubAccount", "assets");
+        assert!(short_score > long_score);
+    }
+
+    #[test]
+    fn test_capital_letter_completion() {
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Assets:Cash:Checking USD
+2023-10-01 open Assets:Investments:Stocks USD  
+2023-10-01 open Liabilities:CreditCard:Visa USD
+2023-10-01 open Expenses:Food:Groceries USD
+2023-10-01 open Income:Salary USD
+2023-10-01 txn "Test"
+    A
+     |
+     ^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, None, cursor)
+            .unwrap()
+            .unwrap_or_default();
+
+        // Should show all accounts starting with "A"
+        assert_eq!(items.len(), 2);
+        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+        assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
+        assert!(labels.contains(&&"Assets:Investments:Stocks".to_string()));
+    }
+
+    #[test]
+    fn test_lowercase_fuzzy_completion() {
+        // Test the fuzzy search functionality directly
+        use crate::providers::completion::fuzzy_search_accounts;
+
+        let accounts = vec![
+            "Assets:Cash:Checking".to_string(),
+            "Assets:Investments:Stocks".to_string(),
+            "Expenses:Petty:Cash".to_string(),
+        ];
+
+        let matches = fuzzy_search_accounts(&accounts, "cash");
+        assert!(!matches.is_empty());
+
+        // Should find both accounts containing "Cash"
+        let cash_accounts: Vec<&(String, f32)> = matches
+            .iter()
+            .filter(|(acc, _)| acc.contains("Cash"))
+            .collect();
+        assert_eq!(cash_accounts.len(), 2);
+    }
+
+    #[test]
+    fn test_mixed_case_exact_completion() {
+        // Test the search mode determination for mixed case
+        use crate::providers::completion::{determine_search_mode, SearchMode};
+
+        // Mixed case should use exact matching
+        assert_eq!(determine_search_mode("Assets"), SearchMode::Exact);
+        assert_eq!(determine_search_mode("AssetS"), SearchMode::Exact);
+        assert_eq!(determine_search_mode("As"), SearchMode::Exact);
     }
 
     #[test]
