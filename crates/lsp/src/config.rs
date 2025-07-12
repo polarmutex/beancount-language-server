@@ -26,6 +26,10 @@ pub struct FormattingConfig {
     /// Spacing between account names and amounts (default: 2).
     /// This is the minimum number of spaces between the account and the amount.
     pub account_amount_spacing: usize,
+    
+    /// Number of spaces between the number and currency (default: 1).
+    /// Controls whitespace like "100.00 USD" vs "100.00  USD".
+    pub number_currency_spacing: usize,
 }
 
 impl FormattingConfig {
@@ -35,6 +39,7 @@ impl FormattingConfig {
             num_width: None,
             currency_column: None,
             account_amount_spacing: 2, // Default spacing like bean-format
+            number_currency_spacing: 1, // Default 1 space between number and currency
         }
     }
 }
@@ -73,6 +78,9 @@ impl Config {
                 if let Some(spacing) = formatting.account_amount_spacing {
                     self.formatting.account_amount_spacing = spacing;
                 }
+                if let Some(spacing) = formatting.number_currency_spacing {
+                    self.formatting.number_currency_spacing = spacing;
+                }
             }
         }
 
@@ -99,6 +107,9 @@ pub struct FormattingOptions {
     
     /// Spacing between account names and amounts.
     pub account_amount_spacing: Option<usize>,
+    
+    /// Number of spaces between the number and currency.
+    pub number_currency_spacing: Option<usize>,
 }
 
 #[cfg(test)]
