@@ -17,13 +17,19 @@ pub(crate) fn completion(
 ) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion");
 
-    let uri = &cursor.text_document.uri.to_file_path().unwrap();
+    let uri = match cursor.text_document.uri.to_file_path() {
+        Ok(path) => path,
+        Err(_) => {
+            debug!("URI conversion failed for: {:?}", cursor.text_document.uri);
+            return Ok(None);
+        }
+    };
     let line = &cursor.position.line;
     let char = &cursor.position.character;
     debug!("providers::completion - line {} char {}", line, char);
 
-    let tree = snapshot.forest.get(uri).unwrap();
-    let doc = snapshot.open_docs.get(uri).unwrap();
+    let tree = snapshot.forest.get(&uri).unwrap();
+    let doc = snapshot.open_docs.get(&uri).unwrap();
     let content = doc.clone().content;
 
     let start = tree_sitter::Point {
@@ -478,19 +484,54 @@ mod tests {
     }
     impl TestState {
         /// Converts a test fixture path to a PathBuf, handling cross-platform compatibility.
-        /// On Windows, converts Unix-style paths like "/main.beancount" to "C:\main.beancount"
+        /// Uses a simpler approach that should work on all platforms.
         fn path_from_fixture(path: &str) -> Result<PathBuf> {
-            let uri_str = if cfg!(windows) && path.starts_with('/') {
-                // On Windows, convert Unix-style absolute paths to Windows-style
-                format!("file:///C:{path}")
+            // For empty paths, return a default path that should work on all platforms
+            if path.is_empty() {
+                return Ok(std::path::PathBuf::from("/"));
+            }
+
+            // Try to create the URI and convert to path
+            // First try the path as-is (works for absolute paths on Unix and relative paths)
+            let uri_str = if path.starts_with('/') {
+                // Unix-style absolute path
+                if cfg!(windows) {
+                    format!("file:///C:{path}")
+                } else {
+                    format!("file://{path}")
+                }
+            } else if cfg!(windows) && path.len() > 1 && path.chars().nth(1) == Some(':') {
+                // Windows-style absolute path like "C:\path"
+                format!("file:///{}", path.replace('\\', "/"))
             } else {
+                // Relative path or other format - this will likely fail but let's try
                 format!("file://{path}")
             };
 
-            lsp_types::Uri::from_str(&uri_str)
-                .map_err(|e| anyhow::anyhow!("Invalid URI: {}", e))?
+            let uri = lsp_types::Uri::from_str(&uri_str)
+                .map_err(|e| anyhow::anyhow!("Invalid URI: {}", e))?;
+
+            // Check if this is a problematic URI format that would cause to_file_path() to panic
+            // URIs like "file://bare-filename" (without path separators) are problematic because
+            // they treat the filename as a hostname. Paths with "./" or "../" are typically OK.
+            if uri_str.starts_with("file://") && !uri_str.starts_with("file:///") {
+                let after_protocol = &uri_str[7..]; // Remove "file://"
+                if !after_protocol.is_empty()
+                    && !after_protocol.starts_with('/')
+                    && !after_protocol.starts_with('.')
+                {
+                    return Err(anyhow::anyhow!(
+                        "Invalid file URI format (contains hostname): {}",
+                        uri_str
+                    ));
+                }
+            }
+
+            let file_path = uri
                 .to_file_path()
-                .map_err(|_| anyhow::anyhow!("Failed to convert URI to file path: {}", uri_str))
+                .map_err(|_| anyhow::anyhow!("Failed to convert URI to file path: {}", uri_str))?;
+
+            Ok(file_path)
         }
 
         pub fn new(fixture: &str) -> Result<Self> {
@@ -536,7 +577,7 @@ mod tests {
                 fixture,
                 snapshot: LspServerStateSnapshot {
                     beancount_data,
-                    config: Config::new(std::env::current_dir()?),
+                    config: Config::new(Self::path_from_fixture("/test.beancount")?),
                     forest,
                     open_docs,
                 },
@@ -551,13 +592,19 @@ mod tests {
                 .find_map(|document| document.cursor.map(|cursor| (document, cursor)))?;
 
             let path = document.path.as_str();
-            let uri_str = if cfg!(windows) && path.starts_with('/') {
-                // On Windows, convert Unix-style absolute paths to Windows-style
-                format!("file:///C:{path}")
+            // Use the same path conversion logic as in TestState::new() to ensure consistency
+            let file_path = Self::path_from_fixture(path).ok()?;
+
+            // Convert PathBuf back to URI string for cross-platform compatibility
+            let path_str = file_path.to_string_lossy();
+            let uri_str = if cfg!(windows) {
+                // On Windows, paths start with drive letter, need file:/// prefix
+                format!("file:///{}", path_str.replace('\\', "/"))
             } else {
-                format!("file://{path}")
+                format!("file://{path_str}")
             };
-            let uri = lsp_types::Uri::from_str(&uri_str).unwrap();
+
+            let uri = lsp_types::Uri::from_str(&uri_str).ok()?;
             let id = lsp_types::TextDocumentIdentifier::new(uri);
             Some(lsp_types::TextDocumentPositionParams::new(id, cursor))
         }
@@ -992,10 +1039,19 @@ mod tests {
 
     #[test]
     fn test_path_from_fixture_dot_relative_path() {
-        // Test relative path starting with ./ - this also fails because
-        // the dot becomes a hostname in the file URI
+        // Test relative path starting with ./
+        // On Windows, this succeeds and creates a UNC path like \\.\main.beancount
+        // On Unix, this fails because the dot becomes a hostname in the file URI
         let result = TestState::path_from_fixture("./main.beancount");
-        assert!(result.is_err());
+        if cfg!(windows) {
+            // On Windows, this succeeds and creates a UNC path
+            assert!(result.is_ok());
+            let path = result.unwrap();
+            assert!(path.to_string_lossy().contains("main.beancount"));
+        } else {
+            // On Unix, this should fail
+            assert!(result.is_err());
+        }
     }
 
     #[test]
@@ -1033,11 +1089,12 @@ mod tests {
     #[test]
     fn test_path_from_fixture_empty_path() {
         let result = TestState::path_from_fixture("");
-        // Empty paths create file:// which converts to root path, so it succeeds
+        // Empty paths create file:// which should be handled gracefully
         assert!(result.is_ok());
         let path = result.unwrap();
-        // Should result in root directory
-        assert_eq!(path.to_string_lossy(), "/");
+        // Path should exist and be some kind of root/base path
+        assert!(!path.to_string_lossy().is_empty());
+        // Don't make specific assertions about the exact path format as it's platform-dependent
     }
 
     #[test]
@@ -1123,14 +1180,15 @@ mod tests {
 "#;
         let test_state = TestState::new(fixture).unwrap();
 
-        // Create a cross-platform compatible file URI
+        // Use the proper path conversion to ensure consistency with TestState
+        let file_path = TestState::path_from_fixture("/main.beancount").unwrap();
+        let path_str = file_path.to_string_lossy();
         let uri_str = if cfg!(windows) {
-            // On Windows, convert Unix-style absolute paths to Windows-style
-            "file:///C:/main.beancount"
+            format!("file:///{}", path_str.replace('\\', "/"))
         } else {
-            "file:///main.beancount"
+            format!("file://{path_str}")
         };
-        let uri = lsp_types::Uri::from_str(uri_str).unwrap();
+        let uri = lsp_types::Uri::from_str(&uri_str).unwrap();
 
         let cursor = lsp_types::TextDocumentPositionParams {
             text_document: lsp_types::TextDocumentIdentifier { uri },

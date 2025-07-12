@@ -29,7 +29,16 @@ pub mod text_document {
         params: lsp_types::DidOpenTextDocumentParams,
     ) -> Result<()> {
         debug!("handlers::did_open");
-        let uri = params.text_document.uri.to_file_path().unwrap();
+        let uri = match params.text_document.uri.to_file_path() {
+            Ok(path) => path,
+            Err(_) => {
+                debug!(
+                    "Failed to convert URI to file path: {:?}",
+                    params.text_document.uri
+                );
+                return Ok(());
+            }
+        };
 
         let document = Document::open(params.clone());
         //let tree = document.tree.clone();
@@ -221,7 +230,8 @@ pub mod text_document {
         let root_journal_path = if snapshot.config.journal_root.is_some() {
             snapshot.config.journal_root.unwrap()
         } else {
-            PathBuf::from(uri.to_string().replace("file://", ""))
+            // Use proper URI to file path conversion instead of string replacement
+            uri.to_file_path().unwrap_or_default()
         };
 
         let diags =
@@ -241,10 +251,24 @@ pub mod text_document {
                 .send(Task::Notify(lsp_server::Notification {
                     method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
                     params: to_json(lsp_types::PublishDiagnosticsParams {
-                        uri: lsp_types::Uri::from_str(
-                            format!("file://{}", file.to_str().unwrap()).as_str(),
-                        )
-                        .unwrap(),
+                        uri: {
+                            // Handle cross-platform file URI creation
+                            let file_path_str = file.to_str().unwrap();
+                            let uri_str = if cfg!(windows)
+                                && file_path_str.len() > 1
+                                && file_path_str.chars().nth(1) == Some(':')
+                            {
+                                // Windows absolute path like "C:\path"
+                                format!("file:///{}", file_path_str.replace('\\', "/"))
+                            } else if cfg!(windows) && file_path_str.starts_with('/') {
+                                // Unix-style path on Windows, convert to Windows style
+                                format!("file:///C:{}", file_path_str.replace('\\', "/"))
+                            } else {
+                                // Unix path or other platforms
+                                format!("file://{file_path_str}")
+                            };
+                            lsp_types::Uri::from_str(&uri_str).unwrap()
+                        },
                         diagnostics,
                         version: None,
                     })
@@ -278,7 +302,14 @@ pub mod text_document {
                 let text = if open_docs.get(url).is_some() {
                     open_docs.get(url).unwrap().text().to_string()
                 } else {
-                    std::fs::read_to_string(url).expect("")
+                    match std::fs::read_to_string(url) {
+                        Ok(content) => content,
+                        Err(_) => {
+                            // If file read fails, return empty results
+                            debug!("Failed to read file: {:?}", url);
+                            return vec![];
+                        }
+                    }
                 };
                 let source = text.as_bytes();
                 {
@@ -300,8 +331,24 @@ pub mod text_document {
             .map(|(url, node): (PathBuf, tree_sitter::Node)| {
                 let range = node.range();
                 Location::new(
-                    lsp_types::Uri::from_str(format!("file://{}", url.to_str().unwrap()).as_str())
-                        .unwrap(),
+                    {
+                        // Handle cross-platform file URI creation
+                        let file_path_str = url.to_str().unwrap();
+                        let uri_str = if cfg!(windows)
+                            && file_path_str.len() > 1
+                            && file_path_str.chars().nth(1) == Some(':')
+                        {
+                            // Windows absolute path like "C:\path"
+                            format!("file:///{}", file_path_str.replace('\\', "/"))
+                        } else if cfg!(windows) && file_path_str.starts_with('/') {
+                            // Unix-style path on Windows, convert to Windows style
+                            format!("file:///C:{}", file_path_str.replace('\\', "/"))
+                        } else {
+                            // Unix path or other platforms
+                            format!("file://{file_path_str}")
+                        };
+                        lsp_types::Uri::from_str(&uri_str).unwrap()
+                    },
                     lsp_types::Range {
                         start: lsp_types::Position {
                             line: range.start_point.row as u32,
