@@ -1149,26 +1149,18 @@ mod tests {
         // Test date completion - this doesn't depend on data
         let date_items = complete_date().unwrap().unwrap();
         assert_eq!(date_items.len(), 4);
-        assert!(
-            date_items
-                .iter()
-                .any(|item| item.detail == Some("today".to_string()))
-        );
-        assert!(
-            date_items
-                .iter()
-                .any(|item| item.detail == Some("this month".to_string()))
-        );
-        assert!(
-            date_items
-                .iter()
-                .any(|item| item.detail == Some("prev month".to_string()))
-        );
-        assert!(
-            date_items
-                .iter()
-                .any(|item| item.detail == Some("next month".to_string()))
-        );
+        assert!(date_items
+            .iter()
+            .any(|item| item.detail == Some("today".to_string())));
+        assert!(date_items
+            .iter()
+            .any(|item| item.detail == Some("this month".to_string())));
+        assert!(date_items
+            .iter()
+            .any(|item| item.detail == Some("prev month".to_string())));
+        assert!(date_items
+            .iter()
+            .any(|item| item.detail == Some("next month".to_string())));
     }
 
     #[test]
