@@ -1,161 +1,401 @@
-# ![nixos](https://socialify.git.ci/polarmutex/beancount-language-server/image?description=1&font=Source%20Code%20Pro&owner=1&pattern=Circuit%20Board&stargazers=1&theme=Dark)
+# Beancount Language Server
 
-Thank you to the [Twemoji project](https://github.com/twitter/twemoji) for the usage of their emoji for the icon.
+![License](https://img.shields.io/github/license/polarmutex/beancount-language-server)
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/polarmutex/beancount-language-server)
+![Crates.io](https://img.shields.io/crates/v/beancount-language-server)
 
-## Installation
+A [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) (LSP) implementation for [Beancount](https://beancount.github.io/), the double-entry bookkeeping language. This provides rich editing features like completions, diagnostics, formatting, and more for Beancount files in your favorite editor.
 
-The server can be installed via `cargo` (or from source).
+![nixos](https://socialify.git.ci/polarmutex/beancount-language-server/image?description=1&font=Source%20Code%20Pro&owner=1&pattern=Circuit%20Board&stargazers=1&theme=Dark)
 
-```sh
+## ✨ Features
+
+### 🚀 Currently Implemented
+
+| LSP Feature | Description | Status |
+|-------------|-------------|---------|
+| **Completions** | Smart autocompletion for accounts, payees, dates, narration, tags, links, and transaction types | ✅ |
+| **Diagnostics** | Real-time error checking and validation via beancount Python integration | ✅ |
+| **Formatting** | Document formatting similar to `bean-format` | ✅ |
+| **Rename** | Rename symbols across files | ✅ |
+| **References** | Find all references to accounts, payees, etc. | ✅ |
+
+### 📋 Completion Types
+
+- **Accounts**: Autocomplete account names with hierarchy support (`Assets:Checking`)
+- **Payees**: Previously used payee names
+- **Dates**: Smart date completion (today, this month, previous month, next month)
+- **Narration**: Previously used transaction descriptions
+- **Tags**: Complete hashtags (`#vacation`)
+- **Links**: Complete links (`^receipt-123`)
+- **Transaction Types**: `txn`, `balance`, `open`, `close`, etc.
+
+### 🔮 Planned Features
+
+| LSP Feature | Description | Priority |
+|-------------|-------------|----------|
+| **Hover** | Show account balances, transaction details, account metadata | High |
+| **Go to Definition** | Jump to account/payee/commodity definitions | High |
+| **Document Symbols** | Outline view showing accounts, transactions, and structure | High |
+| **Folding Ranges** | Fold transactions, account hierarchies, and multi-line entries | Medium |
+| **Semantic Highlighting** | Advanced syntax highlighting with semantic information | Medium |
+| **Code Actions** | Quick fixes, refactoring, auto-balance transactions | Medium |
+| **Inlay Hints** | Show computed balances, exchange rates, running totals | Low |
+| **Signature Help** | Help with transaction syntax and directive parameters | Low |
+| **Workspace Symbols** | Find accounts, payees, commodities across all files | Low |
+
+## 📦 Installation
+
+### Method 1: Cargo (Recommended)
+
+```bash
 cargo install beancount-language-server
 ```
 
-Alternatively, it can be installed via Homebrew.
+### Method 2: GitHub Releases (Pre-built Binaries)
 
-```sh
+Download the latest release for your platform from the [releases page](https://github.com/polarmutex/beancount-language-server/releases).
+
+**Supported Platforms:**
+- Linux (x86_64, aarch64, loongarch64)
+- macOS (x86_64, aarch64)  
+- Windows (x86_64)
+
+### Method 3: Homebrew (macOS/Linux)
+
+```bash
 brew install beancount-language-server
 ```
 
-Then, you should be able to run the language server with the following command:
+### Method 4: Nix
 
-```sh
-beancount-language-server
+```bash
+# Using nix-env
+nix-env -iA nixpkgs.beancount-language-server
+
+# Using nix shell
+nix shell nixpkgs#beancount-language-server
+
+# Development environment
+nix develop
 ```
 
-Follow the instructions below to integrate the language server into your editor.
+### Method 5: Build from Source
 
-### Alternative: Compile and install from source
-
-First, clone this repo and compile it.
-
-```sh
-git clone git@github.com/polarmutex/beancount-language-server.git
+```bash
+git clone https://github.com/polarmutex/beancount-language-server.git
 cd beancount-language-server
-cargo build
+cargo build --release
 ```
 
-## Requirements
+The binary will be available at `target/release/beancount-language-server`.
 
-You will need to install `beancount` to get all diagnostics.
+## 🔧 Requirements
 
-```sh
-pip install -g beancount
+### Required
+- **Beancount**: Install the Python beancount package for diagnostics
+  ```bash
+  pip install beancount
+  ```
+
+### Optional
+- **Bean-format**: For enhanced formatting capabilities
+  ```bash
+  pip install bean-format
+  ```
+
+## ⚙️ Configuration
+
+The language server accepts configuration via LSP initialization options:
+
+```json
+{
+  "journal_file": "/path/to/main.beancount"
+}
 ```
 
-## Configuration
+### Configuration Options
 
-TODO
+| Option | Type | Description | Default |
+|--------|------|-------------|---------|
+| `journal_file` | string | Path to the main beancount journal file | None |
 
-## Features
+## 🖥️ Editor Setup
 
-Supports Beancount v2
+### Visual Studio Code
 
-| Feature     | Description                                    |
-| ----------- | ---------------------------------------------- |
-| diagnostics | Provided via `beancount`                       |
-| formatting  | Should generate edits silimar to `bean-format` |
-| completions | Show completions for Payees, Accounts, Date    |
-| definitions | Planned for future release                     |
-| folding     | Planned for future release                     |
-| hover       | Planned for future release                     |
-| rename      | Planned for future release                     |
-
-### Future
-
-- updated vscode extension to use the rust version
-
-## Editor Support
+1. Install the [Beancount extension](https://marketplace.visualstudio.com/items?itemName=polarmutex.beancount-langserver) from the marketplace
+2. Configure in `settings.json`:
+   ```json
+   {
+     "beancount.journal_file": "/path/to/main.beancount"
+   }
+   ```
 
 ### Neovim
 
-The settings for the language server are in the lspconfig repo
+Using [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig):
 
-1. Install the beancount language server
+```lua
+local lspconfig = require('lspconfig')
 
-   ```sh
-   cargo install beancount-language-server
-   ```
-
-   However you install it, you need to remember how to access the binary
-
-2. Create a lua lspconfig for the beancount LSP [example in my dotfiles](https://github.com/polarmutex/dotfiles/blob/master/neovim/lua/polarmutex/lsp/beancount.lua)
-
-   - add the following code to your lspconfig
-
-   ```lua
-   local lspconfig = require 'lspconfig'
-   lspconfig.beancount.setup= {
-       init_options = {
-           journal_file = "<path to journal file>",
-       };
-   };
-   ```
-
-3. Open a beancount file and verify LSP connected with the LSPInfo command
-
-#### Troubleshooting
-
-#### beancount file type not detected
-
-If you notice beancount files not having the "beancount" type, you need a
-neovim v0.5 or master built after Feb 17, 2021
-
-If not the following in a file named `beancount.vim` in the `ftdetect` folder
-
-```vim
-function! s:setf(filetype) abort
-    if &filetype !=# a:filetype
-        let &filetype = a:filetype
-    endif
-endfunction
-
-au BufNewFile,BufRead *.bean,*.beancount call s:setf('beancount')
+lspconfig.beancount.setup({
+  init_options = {
+    journal_file = "/path/to/main.beancount",
+  },
+})
 ```
 
-### VS Code
-
-Plan to make a VS Code extesion in the future
-
-### Vim
-
-Tested and Developed on Neovim v0.5 (master branch)
-
-SETUP TODO
-
-### Emacs
-
-TODO
+**File type detection**: Ensure beancount files are detected. Add to your config:
+```lua
+vim.filetype.add({
+  extension = {
+    beancount = "beancount",
+    bean = "beancount",
+  },
+})
+```
 
 ### Helix
 
-1. Install beancount-language-server with `cargo install beancount-language-server`.
-2. Add the following snippet to your [`languages.toml` file](https://docs.helix-editor.com/languages.html#languagestoml-files):
-   ```toml
-   [language-server.beancount-language-server]
-   command = "beancount-language-server"
-   args = ["--stdio"]
-   config.journal_file = "<path to journal file>"
+Add to your `languages.toml`:
 
-   [[language]]
-   name = "beancount"
-   language-servers = [{ name = "beancount-language-server" }]
+```toml
+[language-server.beancount-language-server]
+command = "beancount-language-server"
+args = ["--stdio"]
+config.journal_file = "/path/to/main.beancount"
+
+[[language]]
+name = "beancount"
+language-servers = [{ name = "beancount-language-server" }]
+```
+
+### Emacs
+
+Using [lsp-mode](https://github.com/emacs-lsp/lsp-mode):
+
+```elisp
+(use-package lsp-mode
+  :hook (beancount-mode . lsp-deferred)
+  :config
+  (lsp-register-client
+   (make-lsp-client
+    :new-connection (lsp-stdio-connection "beancount-language-server")
+    :major-modes '(beancount-mode)
+    :server-id 'beancount-language-server
+    :initialization-options
+    (lambda () (list :journal_file "/path/to/main.beancount")))))
+```
+
+### Vim
+
+Using [vim-lsp](https://github.com/prabirshrestha/vim-lsp):
+
+```vim
+if executable('beancount-language-server')
+    au User lsp_setup call lsp#register_server({
+        \ 'name': 'beancount-language-server',
+        \ 'cmd': {server_info->['beancount-language-server']},
+        \ 'allowlist': ['beancount'],
+        \ 'initialization_options': {
+        \   'journal_file': '/path/to/main.beancount'
+        \ }
+    \ })
+endif
+```
+
+### Sublime Text
+
+Using [LSP](https://packagecontrol.io/packages/LSP):
+
+Add to LSP settings:
+```json
+{
+  "clients": {
+    "beancount-language-server": {
+      "enabled": true,
+      "command": ["beancount-language-server"],
+      "selector": "source.beancount",
+      "initializationOptions": {
+        "journal_file": "/path/to/main.beancount"
+      }
+    }
+  }
+}
+```
+
+## 🏗️ Architecture
+
+### High-Level Overview
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│     Editor      │◄──►│  LSP Server     │◄──►│   Beancount     │
+│                 │    │                 │    │   (Python)      │
+│ - VSCode        │    │ - Completion    │    │ - Validation    │
+│ - Neovim        │    │ - Formatting    │    │ - Parsing       │
+│ - Helix         │    │ - Diagnostics   │    │ - Bean-check    │
+│ - Emacs         │    │ - Tree-sitter   │    │                 │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+### Core Components
+
+- **LSP Server**: Main Rust application handling LSP protocol
+- **Tree-sitter Parser**: Fast, incremental parsing of Beancount syntax
+- **Completion Engine**: Smart autocompletion with context awareness
+- **Diagnostic Provider**: Integration with beancount Python for validation
+- **Formatter**: Code formatting compatible with bean-format
+
+### Project Structure
+
+```
+beancount-language-server/
+├── crates/lsp/           # Main LSP server implementation
+│   ├── src/
+│   │   ├── handlers.rs   # LSP request/notification handlers
+│   │   ├── providers/    # Feature providers (completion, diagnostics, etc.)
+│   │   └── server.rs     # Core LSP server logic
+├── vscode/               # VS Code extension
+├── python/               # Python integration utilities
+└── flake.nix            # Nix development environment
+```
+
+## 🛠️ Development
+
+### Prerequisites
+
+- **Rust** (stable toolchain)
+- **Python** with beancount
+- **Node.js** (for VS Code extension)
+
+### Development Environment
+
+**Using Nix (Recommended):**
+```bash
+nix develop
+```
+
+**Manual Setup:**
+```bash
+# Install Rust dependencies
+cargo build
+
+# Install Node.js dependencies (for VS Code extension)
+cd vscode && npm install
+
+# Install development tools
+cargo install cargo-watch
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+cargo test
+
+# Run with coverage
+cargo llvm-cov --all-features --locked --workspace --lcov --output-path lcov.info
+
+# Run specific test
+cargo test test_completion
+```
+
+### Code Quality
+
+```bash
+# Format code
+cargo fmt
+
+# Lint code
+cargo clippy --all-targets --all-features
+
+# Check formatting
+cargo fmt -- --check
+```
+
+### Development Workflow
+
+1. **Make changes** to the Rust code
+2. **Test locally** with `cargo test`
+3. **Run LSP server** in development mode:
+   ```bash
+   cargo run --bin beancount-language-server
    ```
-3. Verify beancount-language-server shows as available in the output of `hx --health`.
+4. **Test with editor** by configuring it to use the local binary
 
-## Contributing
+### VS Code Extension Development
 
-Please do :)
+```bash
+cd vscode
+npm run build      # Build extension
+npm run watch      # Watch for changes
+npm run package    # Package extension
+```
 
-## Previous Versions
+### Release Process
 
-### Typescript
+The project uses [cargo-dist](https://opensource.axo.dev/cargo-dist/) for automated releases:
 
-not currently maintained, unless there is interest
+1. **Tag a release**: `git tag v1.0.0 && git push --tags`
+2. **GitHub Actions** automatically builds and publishes:
+   - Binaries for all supported platforms
+   - Crates.io release
+   - GitHub release with assets
 
-[branch](https://github.com/polarmutex/beancount-language-server/tree/typescript)
+## 🤝 Contributing
 
-### Python
+Contributions are welcome! Here are some ways to help:
 
-no longer maintained
+### 🐛 Bug Reports
+- Search existing issues first
+- Include beancount file examples that trigger the bug
+- Provide editor and OS information
 
-[branch](https://github.com/polarmutex/beancount-language-server/tree/python)
+### 💡 Feature Requests
+- Check the [planned features](#-planned-features) list
+- Describe the use case and expected behavior
+- Consider the LSP specification constraints
+
+### 🔧 Code Contributions
+
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
+3. **Make** your changes with tests
+4. **Ensure** code quality: `cargo fmt && cargo clippy && cargo test`
+5. **Commit** your changes (`git commit -m 'Add amazing feature'`)
+6. **Push** to the branch (`git push origin feature/amazing-feature`)
+7. **Open** a Pull Request
+
+### 🎯 Good First Issues
+
+Look for issues labeled `good-first-issue`:
+- Add new completion types
+- Improve error messages
+- Add editor configuration examples
+- Improve documentation
+
+## 📚 Resources
+
+- **[Beancount Documentation](https://beancount.github.io/)**
+- **[Language Server Protocol Specification](https://microsoft.github.io/language-server-protocol/)**
+- **[Tree-sitter Beancount Grammar](https://github.com/polarmutex/tree-sitter-beancount)**
+- **[VSCode Extension API](https://code.visualstudio.com/api)**
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- **[Beancount](https://github.com/beancount/beancount)** - The amazing double-entry bookkeeping language
+- **[Tree-sitter](https://tree-sitter.github.io/)** - Incremental parsing framework
+- **[LSP](https://microsoft.github.io/language-server-protocol/)** - Language Server Protocol specification
+- **[Twemoji](https://github.com/twitter/twemoji)** - Emoji graphics used in the icon
+
+---
+
+<p align="center">
+  <strong>Happy Beancounting! 📊✨</strong>
+</p>
