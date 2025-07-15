@@ -98,7 +98,7 @@ pub fn run_server() -> Result<()> {
                 Ok(()) => tracing::debug!("Configuration updated successfully"),
                 Err(e) => {
                     tracing::warn!("Failed to update configuration: {}", e);
-                    return Err(e.into());
+                    return Err(e);
                 }
             }
         } else {

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::LazyLock;
+use std::sync::{Arc, OnceLock};
 #[cfg(test)]
 use tempfile;
 use tracing::debug;
@@ -30,9 +30,13 @@ impl Default for DiagnosticData {
 /// Static regex for parsing bean-check error output.
 /// Pattern: "file:line: error_message"
 /// Compiled once at startup for optimal performance.
-static ERROR_LINE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r"^([^:]+):(\d+):\s*(.*)$").expect("Failed to compile error line regex")
-});
+static ERROR_LINE_REGEX: OnceLock<regex::Regex> = OnceLock::new();
+
+fn get_error_line_regex() -> &'static regex::Regex {
+    ERROR_LINE_REGEX.get_or_init(|| {
+        regex::Regex::new(r"^([^:]+):(\d+):\s*(.*)$").expect("Failed to compile error line regex")
+    })
+}
 
 /// Provider function for LSP `textDocument/publishDiagnostics`.
 ///
@@ -53,7 +57,7 @@ static ERROR_LINE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
 /// - Parses stderr output line by line for memory efficiency
 /// - Uses static regex compilation for optimal parsing performance
 pub fn diagnostics(
-    beancount_data: HashMap<PathBuf, BeancountData>,
+    beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
     bean_check_cmd: &Path,
     root_journal_file: &Path,
 ) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
@@ -131,7 +135,7 @@ pub fn diagnostics(
             debug!("Processing error line: {}", line);
 
             // Try to parse the line as a structured error message
-            if let Some(caps) = ERROR_LINE_REGEX.captures(line) {
+            if let Some(caps) = get_error_line_regex().captures(line) {
                 debug!(
                     "Parsed error: file={}, line={}, message={}",
                     &caps[1], &caps[2], &caps[3]
@@ -266,7 +270,7 @@ mod tests {
     fn create_mock_beancount_data_with_flags(
         file_path: &Path,
         content: &str,
-    ) -> HashMap<PathBuf, BeancountData> {
+    ) -> HashMap<PathBuf, Arc<BeancountData>> {
         let mut data = HashMap::new();
 
         // Create a real tree-sitter parse to generate BeancountData
@@ -277,7 +281,7 @@ mod tests {
         let tree = parser.parse(content, None).unwrap();
         let rope = ropey::Rope::from_str(content);
 
-        let beancount_data = BeancountData::new(&tree, &rope);
+        let beancount_data = Arc::new(BeancountData::new(&tree, &rope));
         data.insert(file_path.to_path_buf(), beancount_data);
         data
     }
@@ -489,7 +493,7 @@ mod tests {
     #[test]
     fn test_error_line_regex() {
         // Test the static regex directly
-        let regex = &*ERROR_LINE_REGEX;
+        let regex = get_error_line_regex();
 
         // Valid error formats
         assert!(regex.is_match("/path/to/file.beancount:123: Error message"));
@@ -546,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_error_line_regex_with_line_zero() {
-        let regex = &*ERROR_LINE_REGEX;
+        let regex = get_error_line_regex();
 
         // Test line 0 format (file-level errors)
         assert!(regex.is_match("<check_commodity>:0: Missing Commodity directive for 'HFCGX'"));

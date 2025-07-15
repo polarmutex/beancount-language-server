@@ -56,7 +56,7 @@ fn setup_logging(file: bool) {
                 Some(f)
             }
             Err(e) => {
-                eprintln!("Failed to open log file: {}. Falling back to stderr.", e);
+                eprintln!("Failed to open log file: {e}. Falling back to stderr.");
                 None
             }
         }

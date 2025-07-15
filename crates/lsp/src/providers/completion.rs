@@ -10,6 +10,7 @@ use nucleo_matcher::{
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::debug;
 use tree_sitter_beancount::tree_sitter;
 
@@ -514,7 +515,7 @@ fn analyze_price_context(
 /// 3. Multiple expected types - provide all relevant options
 /// 4. Fallback based on structure type
 fn complete_based_on_context(
-    beancount_data: HashMap<PathBuf, BeancountData>,
+    beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
     context: CompletionContext,
     trigger_character: Option<char>,
     content: &ropey::Rope,
@@ -680,7 +681,7 @@ fn complete_flag() -> Result<Option<Vec<lsp_types::CompletionItem>>> {
 
 /// Complete payee names from previous transactions
 fn complete_payee(
-    beancount_data: HashMap<PathBuf, BeancountData>,
+    beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
     prefix: &str,
 ) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
     let mut payees = std::collections::HashSet::new();
@@ -804,7 +805,7 @@ pub fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
 }
 
 fn complete_narration_with_quotes(
-    data: HashMap<PathBuf, BeancountData>,
+    data: HashMap<PathBuf, Arc<BeancountData>>,
     line_text: &str,
     cursor_char: usize,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
@@ -841,7 +842,7 @@ fn complete_narration_with_quotes(
 }
 
 fn complete_account_with_prefix(
-    data: HashMap<PathBuf, BeancountData>,
+    data: HashMap<PathBuf, Arc<BeancountData>>,
     prefix: &str,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::account with prefix: '{}'", prefix);
@@ -995,7 +996,7 @@ pub(crate) fn extract_completion_prefix(line_text: &str, cursor_char: usize) -> 
 }
 
 pub(crate) fn complete_tag(
-    data: HashMap<PathBuf, BeancountData>,
+    data: HashMap<PathBuf, Arc<BeancountData>>,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::tag");
     let mut completions = Vec::new();
@@ -1013,7 +1014,7 @@ pub(crate) fn complete_tag(
 }
 
 pub(crate) fn complete_link(
-    data: HashMap<PathBuf, BeancountData>,
+    data: HashMap<PathBuf, Arc<BeancountData>>,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::tag");
     let mut completions = Vec::new();
@@ -1047,6 +1048,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::str::FromStr;
+    use std::sync::Arc;
     use test_log::test;
 
     #[derive(Debug)]
@@ -1185,7 +1187,7 @@ mod tests {
 
         pub fn new(fixture: &str) -> Result<Self> {
             let fixture = Fixture::parse(fixture);
-            let forest: HashMap<PathBuf, tree_sitter::Tree> = fixture
+            let forest: HashMap<PathBuf, Arc<tree_sitter::Tree>> = fixture
                 .documents
                 .iter()
                 .map(|document| {
@@ -1195,18 +1197,18 @@ mod tests {
                     parser
                         .set_language(&tree_sitter_beancount::language())
                         .unwrap();
-                    let v = parser.parse(document.text.clone(), None).unwrap();
+                    let v = Arc::new(parser.parse(document.text.clone(), None).unwrap());
                     Ok((k, v))
                 })
                 .collect::<Result<HashMap<_, _>>>()?;
-            let beancount_data: HashMap<PathBuf, BeancountData> = fixture
+            let beancount_data: HashMap<PathBuf, Arc<BeancountData>> = fixture
                 .documents
                 .iter()
                 .map(|document| {
                     let path = document.path.as_str();
                     let k = Self::path_from_fixture(path)?;
                     let content = ropey::Rope::from(document.text.clone());
-                    let v = BeancountData::new(forest.get(&k).unwrap(), &content);
+                    let v = Arc::new(BeancountData::new(forest.get(&k).unwrap(), &content));
                     Ok((k, v))
                 })
                 .collect::<Result<HashMap<_, _>>>()?;
@@ -1935,13 +1937,13 @@ include "accounts1.bean"
             .unwrap();
         let main_tree = parser.parse(main_content, None).unwrap();
         let main_rope = ropey::Rope::from_str(main_content);
-        let main_data = BeancountData::new(&main_tree, &main_rope);
+        let main_data = Arc::new(BeancountData::new(&main_tree, &main_rope));
         beancount_data.insert(PathBuf::from("/main.beancount"), main_data);
 
         // Parse the included file
         let included_tree = parser.parse(included_content, None).unwrap();
         let included_rope = ropey::Rope::from_str(included_content);
-        let included_data = BeancountData::new(&included_tree, &included_rope);
+        let included_data = Arc::new(BeancountData::new(&included_tree, &included_rope));
         beancount_data.insert(PathBuf::from("/accounts1.bean"), included_data);
 
         // Test completion with prefix "Expenses:"
