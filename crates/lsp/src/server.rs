@@ -118,6 +118,8 @@ impl LspServerState {
     }
 
     pub fn run(&mut self, receiver: Receiver<lsp_server::Message>) -> Result<()> {
+        tracing::info!("LSP server starting main event loop");
+
         // init forest
         if self.config.journal_root.is_some() {
             let file = self.config.journal_root.as_ref().unwrap();
@@ -130,25 +132,40 @@ impl LspServerState {
 
             // Check if exists
             if !journal_root.exists() {
-                return Err(anyhow::anyhow!("Journal root does not exist"));
+                tracing::error!("Journal root does not exist: {}", journal_root.display());
+                return Err(anyhow::anyhow!(
+                    "Journal root does not exist: {}",
+                    journal_root.display()
+                ));
             }
 
-            tracing::info!("initializing forest...");
+            tracing::info!(
+                "Initializing forest for journal root: {}",
+                journal_root.display()
+            );
             let snapshot = self.snapshot();
             let sender = self.task_sender.clone();
             self.thread_pool.execute(move || {
-                forest::parse_initial_forest(snapshot, journal_root, sender).unwrap();
+                match forest::parse_initial_forest(snapshot, journal_root, sender) {
+                    Ok(_) => tracing::info!("Forest initialization completed successfully"),
+                    Err(e) => tracing::error!("Forest initialization failed: {}", e),
+                }
             });
+        } else {
+            tracing::warn!("No journal_root configured, skipping forest initialization");
         }
 
+        tracing::debug!("Entering main event loop");
         while let Some(event) = self.next_event(&receiver) {
             if let Event::Lsp(lsp_server::Message::Notification(notification)) = &event {
                 if notification.method == lsp_types::notification::Exit::METHOD {
+                    tracing::info!("Received exit notification, shutting down");
                     return Ok(());
                 }
             }
             self.handle_event(event)?;
         }
+        tracing::info!("Main event loop completed");
         Ok(())
     }
 
@@ -162,17 +179,34 @@ impl LspServerState {
 
     // handles an event
     fn handle_event(&mut self, event: Event) -> Result<()> {
-        tracing::info!("handling event {:?}", event);
         let start_time = Instant::now();
 
         match event {
-            Event::Task(task) => self.handle_task(task)?,
+            Event::Task(task) => {
+                tracing::debug!("Handling task: {:?}", task);
+                self.handle_task(task)?;
+            }
             Event::Lsp(msg) => match msg {
-                lsp_server::Message::Request(req) => self.on_request(req, start_time)?,
-                lsp_server::Message::Response(resp) => self.complete_request(resp),
-                lsp_server::Message::Notification(notif) => self.on_notification(notif)?,
+                lsp_server::Message::Request(req) => {
+                    tracing::debug!("Handling LSP request: method={}, id={}", req.method, req.id);
+                    self.on_request(req, start_time)?;
+                }
+                lsp_server::Message::Response(resp) => {
+                    tracing::debug!("Handling LSP response: id={}", resp.id);
+                    self.complete_request(resp);
+                }
+                lsp_server::Message::Notification(notif) => {
+                    tracing::debug!("Handling LSP notification: method={}", notif.method);
+                    self.on_notification(notif)?;
+                }
             },
         };
+
+        let duration = start_time.elapsed();
+        if duration.as_millis() > 100 {
+            tracing::warn!("Event handling took longer than expected: {:?}", duration);
+        }
+
         Ok(())
     }
 
@@ -180,10 +214,17 @@ impl LspServerState {
     fn handle_task(&mut self, task: Task) -> anyhow::Result<()> {
         match task {
             Task::Notify(notification) => {
+                tracing::debug!("Sending notification: {}", notification.method);
                 self.send(notification.into());
             }
-            Task::Response(response) => self.respond(response),
-            Task::Progress(task) => self.handle_progress_task(task)?,
+            Task::Response(response) => {
+                tracing::debug!("Sending response for request: {}", response.id);
+                self.respond(response);
+            }
+            Task::Progress(progress_task) => {
+                tracing::debug!("Handling progress task: {:?}", progress_task);
+                self.handle_progress_task(progress_task)?;
+            }
         }
         Ok(())
     }
@@ -241,6 +282,7 @@ impl LspServerState {
     fn on_request(&mut self, req: lsp_server::Request, start_time: Instant) -> Result<()> {
         self.register_request(&req, start_time);
         if self.shutdown_requested {
+            tracing::warn!("Request {} received after shutdown was requested", req.id);
             self.respond(lsp_server::Response::new_err(
                 req.id,
                 lsp_server::ErrorCode::InvalidRequest as i32,
@@ -249,8 +291,11 @@ impl LspServerState {
             return Ok(());
         }
 
+        tracing::debug!("Processing request: method={}, id={}", req.method, req.id);
+
         RequestDispatcher::new(self, req)
             .on_sync::<lsp_types::request::Shutdown>(|state, _request| {
+                tracing::info!("Received shutdown request");
                 state.shutdown_requested = true;
                 Ok(())
             })?
@@ -289,18 +334,62 @@ impl LspServerState {
 
     // Sends a response to the client. This method logs the time it took us to reply to a request from the client.
     pub(crate) fn respond(&mut self, response: lsp_server::Response) {
-        if let Some((_method, start)) = self.req_queue.incoming.complete(&response.id) {
+        if let Some((method, start)) = self.req_queue.incoming.complete(&response.id) {
             let duration = start.elapsed();
-            tracing::info!("handled req#{} in {:?}", response.id, duration);
+            let is_error = response.error.is_some();
+
+            if is_error {
+                tracing::warn!(
+                    "Request {} ({}) completed with error in {:?}: {:?}",
+                    response.id,
+                    method,
+                    duration,
+                    response.error
+                );
+            } else {
+                tracing::info!(
+                    "Request {} ({}) completed successfully in {:?}",
+                    response.id,
+                    method,
+                    duration
+                );
+            }
+
+            if duration.as_millis() > 1000 {
+                tracing::warn!("Slow request detected: {} took {:?}", method, duration);
+            }
+
             self.send(response.into());
+        } else {
+            tracing::warn!("Received response for unknown request: {}", response.id);
         }
     }
 
     /// Sends a message to the client
     pub(crate) fn send(&mut self, message: lsp_server::Message) {
-        self.sender
-            .send(message)
-            .expect("error sending lsp message to the outgoing channel")
+        match &message {
+            lsp_server::Message::Request(req) => {
+                tracing::debug!(
+                    "Sending request to client: method={}, id={}",
+                    req.method,
+                    req.id
+                );
+            }
+            lsp_server::Message::Response(resp) => {
+                tracing::debug!(
+                    "Sending response to client: id={}, has_error={}",
+                    resp.id,
+                    resp.error.is_some()
+                );
+            }
+            lsp_server::Message::Notification(notif) => {
+                tracing::debug!("Sending notification to client: method={}", notif.method);
+            }
+        }
+
+        if let Err(e) = self.sender.send(message) {
+            tracing::error!("Failed to send LSP message to client: {}", e);
+        }
     }
 
     // Sends a request to the client and registers the request so that we can handle the response.

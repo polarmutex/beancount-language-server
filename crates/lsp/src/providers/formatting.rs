@@ -95,19 +95,42 @@ pub(crate) fn formatting(
     snapshot: LspServerStateSnapshot,
     params: lsp_types::DocumentFormattingParams,
 ) -> Result<Option<Vec<lsp_types::TextEdit>>> {
-    debug!("providers::formatting");
+    tracing::info!(
+        "Starting formatting for document: {}",
+        params.text_document.uri.as_str()
+    );
+    tracing::debug!(
+        "Formatting options: insert_spaces={}, tab_size={}",
+        params.options.insert_spaces,
+        params.options.tab_size
+    );
 
     // Get document and tree from the snapshot
     let (doc, tree) = match get_document_and_tree(&snapshot, &params.text_document.uri) {
-        Some((doc, tree)) => (doc, tree),
-        None => return Ok(None),
+        Some((doc, tree)) => {
+            tracing::debug!("Found document and parsed tree");
+            (doc, tree)
+        }
+        None => {
+            tracing::warn!("Could not find document or tree for formatting");
+            return Ok(None);
+        }
     };
 
     // Extract formateable lines using tree-sitter
-    let formateable_lines = extract_formateable_lines(doc, tree)?;
+    let formateable_lines = match extract_formateable_lines(doc, tree) {
+        Ok(lines) => {
+            tracing::debug!("Extracted {} formateable lines", lines.len());
+            lines
+        }
+        Err(e) => {
+            tracing::error!("Failed to extract formateable lines: {}", e);
+            return Err(e);
+        }
+    };
 
     if formateable_lines.is_empty() {
-        debug!("No formateable lines found");
+        tracing::debug!("No formateable lines found, returning empty edits");
         return Ok(Some(vec![]));
     }
 
