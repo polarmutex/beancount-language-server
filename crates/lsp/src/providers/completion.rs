@@ -1784,6 +1784,141 @@ mod tests {
     }
 
     #[test]
+    fn handle_account_completion_with_includes() {
+        // Test case reproducing GitHub issue #639
+        let fixture = r#"
+%! /file1.bean
+include "accounts1.bean"
+
+1900-01-01 open Assets:Checking
+1900-01-01 open Expenses:Food
+1900-01-01 open Expenses:Transport
+
+2023-01-01 * "Grocery shopping"
+  Assets:Checking  -50.00 USD
+  Expenses:Food     50.00 USD
+
+2023-01-02 * "Bus fare"
+  Assets:Checking  -2.50 USD
+  Expenses:Transport  2.50 USD
+
+2023-01-03 * "Coffee"
+  Assets:Checking  -4.00 USD
+  Expenses:
+          |
+          ^
+
+%! /accounts1.bean
+1900-01-01 open Expenses:Included1
+1900-01-01 open Expenses:Included2
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, Some(':'), cursor)
+            .unwrap()
+            .unwrap_or_default();
+
+        // Should include accounts from both files
+        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+
+        // Accounts from main file
+        assert!(
+            labels.contains(&&"Expenses:Food".to_string()),
+            "Should include Expenses:Food from main file"
+        );
+        assert!(
+            labels.contains(&&"Expenses:Transport".to_string()),
+            "Should include Expenses:Transport from main file"
+        );
+
+        // Accounts from included file - this is what was missing!
+        assert!(
+            labels.contains(&&"Expenses:Included1".to_string()),
+            "Should include Expenses:Included1 from included file"
+        );
+        assert!(
+            labels.contains(&&"Expenses:Included2".to_string()),
+            "Should include Expenses:Included2 from included file"
+        );
+
+        // Should have 4 Expenses accounts total
+        let expenses_count = labels
+            .iter()
+            .filter(|label| label.starts_with("Expenses:"))
+            .count();
+        assert_eq!(expenses_count, 4, "Should have 4 Expenses accounts total");
+    }
+
+    #[test]
+    fn test_include_processing_end_to_end() {
+        // Test that simulates the real issue more closely
+        // This test verifies that when we have multiple files in beancount_data,
+        // completion aggregates accounts from all of them
+        use crate::beancount_data::BeancountData;
+        use crate::providers::completion::complete_account_with_prefix;
+        use std::collections::HashMap;
+
+        // Create mock beancount data for multiple files using actual file content
+        let mut beancount_data = HashMap::new();
+
+        // Create mock trees and content for two files
+        let main_content = "1900-01-01 open Assets:Checking\n1900-01-01 open Expenses:Food\n1900-01-01 open Expenses:Transport";
+        let included_content =
+            "1900-01-01 open Expenses:Included1\n1900-01-01 open Expenses:Included2";
+
+        // Parse the main file
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let main_tree = parser.parse(main_content, None).unwrap();
+        let main_rope = ropey::Rope::from_str(main_content);
+        let main_data = BeancountData::new(&main_tree, &main_rope);
+        beancount_data.insert(PathBuf::from("/main.beancount"), main_data);
+
+        // Parse the included file
+        let included_tree = parser.parse(included_content, None).unwrap();
+        let included_rope = ropey::Rope::from_str(included_content);
+        let included_data = BeancountData::new(&included_tree, &included_rope);
+        beancount_data.insert(PathBuf::from("/accounts1.bean"), included_data);
+
+        // Test completion with prefix "Expenses:"
+        let items = complete_account_with_prefix(beancount_data, "Expenses:")
+            .unwrap()
+            .unwrap_or_default();
+
+        let labels: Vec<String> = items.iter().map(|item| item.label.clone()).collect();
+
+        // Should include accounts from both files
+        assert!(
+            labels.contains(&"Expenses:Food".to_string()),
+            "Should include Expenses:Food from main file"
+        );
+        assert!(
+            labels.contains(&"Expenses:Transport".to_string()),
+            "Should include Expenses:Transport from main file"
+        );
+        assert!(
+            labels.contains(&"Expenses:Included1".to_string()),
+            "Should include Expenses:Included1 from included file"
+        );
+        assert!(
+            labels.contains(&"Expenses:Included2".to_string()),
+            "Should include Expenses:Included2 from included file"
+        );
+
+        // Should have 4 Expenses accounts total
+        let expenses_count = labels
+            .iter()
+            .filter(|label| label.starts_with("Expenses:"))
+            .count();
+        assert_eq!(
+            expenses_count, 4,
+            "Should have 4 Expenses accounts total: {labels:?}"
+        );
+    }
+
+    #[test]
     fn test_nucleo_fuzzy_matching() {
         use crate::providers::completion::fuzzy_search_accounts;
 
