@@ -124,7 +124,9 @@ pub fn diagnostics(
                 );
 
                 // Parse line number (1-based) and convert to 0-based for LSP
+                // Special case: line 0 from bean-check indicates a file-level error
                 let line_number = match caps[2].parse::<u32>() {
+                    Ok(0) => 0,                         // Keep as 0 for file-level errors
                     Ok(line) => line.saturating_sub(1), // Convert to 0-based
                     Err(e) => {
                         debug!("Failed to parse line number '{}': {}", &caps[2], e);
@@ -139,12 +141,20 @@ pub fn diagnostics(
 
                 // Convert file path string to PathBuf
                 // Bean-check outputs paths in a consistent format that we can parse directly
+                // For line 0 errors (file-level), use the root journal file
                 let file_path_str = &caps[1];
-                let file_path = match PathBuf::from(file_path_str).canonicalize() {
-                    Ok(path) => path,
-                    Err(_) => {
-                        // Fallback to raw path if canonicalization fails
-                        PathBuf::from(file_path_str)
+                let parsed_line_number = caps[2].parse::<u32>().unwrap_or(1);
+                let file_path = if parsed_line_number == 0 {
+                    // File-level error: use root journal file
+                    root_journal_file.to_path_buf()
+                } else {
+                    // Line-specific error: use the file mentioned in the error
+                    match PathBuf::from(file_path_str).canonicalize() {
+                        Ok(path) => path,
+                        Err(_) => {
+                            // Fallback to raw path if canonicalization fails
+                            PathBuf::from(file_path_str)
+                        }
                     }
                 };
 
@@ -518,5 +528,23 @@ mod tests {
             result.is_empty() || !result.is_empty(),
             "Function should complete without panicking"
         );
+    }
+
+    #[test]
+    fn test_error_line_regex_with_line_zero() {
+        let regex = &*ERROR_LINE_REGEX;
+
+        // Test line 0 format (file-level errors)
+        assert!(regex.is_match("<check_commodity>:0: Missing Commodity directive for 'HFCGX'"));
+        assert!(regex.is_match("/path/to/file.beancount:0: File-level error"));
+
+        // Test capture groups for line 0
+        if let Some(caps) = regex.captures("<check_commodity>:0: Missing Commodity directive for 'HFCGX' in 'Assets:Investments:Retirement:HFCGX'") {
+            assert_eq!(&caps[1], "<check_commodity>");
+            assert_eq!(&caps[2], "0");
+            assert_eq!(&caps[3], "Missing Commodity directive for 'HFCGX' in 'Assets:Investments:Retirement:HFCGX'");
+        } else {
+            panic!("Regex should match line 0 error format");
+        }
     }
 }
