@@ -11,10 +11,12 @@ use crossbeam_channel::{Receiver, Sender};
 use lsp_types::notification::Notification;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 use tree_sitter_beancount::tree_sitter;
 
 pub(crate) type RequestHandler = fn(&mut LspServerState, lsp_server::Response);
+pub(crate) type ForestData = Box<Option<(PathBuf, Arc<tree_sitter::Tree>, Arc<BeancountData>)>>;
 
 #[derive(Debug)]
 pub(crate) enum ProgressMsg {
@@ -25,7 +27,7 @@ pub(crate) enum ProgressMsg {
     ForestInit {
         total: usize,
         done: usize,
-        data: Box<Option<(PathBuf, tree_sitter::Tree, BeancountData)>>,
+        data: ForestData,
     },
 }
 
@@ -50,12 +52,12 @@ struct LspServer {
 */
 
 pub(crate) struct LspServerState {
-    pub beancount_data: HashMap<PathBuf, BeancountData>,
+    pub beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
 
     // the lsp server config options
     pub config: Config,
 
-    pub forest: HashMap<PathBuf, tree_sitter::Tree>,
+    pub forest: HashMap<PathBuf, Arc<tree_sitter::Tree>>,
 
     // Documents that are currently kept in memory from the client
     pub open_docs: HashMap<PathBuf, Document>,
@@ -83,9 +85,9 @@ pub(crate) struct LspServerState {
 
 /// A snapshot of the state of the language server
 pub(crate) struct LspServerStateSnapshot {
-    pub beancount_data: HashMap<PathBuf, BeancountData>,
+    pub beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
     pub config: Config,
-    pub forest: HashMap<PathBuf, tree_sitter::Tree>,
+    pub forest: HashMap<PathBuf, Arc<tree_sitter::Tree>>,
     pub open_docs: HashMap<PathBuf, Document>,
 }
 

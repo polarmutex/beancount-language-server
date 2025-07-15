@@ -577,6 +577,7 @@ mod tests {
     use crate::server::LspServerStateSnapshot;
     use std::collections::HashMap;
     use std::str::FromStr;
+    use std::sync::Arc;
     use tree_sitter_beancount::tree_sitter;
 
     struct TestState {
@@ -596,7 +597,7 @@ mod tests {
 
             // Create the necessary data structures
             let mut forest = HashMap::new();
-            forest.insert(path.clone(), tree.clone());
+            forest.insert(path.clone(), Arc::new(tree.clone()));
 
             let mut open_docs = HashMap::new();
             open_docs.insert(
@@ -607,7 +608,10 @@ mod tests {
             );
 
             let mut beancount_data = HashMap::new();
-            beancount_data.insert(path.clone(), BeancountData::new(&tree, &rope_content));
+            beancount_data.insert(
+                path.clone(),
+                Arc::new(BeancountData::new(&tree, &rope_content)),
+            );
 
             let snapshot = LspServerStateSnapshot {
                 beancount_data,
@@ -634,7 +638,7 @@ mod tests {
 
             // Create the necessary data structures
             let mut forest = HashMap::new();
-            forest.insert(path.clone(), tree.clone());
+            forest.insert(path.clone(), Arc::new(tree.clone()));
 
             let mut open_docs = HashMap::new();
             open_docs.insert(
@@ -645,7 +649,10 @@ mod tests {
             );
 
             let mut beancount_data = HashMap::new();
-            beancount_data.insert(path.clone(), BeancountData::new(&tree, &rope_content));
+            beancount_data.insert(
+                path.clone(),
+                Arc::new(BeancountData::new(&tree, &rope_content)),
+            );
 
             let mut config = Config::new(std::env::current_dir()?);
             config.formatting = format_config;

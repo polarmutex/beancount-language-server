@@ -7,6 +7,7 @@ use lsp_types::Location;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 use tracing::debug;
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::tree_sitter;
@@ -122,7 +123,7 @@ pub(crate) fn rename(
 
 /// Find all references to a given text in the project using tree-sitter queries.
 fn find_references(
-    forest: &HashMap<PathBuf, tree_sitter::Tree>,
+    forest: &HashMap<PathBuf, Arc<tree_sitter::Tree>>,
     open_docs: &HashMap<PathBuf, Document>,
     node_text: String,
 ) -> Vec<lsp_types::Location> {

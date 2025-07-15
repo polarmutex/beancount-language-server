@@ -16,6 +16,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 use tracing::debug;
 use tree_sitter_beancount::tree_sitter;
 
@@ -100,8 +101,10 @@ fn process_includes(
                         let beancount_data = BeancountData::new(&tree, &content);
 
                         // Add to state
-                        state.forest.insert(path.clone(), tree);
-                        state.beancount_data.insert(path.clone(), beancount_data);
+                        state.forest.insert(path.clone(), Arc::new(tree));
+                        state
+                            .beancount_data
+                            .insert(path.clone(), Arc::new(beancount_data));
 
                         debug!("Processed included file: {:?}", path);
 
@@ -149,11 +152,14 @@ pub(crate) fn did_open(
     state
         .forest
         .entry(uri.clone())
-        .or_insert_with(|| parser.parse(&params.text_document.text, None).unwrap());
+        .or_insert_with(|| Arc::new(parser.parse(&params.text_document.text, None).unwrap()));
 
     state.beancount_data.entry(uri.clone()).or_insert_with(|| {
         let content = ropey::Rope::from_str(&params.text_document.text);
-        BeancountData::new(state.forest.get(&uri).unwrap(), &content)
+        Arc::new(BeancountData::new(
+            state.forest.get(&uri).unwrap(),
+            &content,
+        ))
     });
 
     // Process any included files from this document
@@ -249,19 +255,22 @@ pub(crate) fn did_change(
     debug!("text_document::did_change - apply edits - tree");
     let result = {
         let parser = state.parsers.get_mut(uri).unwrap();
-        let old_tree = state.forest.get_mut(uri).unwrap();
+        let old_tree_arc = state.forest.get(uri).unwrap();
+        let mut old_tree = (**old_tree_arc).clone();
 
         for edit in &edits {
             old_tree.edit(edit);
         }
 
-        parser.parse(doc.text().to_string(), Some(old_tree))
+        parser.parse(doc.text().to_string(), Some(&old_tree))
     };
 
     debug!("text_document::did_change - save tree");
     if let Some(tree) = result {
-        *state.forest.get_mut(uri).unwrap() = tree.clone();
-        *state.beancount_data.get_mut(uri).unwrap() = BeancountData::new(&tree, &doc.content);
+        let tree_arc = Arc::new(tree);
+        *state.forest.get_mut(uri).unwrap() = tree_arc.clone();
+        *state.beancount_data.get_mut(uri).unwrap() =
+            Arc::new(BeancountData::new(&tree_arc, &doc.content));
     }
 
     debug!("text_document::did_change - done");
