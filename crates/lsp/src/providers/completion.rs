@@ -152,24 +152,50 @@ pub(crate) fn completion(
     trigger_character: Option<char>,
     cursor: lsp_types::TextDocumentPositionParams,
 ) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
-    debug!("providers::completion");
+    tracing::debug!("Starting completion provider");
+    tracing::debug!("Trigger character: {:?}", trigger_character);
 
     // Extract file path from LSP URI
     let uri = match cursor.text_document.uri.to_file_path() {
-        Ok(path) => path,
+        Ok(path) => {
+            tracing::debug!("Processing completion for file: {}", path.display());
+            path
+        }
         Err(_) => {
-            debug!("URI conversion failed for: {:?}", cursor.text_document.uri);
+            tracing::error!(
+                "Failed to convert URI to file path: {}",
+                cursor.text_document.uri.as_str()
+            );
             return Ok(None);
         }
     };
 
     let line = &cursor.position.line;
     let char = &cursor.position.character;
-    debug!("providers::completion - line {} char {}", line, char);
+    tracing::debug!("Completion position: line={}, character={}", line, char);
 
     // Get parsed tree and document content from the language server state
-    let tree = snapshot.forest.get(&uri).unwrap();
-    let doc = snapshot.open_docs.get(&uri).unwrap();
+    let tree = match snapshot.forest.get(&uri) {
+        Some(t) => {
+            tracing::debug!("Found parsed tree for file");
+            t
+        }
+        None => {
+            tracing::warn!("No parsed tree found for file: {}", uri.display());
+            return Ok(None);
+        }
+    };
+
+    let doc = match snapshot.open_docs.get(&uri) {
+        Some(d) => {
+            tracing::debug!("Found open document");
+            d
+        }
+        None => {
+            tracing::warn!("Document not in open documents: {}", uri.display());
+            return Ok(None);
+        }
+    };
     let content = doc.clone().content;
 
     // Convert LSP position to tree-sitter Point for node queries
@@ -177,19 +203,37 @@ pub(crate) fn completion(
         row: *line as usize,
         column: *char as usize,
     };
+    tracing::debug!(
+        "Tree-sitter cursor point: row={}, column={}",
+        cursor_point.row,
+        cursor_point.column
+    );
 
     // Analyze the document structure to determine what completions are relevant
     let context = determine_completion_context(tree, &content, cursor_point);
-    debug!("Completion context: {:?}", context);
+    tracing::debug!("Determined completion context: {:?}", context);
 
     // Dispatch to the appropriate completion providers based on context
-    complete_based_on_context(
+    match complete_based_on_context(
         snapshot.beancount_data,
         context,
         trigger_character,
         &content,
         cursor_point,
-    )
+    ) {
+        Ok(items) => {
+            if let Some(ref completion_items) = items {
+                tracing::debug!("Generated {} completion items", completion_items.len());
+            } else {
+                tracing::debug!("No completion items generated");
+            }
+            Ok(items)
+        }
+        Err(e) => {
+            tracing::error!("Failed to generate completions: {}", e);
+            Err(e)
+        }
+    }
 }
 
 /// Intelligently determine what completion context we're in using tree-sitter

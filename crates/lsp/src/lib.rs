@@ -25,15 +25,27 @@ pub fn run_server() -> Result<()> {
     tracing::info!("beancount-language-server started");
 
     //Setup IO connections
+    tracing::debug!("Setting up stdio connections");
     let (connection, io_threads) = lsp_server::Connection::stdio();
 
     //wait for client to connection
+    tracing::debug!("Waiting for client initialization");
     let (request_id, initialize_params) = connection.initialize_start()?;
-    tracing::info!("initialize params: {}", initialize_params);
+    tracing::debug!("Received initialize request: id={}", request_id);
 
-    let initialize_params = serde_json::from_value::<InitializeParams>(initialize_params)?;
+    let initialize_params = match serde_json::from_value::<InitializeParams>(initialize_params) {
+        Ok(params) => {
+            tracing::debug!("Successfully parsed initialization parameters");
+            params
+        }
+        Err(e) => {
+            tracing::error!("Failed to parse initialization parameters: {}", e);
+            return Err(e.into());
+        }
+    };
 
     let server_capabilities = capabilities::server_capabilities();
+    tracing::debug!("Server capabilities configured");
 
     let initialize_result = lsp_types::InitializeResult {
         capabilities: server_capabilities,
@@ -46,41 +58,61 @@ pub fn run_server() -> Result<()> {
     let initialize_result = serde_json::to_value(initialize_result).unwrap();
 
     connection.initialize_finish(request_id, initialize_result)?;
+    tracing::info!("Initialization completed successfully");
 
     if let Some(client_info) = initialize_params.client_info {
         tracing::info!(
-            "client '{}' {}",
+            "Connected to client: '{}' version {}",
             client_info.name,
-            client_info.version.unwrap_or_default()
+            client_info.version.unwrap_or_else(|| "unknown".to_string())
         );
+    } else {
+        tracing::warn!("Client did not provide client info");
     }
 
     let config = {
         let root_file = if let Some(workspace_folders) = &initialize_params.workspace_folders {
-            workspace_folders
+            let root = workspace_folders
                 .first()
                 .and_then(|folder| folder.uri.to_file_path().ok())
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            tracing::info!("Using workspace folder as root: {}", root.display());
+            root
         } else {
             #[allow(deprecated)]
-            match initialize_params
+            let root = match initialize_params
                 .root_uri
                 .and_then(|it| it.to_file_path().ok())
             {
                 Some(it) => it,
                 None => std::env::current_dir()?,
-            }
+            };
+            tracing::info!("Using root URI as root: {}", root.display());
+            root
         };
+
         let mut config = Config::new(root_file);
         if let Some(json) = initialize_params.initialization_options {
-            config.update(json).unwrap();
+            tracing::debug!("Applying initialization options: {}", json);
+            match config.update(json) {
+                Ok(()) => tracing::debug!("Configuration updated successfully"),
+                Err(e) => {
+                    tracing::warn!("Failed to update configuration: {}", e);
+                    return Err(e.into());
+                }
+            }
+        } else {
+            tracing::debug!("No initialization options provided, using default config");
         }
         config
     };
 
+    tracing::debug!("Starting main loop");
     main_loop(connection, config)?;
 
+    tracing::debug!("Waiting for IO threads to complete");
     io_threads.join()?;
+    tracing::info!("Language server stopped");
 
     Ok(())
 }

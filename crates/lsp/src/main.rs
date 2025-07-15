@@ -20,20 +20,46 @@ fn main() {
         return;
     }
 
-    setup_logging(matches.get_flag("log"));
+    let log_to_file = matches.get_flag("log");
+    setup_logging(log_to_file);
 
-    beancount_language_server::run_server()
-        .map_err(|e| anyhow::anyhow!("{}", e))
-        .unwrap();
+    tracing::info!(
+        "Starting beancount-language-server v{}",
+        env!("CARGO_PKG_VERSION")
+    );
+    tracing::debug!(
+        "Command line args: stdio={}, log_to_file={}",
+        matches.get_flag("stdio"),
+        log_to_file
+    );
+
+    match beancount_language_server::run_server() {
+        Ok(()) => {
+            tracing::info!("Language server shutdown gracefully");
+        }
+        Err(e) => {
+            tracing::error!("Language server failed with error: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 fn setup_logging(file: bool) {
     let file = if file {
-        fs::OpenOptions::new()
+        match fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open("beancount-language-server.log")
-            .ok()
+        {
+            Ok(f) => {
+                eprintln!("Logging to file: beancount-language-server.log");
+                Some(f)
+            }
+            Err(e) => {
+                eprintln!("Failed to open log file: {}. Falling back to stderr.", e);
+                None
+            }
+        }
     } else {
         None
     };
@@ -47,5 +73,8 @@ fn setup_logging(file: bool) {
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(writer)
+        .with_target(false)
+        .with_thread_ids(true)
+        .with_level(true)
         .init();
 }

@@ -57,16 +57,30 @@ pub fn diagnostics(
     bean_check_cmd: &Path,
     root_journal_file: &Path,
 ) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
-    // Use the static regex for parsing bean-check error output
-
-    debug!("Running diagnostics for: {:?}", root_journal_file);
+    tracing::info!("Starting diagnostics for: {}", root_journal_file.display());
+    tracing::debug!("Using bean-check command: {}", bean_check_cmd.display());
+    tracing::debug!(
+        "Processing beancount data for {} files",
+        beancount_data.len()
+    );
 
     // Execute bean-check command and capture output
     // TODO: Consider adding timeout to prevent hanging on large files
     let output = match Command::new(bean_check_cmd).arg(root_journal_file).output() {
-        Ok(output) => output,
+        Ok(output) => {
+            tracing::debug!("bean-check command executed successfully");
+            tracing::debug!("bean-check exit status: {}", output.status);
+            if !output.stderr.is_empty() {
+                tracing::debug!(
+                    "bean-check stderr: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            output
+        }
         Err(e) => {
-            debug!("Failed to execute bean-check command: {}", e);
+            tracing::error!("Failed to execute bean-check command: {}", e);
+            tracing::warn!("Continuing with flagged entries only");
             // Continue processing in tests to allow testing of flagged entries
             // Don't return early in tests - continue to process flagged entries
             #[cfg(not(test))]
