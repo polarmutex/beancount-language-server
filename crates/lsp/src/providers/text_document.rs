@@ -10,11 +10,111 @@ use crate::treesitter_utils::lsp_textdocchange_to_ts_inputedit;
 use crate::utils::ToFilePath;
 use anyhow::Result;
 use crossbeam_channel::Sender;
+use glob::glob;
 use lsp_types::notification::Notification;
+use std::collections::HashSet;
+use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::debug;
 use tree_sitter_beancount::tree_sitter;
+
+/// Process included files recursively from a given beancount file
+fn process_includes(
+    state: &mut LspServerState,
+    file_path: &PathBuf,
+    processed: &mut HashSet<PathBuf>,
+) -> Result<()> {
+    // Avoid infinite loops in case of circular includes
+    if processed.contains(file_path) {
+        return Ok(());
+    }
+    processed.insert(file_path.clone());
+
+    // Get the tree for this file (should already be parsed)
+    let tree = match state.forest.get(file_path) {
+        Some(tree) => tree.clone(),
+        None => return Ok(()), // File not parsed yet, skip
+    };
+
+    // Find all include directives in this file
+    let text = fs::read_to_string(file_path)?;
+    let bytes = text.as_bytes();
+    let mut cursor = tree.root_node().walk();
+
+    let include_paths: Vec<PathBuf> = tree
+        .root_node()
+        .children(&mut cursor)
+        .filter(|c| c.kind() == "include")
+        .filter_map(|include_node| {
+            let mut node_cursor = include_node.walk();
+            let string_node = include_node
+                .children(&mut node_cursor)
+                .find(|c| c.kind() == "string")?;
+
+            let filename = string_node
+                .utf8_text(bytes)
+                .ok()?
+                .trim_start_matches('"')
+                .trim_end_matches('"');
+
+            let path = std::path::Path::new(filename);
+            let resolved_path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                file_path.parent()?.join(path)
+            };
+
+            Some(resolved_path)
+        })
+        .collect();
+
+    // Process each included file
+    for include_path in include_paths {
+        // Handle glob patterns
+        for path in glob(include_path.to_str().unwrap_or(""))
+            .unwrap_or_else(|_| {
+                // If glob fails, try the path as-is
+                glob::glob_with(
+                    &include_path.to_string_lossy(),
+                    glob::MatchOptions::default(),
+                )
+                .unwrap_or(glob("").unwrap())
+            })
+            .flatten()
+        {
+            // Skip if already processed
+            if state.forest.contains_key(&path) {
+                continue;
+            }
+
+            // Parse the included file
+            if let Ok(text) = fs::read_to_string(&path) {
+                let mut parser = tree_sitter::Parser::new();
+                if parser
+                    .set_language(&tree_sitter_beancount::language())
+                    .is_ok()
+                {
+                    if let Some(tree) = parser.parse(&text, None) {
+                        let content = ropey::Rope::from_str(&text);
+                        let beancount_data = BeancountData::new(&tree, &content);
+
+                        // Add to state
+                        state.forest.insert(path.clone(), tree);
+                        state.beancount_data.insert(path.clone(), beancount_data);
+
+                        debug!("Processed included file: {:?}", path);
+
+                        // Recursively process includes in this file
+                        process_includes(state, &path, processed)?;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
 
 /// Provider function for `textDocument/didOpen`.
 pub(crate) fn did_open(
@@ -55,6 +155,12 @@ pub(crate) fn did_open(
         let content = ropey::Rope::from_str(&params.text_document.text);
         BeancountData::new(state.forest.get(&uri).unwrap(), &content)
     });
+
+    // Process any included files from this document
+    let mut processed = HashSet::new();
+    if let Err(e) = process_includes(state, &uri, &mut processed) {
+        debug!("Error processing includes for {:?}: {}", uri, e);
+    }
 
     let snapshot = state.snapshot();
     let task_sender = state.task_sender.clone();
