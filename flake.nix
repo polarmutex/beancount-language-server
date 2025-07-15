@@ -6,7 +6,6 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     crane = {
       url = "github:ipetkov/crane";
-      inputs.nixpkgs.follows = "nixpkgs";
     };
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -135,6 +134,7 @@
           packages = with pkgs;
             [
               git-cliff
+              beancount
               (rust-bin.stable.latest.default.override {
                 extensions = [
                   "cargo"
