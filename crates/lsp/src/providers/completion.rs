@@ -183,7 +183,13 @@ pub(crate) fn completion(
     debug!("Completion context: {:?}", context);
 
     // Dispatch to the appropriate completion providers based on context
-    complete_based_on_context(snapshot.beancount_data, context, trigger_character)
+    complete_based_on_context(
+        snapshot.beancount_data,
+        context,
+        trigger_character,
+        &content,
+        cursor_point,
+    )
 }
 
 /// Intelligently determine what completion context we're in using tree-sitter
@@ -467,6 +473,8 @@ fn complete_based_on_context(
     beancount_data: HashMap<PathBuf, BeancountData>,
     context: CompletionContext,
     trigger_character: Option<char>,
+    content: &ropey::Rope,
+    cursor_point: tree_sitter::Point,
 ) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
     // Handle trigger characters that override context - these have highest priority
     if let Some(trigger) = trigger_character {
@@ -475,10 +483,11 @@ fn complete_based_on_context(
             '#' => return complete_tag(beancount_data),
             '^' => return complete_link(beancount_data),
             '"' => {
+                let line_text = content.line(cursor_point.row).to_string();
                 return complete_narration_with_quotes(
                     beancount_data,
-                    "", // TODO: Pass actual line text
-                    0,  // TODO: Pass actual cursor position
+                    &line_text,
+                    cursor_point.column,
                 );
             }
             _ => {} // Continue with context-based completion
@@ -494,7 +503,10 @@ fn complete_based_on_context(
             ExpectedType::Amount => complete_amount(&context),
             ExpectedType::Date => complete_date(),
             ExpectedType::Flag => complete_flag(),
-            ExpectedType::Narration => complete_narration_with_quotes(beancount_data, "", 0),
+            ExpectedType::Narration => {
+                let line_text = content.line(cursor_point.row).to_string();
+                complete_narration_with_quotes(beancount_data, &line_text, cursor_point.column)
+            }
             ExpectedType::Payee => complete_payee(beancount_data, &context.prefix),
             ExpectedType::Tag => complete_tag(beancount_data),
             ExpectedType::Link => complete_link(beancount_data),
@@ -517,7 +529,13 @@ fn complete_based_on_context(
             ExpectedType::Date => complete_date()?.unwrap_or_default(),
             ExpectedType::Flag => complete_flag()?.unwrap_or_default(),
             ExpectedType::Narration => {
-                complete_narration_with_quotes(beancount_data.clone(), "", 0)?.unwrap_or_default()
+                let line_text = content.line(cursor_point.row).to_string();
+                complete_narration_with_quotes(
+                    beancount_data.clone(),
+                    &line_text,
+                    cursor_point.column,
+                )?
+                .unwrap_or_default()
             }
             ExpectedType::Payee => {
                 complete_payee(beancount_data.clone(), &context.prefix)?.unwrap_or_default()
@@ -1376,7 +1394,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             test_co_completion.insert_text,
-            Some(String::from("\"Test Co\""))
+            Some(String::from("Test Co"))
         );
 
         let foo_bar_completion = items
@@ -1385,7 +1403,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             foo_bar_completion.insert_text,
-            Some(String::from("\"Foo Bar\""))
+            Some(String::from("Foo Bar"))
         );
     }
 
