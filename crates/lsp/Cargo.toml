@@ -28,9 +28,10 @@ threadpool = "1.8"
 
 # Text processing and parsing
 ropey.workspace = true
-tree-sitter-beancount = { git = "https://github.com/polarmutex/tree-sitter-beancount.git", branch = "devel" }
+tree-sitter-beancount = "2.4.1"
+# tree-sitter-beancount = { git = "https://github.com/polarmutex/tree-sitter-beancount.git", branch = "devel" }
 regex.workspace = true
-nucleo-matcher = "0.3.1"
+nucleo = "0.5"
 
 # Serialization and configuration
 serde.workspace = true
@@ -52,7 +53,7 @@ linked-list = "0.1"
 # Logging
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
-    "fmt", 
+    "fmt",
     "smallvec",
     "std",
     "tracing-log",

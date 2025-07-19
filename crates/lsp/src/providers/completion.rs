@@ -4,9 +4,9 @@ use crate::server::LspServerStateSnapshot;
 use crate::utils::ToFilePath;
 use anyhow::Result;
 use chrono::Datelike;
-use nucleo_matcher::{
+use nucleo::{
     pattern::{CaseMatching, Normalization, Pattern},
-    Config, Matcher,
+    Config, Matcher, Utf32Str,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -543,7 +543,9 @@ fn complete_based_on_context(
     if context.expected_next.len() == 1 {
         let expected = &context.expected_next[0];
         return match expected {
-            ExpectedType::Account => complete_account_with_prefix(beancount_data, &context.prefix),
+            ExpectedType::Account => {
+                complete_account_internal(beancount_data, &context.prefix, false)
+            }
             ExpectedType::Currency => complete_currency(&context.prefix),
             ExpectedType::Amount => complete_amount(&context),
             ExpectedType::Date => complete_date(),
@@ -566,7 +568,7 @@ fn complete_based_on_context(
     for expected in &context.expected_next {
         let completions = match expected {
             ExpectedType::Account => {
-                complete_account_with_prefix(beancount_data.clone(), &context.prefix)?
+                complete_account_internal(beancount_data.clone(), &context.prefix, false)?
                     .unwrap_or_default()
             }
             ExpectedType::Currency => complete_currency(&context.prefix)?.unwrap_or_default(),
@@ -601,7 +603,7 @@ fn complete_based_on_context(
     // Fallback based on structure type when context is unclear
     match context.structure_type {
         StructureType::Transaction | StructureType::Posting => {
-            complete_account_with_prefix(beancount_data, &context.prefix)
+            complete_account_internal(beancount_data, &context.prefix, false)
         }
         StructureType::DocumentRoot => {
             // At document root, provide both dates and transaction kinds
@@ -846,57 +848,80 @@ fn complete_account_with_prefix(
     prefix: &str,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::account with prefix: '{}'", prefix);
-    let mut completions = Vec::new();
+    complete_account_internal(data, prefix, true) // true = triggered by colon, use filtering
+}
 
-    // Determine search mode based on capitalization
-    let search_mode = determine_search_mode(prefix);
-    debug!("Search mode: {:?} for prefix: '{}'", search_mode, prefix);
+fn complete_account_internal(
+    data: HashMap<PathBuf, Arc<BeancountData>>,
+    prefix: &str,
+    filter_by_prefix: bool,
+) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
+    debug!(
+        "providers::completion::account internal - prefix: '{}', filter: {}",
+        prefix, filter_by_prefix
+    );
+    let mut completions = Vec::new();
 
     for data in data.values() {
         let accounts: Vec<String> = data.get_accounts().into_iter().collect();
 
-        match search_mode {
-            SearchMode::Prefix => {
-                // Capital letter typed - show all accounts that start with the prefix
-                for account in &accounts {
-                    if prefix.is_empty() || account.starts_with(prefix) {
-                        completions.push(create_completion_item(account.clone(), 1.0));
+        if filter_by_prefix {
+            // Colon-triggered completion: use traditional prefix filtering
+            let search_mode = determine_search_mode(prefix);
+            debug!("Search mode: {:?} for prefix: '{}'", search_mode, prefix);
+
+            match search_mode {
+                SearchMode::Prefix => {
+                    // Capital letter typed - show all accounts but prioritize those starting with prefix
+                    for account in &accounts {
+                        let score = if prefix.is_empty() || account.starts_with(prefix) {
+                            1000.0 // High score for exact prefix matches
+                        } else {
+                            1.0 // Low score for non-matching accounts (but still included)
+                        };
+                        completions.push(create_completion_item(account.clone(), score));
+                    }
+                }
+                SearchMode::Fuzzy => {
+                    // Lowercase letter typed - fuzzy search all accounts
+                    let fuzzy_matches = fuzzy_search_accounts(&accounts, prefix);
+                    for (account, score) in fuzzy_matches {
+                        completions.push(create_completion_item(account, score));
+                    }
+                }
+                SearchMode::Exact => {
+                    // No prefix or mixed case - use exact prefix matching with filtering
+                    let prefix_lower = prefix.to_lowercase();
+                    for account in accounts {
+                        if prefix.is_empty() || account.to_lowercase().starts_with(&prefix_lower) {
+                            completions.push(create_completion_item(account, 1.0));
+                        }
                     }
                 }
             }
-            SearchMode::Fuzzy => {
-                // Lowercase letter typed - fuzzy search all accounts
-                let fuzzy_matches = fuzzy_search_accounts(&accounts, prefix);
-                for (account, score) in fuzzy_matches {
-                    completions.push(create_completion_item(account, score));
-                }
-            }
-            SearchMode::Exact => {
-                // No prefix or mixed case - use exact prefix matching
-                let prefix_lower = prefix.to_lowercase();
-                for account in accounts {
-                    if prefix.is_empty() || account.to_lowercase().starts_with(&prefix_lower) {
-                        completions.push(create_completion_item(account, 1.0));
-                    }
-                }
+        } else {
+            // Normal completion: return ALL accounts, use fuzzy matching for ordering
+            let fuzzy_matches = fuzzy_search_accounts_with_limit(&accounts, prefix, None);
+            for (account, score) in fuzzy_matches {
+                completions.push(create_completion_item(account, score));
             }
         }
     }
 
-    // Sort by score (higher is better) and then alphabetically
+    // Sort by sort_text (lower values first, since sort_text is inverted from score)
     completions.sort_by(|a, b| {
-        let score_a = a
+        let sort_a = a
             .sort_text
             .as_ref()
             .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(0.0);
-        let score_b = b
+            .unwrap_or(99999.0);
+        let sort_b = b
             .sort_text
             .as_ref()
             .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(0.0);
-        score_b
-            .partial_cmp(&score_a)
+            .unwrap_or(99999.0);
+        sort_a
+            .partial_cmp(&sort_b)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.label.cmp(&b.label))
     });
@@ -906,56 +931,192 @@ fn complete_account_with_prefix(
 
 #[derive(Debug, PartialEq)]
 enum SearchMode {
-    Prefix, // Capital letter - show all accounts with exact prefix match
-    Fuzzy,  // Lowercase letter - fuzzy search all accounts
+    Prefix, // Single A/L/I/E or other capital letters - show accounts with exact prefix match
+    Fuzzy,  // Lowercase letters - fuzzy search all accounts
     Exact,  // Empty or mixed case - exact prefix matching
 }
 
 fn determine_search_mode(prefix: &str) -> SearchMode {
     if prefix.is_empty() {
         SearchMode::Exact
+    } else if prefix.len() == 1 && matches!(prefix.chars().next(), Some('A' | 'L' | 'I' | 'E')) {
+        // Single uppercase A, L, I, E - filter by account type
+        SearchMode::Prefix
     } else if prefix
         .chars()
         .all(|c| c.is_uppercase() || !c.is_alphabetic())
     {
+        // All uppercase letters - exact prefix matching
         SearchMode::Prefix
     } else if prefix
         .chars()
         .all(|c| c.is_lowercase() || !c.is_alphabetic())
     {
+        // All lowercase letters - fuzzy search across all accounts
         SearchMode::Fuzzy
     } else {
+        // Mixed case - exact prefix matching
         SearchMode::Exact
     }
 }
 
+/// Clear score tiers with significant gaps for predictable ranking
+#[derive(Debug, Clone, Copy)]
+#[repr(u32)]
+enum ScoreTier {
+    Exact = 10000,    // Exact matches (account == query)
+    Prefix = 7000,    // Prefix matches (account.starts_with(query))
+    IntraWord = 4000, // Matches within colon segments
+    Fuzzy = 1000,     // Cross-segment fuzzy matches
+    Fallback = 1,     // All other accounts (for "show all" behavior)
+}
+
+impl ScoreTier {
+    fn as_f32(self) -> f32 {
+        self as u32 as f32
+    }
+}
+
 fn fuzzy_search_accounts(accounts: &[String], query: &str) -> Vec<(String, f32)> {
+    fuzzy_search_accounts_with_limit(accounts, query, Some(20))
+}
+
+fn fuzzy_search_accounts_with_limit(
+    accounts: &[String],
+    query: &str,
+    limit: Option<usize>,
+) -> Vec<(String, f32)> {
     if query.is_empty() {
-        return accounts.iter().map(|acc| (acc.clone(), 1.0)).collect();
+        let mut all_accounts: Vec<(String, f32)> = accounts
+            .iter()
+            .map(|acc| (acc.clone(), ScoreTier::Fallback.as_f32()))
+            .collect();
+
+        // Sort alphabetically when no query
+        all_accounts.sort_by(|a, b| a.0.cmp(&b.0));
+
+        if let Some(limit_size) = limit {
+            all_accounts.truncate(limit_size);
+        }
+        return all_accounts;
     }
 
-    let mut matcher = Matcher::new(Config::DEFAULT);
-    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+    let mut scored_accounts: Vec<(String, f32)> = Vec::new();
 
-    // Use the high-level match_list API for better performance
-    let matches = pattern.match_list(accounts.iter().map(|s| s.as_str()), &mut matcher);
-
-    // Convert to the expected format with f32 scores
-    let mut result: Vec<(String, f32)> = matches
-        .into_iter()
-        .map(|(account, score)| (account.to_string(), score as f32))
-        .collect();
+    for account in accounts {
+        let score = score_account(account, query);
+        scored_accounts.push((account.clone(), score));
+    }
 
     // Sort by score descending, then alphabetically
-    result.sort_by(|a, b| {
+    scored_accounts.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.0.cmp(&b.0))
     });
 
-    // Return top 20 matches to avoid overwhelming the user
-    result.truncate(20);
-    result
+    // Apply limit if specified
+    if let Some(limit_size) = limit {
+        scored_accounts.truncate(limit_size);
+    }
+
+    scored_accounts
+}
+
+/// Score an account using clear tiers with early returns for simplicity
+fn score_account(account: &str, query: &str) -> f32 {
+    if query.is_empty() {
+        return ScoreTier::Fallback.as_f32();
+    }
+
+    let account_lower = account.to_lowercase();
+    let query_lower = query.to_lowercase();
+
+    // Tier 1: Exact matches (highest priority)
+    if account == query {
+        return ScoreTier::Exact.as_f32();
+    }
+    if account_lower == query_lower {
+        return ScoreTier::Exact.as_f32() - 100.0;
+    }
+
+    // Tier 2: Prefix matches (very high priority)
+    if account.starts_with(query) {
+        return ScoreTier::Prefix.as_f32();
+    }
+    if account_lower.starts_with(&query_lower) {
+        return ScoreTier::Prefix.as_f32() - 100.0;
+    }
+
+    // Tier 3: Intra-word matches (within colon segments)
+    if let Some(score) = score_intra_word_match(account, query) {
+        return ScoreTier::IntraWord.as_f32() + score;
+    }
+
+    // Tier 4: Fuzzy matches (nucleo only)
+    if let Some(score) = score_with_nucleo(account, query) {
+        return ScoreTier::Fuzzy.as_f32() + score;
+    }
+
+    // Tier 5: Fallback (ensures all accounts are included)
+    ScoreTier::Fallback.as_f32()
+}
+
+/// Check for matches within colon segments, returning best score if found
+/// E.g., "cash" in "Assets:Cash:Apple" matches entirely within the "Cash" segment
+fn score_intra_word_match(account: &str, query: &str) -> Option<f32> {
+    let query_lower = query.to_lowercase();
+    let segments: Vec<&str> = account.split(':').collect();
+
+    let mut best_score: f32 = 0.0;
+    let mut found_match = false;
+
+    for (segment_index, segment) in segments.iter().enumerate() {
+        let segment_lower = segment.to_lowercase();
+
+        // Exact segment match (highest within this tier)
+        if segment_lower == query_lower {
+            let score = 500.0 - (segment_index as f32 * 50.0);
+            best_score = best_score.max(score);
+            found_match = true;
+        }
+        // Segment prefix match
+        else if segment_lower.starts_with(&query_lower) {
+            let score = 300.0 - (segment_index as f32 * 30.0);
+            best_score = best_score.max(score);
+            found_match = true;
+        }
+        // Substring within segment
+        else if segment_lower.contains(&query_lower) {
+            let score = 100.0 - (segment_index as f32 * 10.0);
+            best_score = best_score.max(score);
+            found_match = true;
+        }
+    }
+
+    if found_match {
+        Some(best_score)
+    } else {
+        None
+    }
+}
+
+/// Use nucleo for fuzzy matching across segments
+fn score_with_nucleo(account: &str, query: &str) -> Option<f32> {
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+
+    // Convert string to Utf32Str as required by nucleo API
+    let mut char_buf = Vec::new();
+    let account_utf32 = Utf32Str::new(account, &mut char_buf);
+
+    if let Some(score) = pattern.score(account_utf32, &mut matcher) {
+        // Normalize nucleo score to our range (0-500)
+        let normalized_score = (score as f32 / 100.0).min(500.0);
+        Some(normalized_score)
+    } else {
+        None
+    }
 }
 
 fn create_completion_item(account: String, score: f32) -> lsp_types::CompletionItem {
@@ -1501,11 +1662,17 @@ mod tests {
         let items = completion(test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "Assets:Test");
-        assert_eq!(items[0].kind, Some(lsp_types::CompletionItemKind::ENUM));
-        assert_eq!(items[0].detail, Some("Beancount Account".to_string()));
-        assert_eq!(items[0].filter_text, Some("Assets:Test".to_string()));
+        // Should now show both accounts when typing lowercase 'a'
+        assert_eq!(items.len(), 2);
+        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+        assert!(labels.contains(&&"Assets:Test".to_string()));
+        assert!(labels.contains(&&"Expenses:Test".to_string()));
+
+        // Verify properties are correct
+        for item in &items {
+            assert_eq!(item.kind, Some(lsp_types::CompletionItemKind::ENUM));
+            assert_eq!(item.detail, Some("Beancount Account".to_string()));
+        }
     }
 
     #[test]
@@ -1558,11 +1725,15 @@ mod tests {
         let items = completion(test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "Assets:Test");
+        // Should return all accounts, with "Assets:Test" ranked highest due to prefix match
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].label, "Assets:Test"); // Highest ranked due to prefix match
         assert_eq!(items[0].kind, Some(lsp_types::CompletionItemKind::ENUM));
         assert_eq!(items[0].detail, Some("Beancount Account".to_string()));
         assert_eq!(items[0].filter_text, Some("Assets:Test".to_string()));
+
+        // Second account should also be present
+        assert_eq!(items[1].label, "Expenses:Test");
     }
 
     #[test]
@@ -1778,8 +1949,17 @@ mod tests {
     fn test_search_mode_determination() {
         use crate::providers::completion::{determine_search_mode, SearchMode};
 
-        // Capital letters should trigger prefix search
+        // Single A, L, I, E should trigger prefix search for account types
         assert_eq!(determine_search_mode("A"), SearchMode::Prefix);
+        assert_eq!(determine_search_mode("L"), SearchMode::Prefix);
+        assert_eq!(determine_search_mode("I"), SearchMode::Prefix);
+        assert_eq!(determine_search_mode("E"), SearchMode::Prefix);
+
+        // Other single capital letters should also trigger prefix search
+        assert_eq!(determine_search_mode("B"), SearchMode::Prefix);
+        assert_eq!(determine_search_mode("C"), SearchMode::Prefix);
+
+        // Multiple capital letters should trigger prefix search
         assert_eq!(determine_search_mode("AS"), SearchMode::Prefix);
         assert_eq!(determine_search_mode("ASSETS"), SearchMode::Prefix);
 
@@ -1842,9 +2022,17 @@ mod tests {
         let checking_match = matches.iter().find(|(acc, _)| acc.contains("Checking"));
         assert!(checking_match.is_some());
 
-        // Test no matches
+        // Test query with no matching characters - should still show all accounts but with low scores
         let matches = fuzzy_search_accounts(&accounts, "xyz");
-        assert!(matches.is_empty());
+        assert!(
+            !matches.is_empty(),
+            "Should show all accounts even with no character matches"
+        );
+        // All accounts should have at least minimum scores (1.0)
+        assert!(
+            matches.iter().all(|(_, score)| *score >= 1.0),
+            "All accounts should have at least minimum score"
+        );
     }
 
     #[test]
@@ -2025,9 +2213,16 @@ include "accounts1.bean"
         let fuzzy_matches = fuzzy_search_accounts(&accounts, "chk");
         assert!(!fuzzy_matches.is_empty());
 
-        // No match should return empty
+        // Query with no matching characters should still return all accounts with low scores
         let no_matches = fuzzy_search_accounts(&accounts, "xyz123");
-        assert!(no_matches.is_empty());
+        assert!(
+            !no_matches.is_empty(),
+            "Should return all accounts even with no character matches"
+        );
+        assert!(
+            no_matches.iter().all(|(_, score)| *score >= 1.0),
+            "All accounts should have at least minimum score"
+        );
     }
 
     #[test]
@@ -2163,11 +2358,127 @@ include "accounts1.bean"
             .unwrap()
             .unwrap_or_default();
 
-        // Should show all accounts starting with "A"
-        assert_eq!(items.len(), 2);
+        // Should show all accounts, with "A" accounts ranked highest
+        assert_eq!(items.len(), 5);
         let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+
+        // Assets accounts should be first (highest scores)
+        assert_eq!(items[0].label, "Assets:Cash:Checking");
+        assert_eq!(items[1].label, "Assets:Investments:Stocks");
+
+        // All accounts should be present
         assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
         assert!(labels.contains(&&"Assets:Investments:Stocks".to_string()));
+        assert!(labels.contains(&&"Liabilities:CreditCard:Visa".to_string()));
+        assert!(labels.contains(&&"Expenses:Food:Groceries".to_string()));
+        assert!(labels.contains(&&"Income:Salary".to_string()));
+    }
+
+    #[test]
+    fn test_account_type_filtering() {
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Assets:Cash:Checking USD
+2023-10-01 open Assets:Investments:Stocks USD
+2023-10-01 open Liabilities:CreditCard:Visa USD
+2023-10-01 open Expenses:Food:Groceries USD
+2023-10-01 open Income:Salary USD
+2023-10-01 txn "Test"
+    L
+     |
+     ^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, None, cursor)
+            .unwrap()
+            .unwrap_or_default();
+
+        // Should show all accounts, with "L" accounts ranked highest
+        assert_eq!(items.len(), 5);
+        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+
+        // Liabilities account should be first (highest score)
+        assert_eq!(items[0].label, "Liabilities:CreditCard:Visa");
+
+        // All accounts should be present
+        assert!(labels.contains(&&"Liabilities:CreditCard:Visa".to_string()));
+        assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
+        assert!(labels.contains(&&"Assets:Investments:Stocks".to_string()));
+        assert!(labels.contains(&&"Expenses:Food:Groceries".to_string()));
+        assert!(labels.contains(&&"Income:Salary".to_string()));
+    }
+
+    #[test]
+    fn test_income_and_expenses_filtering() {
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Assets:Cash:Checking USD
+2023-10-01 open Liabilities:CreditCard:Visa USD
+2023-10-01 open Expenses:Food:Groceries USD
+2023-10-01 open Expenses:Transportation:Gas USD
+2023-10-01 open Income:Salary USD
+2023-10-01 open Income:Freelance USD
+2023-10-01 txn "Test"
+    I
+     |
+     ^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, None, cursor)
+            .unwrap()
+            .unwrap_or_default();
+
+        // Should show all accounts, with Income accounts ranked highest
+        assert_eq!(items.len(), 6);
+        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+
+        // Income accounts should be first (highest scores)
+        assert!(items[0].label.starts_with("Income:"));
+        assert!(items[1].label.starts_with("Income:"));
+
+        // All accounts should be present
+        assert!(labels.contains(&&"Income:Salary".to_string()));
+        assert!(labels.contains(&&"Income:Freelance".to_string()));
+        assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
+        assert!(labels.contains(&&"Liabilities:CreditCard:Visa".to_string()));
+        assert!(labels.contains(&&"Expenses:Food:Groceries".to_string()));
+        assert!(labels.contains(&&"Expenses:Transportation:Gas".to_string()));
+
+        // Test E for Expenses
+        let fixture_e = r#"
+%! /main.beancount
+2023-10-01 open Assets:Cash:Checking USD
+2023-10-01 open Liabilities:CreditCard:Visa USD
+2023-10-01 open Expenses:Food:Groceries USD
+2023-10-01 open Expenses:Transportation:Gas USD
+2023-10-01 open Income:Salary USD
+2023-10-01 txn "Test"
+    E
+     |
+     ^
+"#;
+        let test_state_e = TestState::new(fixture_e).unwrap();
+        let cursor_e = test_state_e.cursor().unwrap();
+        let items_e = completion(test_state_e.snapshot, None, cursor_e)
+            .unwrap()
+            .unwrap_or_default();
+
+        // Should show all accounts, with Expenses accounts ranked highest
+        assert_eq!(items_e.len(), 5);
+        let labels_e: Vec<&String> = items_e.iter().map(|item| &item.label).collect();
+
+        // Expenses accounts should be first (highest scores)
+        assert!(items_e[0].label.starts_with("Expenses:"));
+        assert!(items_e[1].label.starts_with("Expenses:"));
+
+        // All accounts should be present
+        assert!(labels_e.contains(&&"Expenses:Food:Groceries".to_string()));
+        assert!(labels_e.contains(&&"Expenses:Transportation:Gas".to_string()));
+        assert!(labels_e.contains(&&"Assets:Cash:Checking".to_string()));
+        assert!(labels_e.contains(&&"Liabilities:CreditCard:Visa".to_string()));
+        assert!(labels_e.contains(&&"Income:Salary".to_string()));
     }
 
     #[test]
@@ -2178,18 +2489,118 @@ include "accounts1.bean"
         let accounts = vec![
             "Assets:Cash:Checking".to_string(),
             "Assets:Investments:Stocks".to_string(),
-            "Expenses:Petty:Cash".to_string(),
+            "Expenses:Food:Groceries".to_string(), // This doesn't contain 'a'
+            "Liabilities:CreditCard".to_string(),
+            "Income:Salary".to_string(),
         ];
 
-        let matches = fuzzy_search_accounts(&accounts, "cash");
-        assert!(!matches.is_empty());
+        // Test fuzzy search with "a" - should now show ALL accounts
+        let matches = fuzzy_search_accounts(&accounts, "a");
+        println!("Matches for 'a': {matches:?}");
 
-        // Should find both accounts containing "Cash"
-        let cash_accounts: Vec<&(String, f32)> = matches
+        // Should show all 5 accounts since lowercase should show all accounts with fuzzy ranking
+        assert_eq!(
+            matches.len(),
+            5,
+            "Should show all accounts when lowercase is typed"
+        );
+
+        // Check that accounts containing 'a' have higher scores than those that don't
+        let expenses_score = matches
             .iter()
-            .filter(|(acc, _)| acc.contains("Cash"))
-            .collect();
-        assert_eq!(cash_accounts.len(), 2);
+            .find(|(acc, _)| acc.starts_with("Expenses"))
+            .map(|(_, score)| *score);
+        let assets_score = matches
+            .iter()
+            .find(|(acc, _)| acc.starts_with("Assets"))
+            .map(|(_, score)| *score);
+
+        assert!(assets_score.is_some(), "Should include Assets account");
+        assert!(expenses_score.is_some(), "Should include Expenses account");
+
+        // Assets should have higher score than Expenses since it contains 'a'
+        assert!(
+            assets_score.unwrap() > expenses_score.unwrap(),
+            "Assets (contains 'a') should have higher score than Expenses (doesn't contain 'a')"
+        );
+    }
+
+    #[test]
+    fn test_return_all_accounts_unless_colon_triggered() {
+        // Test normal completion (not colon-triggered): should return ALL accounts
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Assets:Cash:Checking USD
+2023-10-01 open Assets:Investments:Stocks USD
+2023-10-01 open Liabilities:CreditCard:Visa USD
+2023-10-01 open Expenses:Food:Groceries USD
+2023-10-01 open Income:Salary USD
+2023-10-01 txn "Test"
+    A
+     |
+     ^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, None, cursor) // None = not colon-triggered
+            .unwrap()
+            .unwrap_or_default();
+
+        // Should return ALL 5 accounts, not filtered by prefix
+        assert_eq!(items.len(), 5);
+        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+
+        // All accounts should be present
+        assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
+        assert!(labels.contains(&&"Assets:Investments:Stocks".to_string()));
+        assert!(labels.contains(&&"Liabilities:CreditCard:Visa".to_string()));
+        assert!(labels.contains(&&"Expenses:Food:Groceries".to_string()));
+        assert!(labels.contains(&&"Income:Salary".to_string()));
+
+        // Assets accounts should be ranked highest due to prefix "A"
+        assert!(items[0].label.starts_with("Assets:"));
+        assert!(items[1].label.starts_with("Assets:"));
+    }
+
+    #[test]
+    fn test_lowercase_completion_integration() {
+        // Test the full completion flow with lowercase letters
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Assets:Cash:Checking USD
+2023-10-01 open Assets:Investments:Stocks USD
+2023-10-01 open Liabilities:CreditCard:Visa USD
+2023-10-01 open Expenses:Food:Groceries USD
+2023-10-01 open Income:Salary USD
+2023-10-01 txn "Test"
+    a
+     |
+     ^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, None, cursor)
+            .unwrap()
+            .unwrap_or_default();
+
+        println!(
+            "Completion items for 'a': {:?}",
+            items.iter().map(|i| &i.label).collect::<Vec<_>>()
+        );
+
+        // Should show ALL accounts when lowercase is typed, not just ones containing 'a'
+        assert_eq!(
+            items.len(),
+            5,
+            "Should show all 5 accounts when lowercase 'a' is typed"
+        );
+
+        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+        assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
+        assert!(labels.contains(&&"Assets:Investments:Stocks".to_string()));
+        assert!(labels.contains(&&"Liabilities:CreditCard:Visa".to_string()));
+        assert!(labels.contains(&&"Expenses:Food:Groceries".to_string()));
+        assert!(labels.contains(&&"Income:Salary".to_string()));
     }
 
     #[test]
@@ -2201,6 +2612,207 @@ include "accounts1.bean"
         assert_eq!(determine_search_mode("Assets"), SearchMode::Exact);
         assert_eq!(determine_search_mode("AssetS"), SearchMode::Exact);
         assert_eq!(determine_search_mode("As"), SearchMode::Exact);
+    }
+
+    #[test]
+    fn test_apple_account_issue() {
+        // Test the specific issue where Liabilities:CC:Apple doesn't show when typing 'a'
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Liabilities:CC:Apple USD
+2023-10-01 open Assets:Cash:Apple USD
+2023-10-01 txn "Test"
+    a
+     |
+     ^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, None, cursor)
+            .unwrap()
+            .unwrap_or_default();
+
+        println!(
+            "Apple test - Completion items for 'a': {:#?}",
+            items.iter().map(|i| &i.label).collect::<Vec<_>>()
+        );
+
+        // Should show BOTH accounts when typing lowercase 'a'
+        assert_eq!(
+            items.len(),
+            2,
+            "Should show both Apple accounts when typing 'a'"
+        );
+
+        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+        assert!(
+            labels.contains(&&"Assets:Cash:Apple".to_string()),
+            "Should include Assets:Cash:Apple"
+        );
+        assert!(
+            labels.contains(&&"Liabilities:CC:Apple".to_string()),
+            "Should include Liabilities:CC:Apple"
+        );
+    }
+
+    #[test]
+    fn test_apple_fuzzy_search_direct() {
+        // Test the fuzzy search function directly with Apple accounts
+        use crate::providers::completion::fuzzy_search_accounts;
+
+        let accounts = vec![
+            "Liabilities:CC:Apple".to_string(),
+            "Assets:Cash:Apple".to_string(),
+        ];
+
+        let matches = fuzzy_search_accounts(&accounts, "a");
+        println!("Apple fuzzy search for 'a': {matches:#?}");
+
+        // Should show both accounts
+        assert_eq!(matches.len(), 2, "Should show both Apple accounts");
+
+        let account_names: Vec<&String> = matches.iter().map(|(name, _)| name).collect();
+        assert!(account_names.contains(&&"Assets:Cash:Apple".to_string()));
+        assert!(account_names.contains(&&"Liabilities:CC:Apple".to_string()));
+    }
+
+    #[test]
+    fn test_uppercase_letter_filtering_issue() {
+        // Test that uppercase letters are filtering out accounts (current behavior)
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Assets:Cash:Checking USD
+2023-10-01 open Liabilities:CreditCard:Visa USD
+2023-10-01 open Expenses:Food:Groceries USD
+2023-10-01 open Income:Salary:Base USD
+2023-10-01 txn "Test"
+    A
+     |
+     ^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, None, cursor)
+            .unwrap()
+            .unwrap_or_default();
+
+        println!("Completion items for uppercase 'A': {items:#?}");
+
+        // Should now show all accounts, with Assets accounts first
+        assert_eq!(items.len(), 4, "Should show all accounts when typing 'A'");
+
+        // Assets account should be first (highest score)
+        assert_eq!(items[0].label, "Assets:Cash:Checking");
+
+        // All accounts should be present
+        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+        assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
+        assert!(labels.contains(&&"Liabilities:CreditCard:Visa".to_string()));
+        assert!(labels.contains(&&"Expenses:Food:Groceries".to_string()));
+        assert!(labels.contains(&&"Income:Salary:Base".to_string()));
+    }
+
+    #[test]
+    fn test_first_letter_shows_all_accounts() {
+        // Test that typing a single letter shows ALL accounts, not just matching ones
+        use crate::providers::completion::fuzzy_search_accounts;
+
+        let accounts = vec![
+            "Assets:Cash:Checking".to_string(),
+            "Liabilities:CreditCard:Visa".to_string(),
+            "Expenses:Food:Groceries".to_string(),
+            "Income:Salary:Base".to_string(),
+            "Equity:OpeningBalances".to_string(),
+        ];
+
+        // Test single letter "a" - should show ALL 5 accounts
+        let matches = fuzzy_search_accounts(&accounts, "a");
+        println!("Matches for single letter 'a': {matches:#?}");
+
+        assert_eq!(
+            matches.len(),
+            5,
+            "Should show all accounts when typing single letter 'a'"
+        );
+
+        // All accounts should be present
+        let account_names: Vec<&String> = matches.iter().map(|(name, _)| name).collect();
+        assert!(account_names.contains(&&"Assets:Cash:Checking".to_string()));
+        assert!(account_names.contains(&&"Liabilities:CreditCard:Visa".to_string()));
+        assert!(account_names.contains(&&"Expenses:Food:Groceries".to_string()));
+        assert!(account_names.contains(&&"Income:Salary:Base".to_string()));
+        assert!(account_names.contains(&&"Equity:OpeningBalances".to_string()));
+
+        // Test single letter "e" - should show ALL accounts
+        let e_matches = fuzzy_search_accounts(&accounts, "e");
+        println!("Matches for single letter 'e': {e_matches:#?}");
+
+        assert_eq!(
+            e_matches.len(),
+            5,
+            "Should show all accounts when typing single letter 'e'"
+        );
+
+        // Test single letter "z" - should show ALL accounts even with no matches
+        let z_matches = fuzzy_search_accounts(&accounts, "z");
+        println!("Matches for single letter 'z': {z_matches:#?}");
+
+        assert_eq!(
+            z_matches.len(),
+            5,
+            "Should show all accounts even when no letter matches"
+        );
+    }
+
+    #[test]
+    fn test_intra_word_vs_cross_colon_scoring() {
+        // Test that intra-word matches are prioritized over cross-colon matches
+        use crate::providers::completion::fuzzy_search_accounts;
+
+        let accounts = vec![
+            "Assets:Cash:Checking".to_string(), // "cash" matches within segment
+            "Assets:Catering:Supplies".to_string(), // "ca" matches start of segment
+            "Assets:Stocks:Company".to_string(), // "co" matches start of segment
+            "Expenses:Communications:Phone".to_string(), // "co" matches within segment
+            "Assets:Currency:Euro".to_string(), // "cu" matches start of segment
+        ];
+
+        // Test "cash" - should prioritize the exact intra-word match
+        let matches = fuzzy_search_accounts(&accounts, "cash");
+        println!("Matches for 'cash': {matches:#?}");
+
+        // Assets:Cash:Checking should be highest because "cash" matches exactly within "Cash" segment
+        assert_eq!(matches[0].0, "Assets:Cash:Checking");
+        assert!(
+            matches[0].1 > 4000.0,
+            "Intra-word exact match should have very high score"
+        );
+
+        // Test "ca" - should prioritize matches within segments
+        let ca_matches = fuzzy_search_accounts(&accounts, "ca");
+        println!("Matches for 'ca': {ca_matches:#?}");
+
+        // Should prioritize Assets:Cash:Checking and Assets:Catering:Supplies
+        let top_two: Vec<&String> = ca_matches.iter().take(2).map(|(name, _)| name).collect();
+        assert!(top_two.contains(&&"Assets:Cash:Checking".to_string()));
+        assert!(top_two.contains(&&"Assets:Catering:Supplies".to_string()));
+
+        // Test "co" - Communications should rank higher than cross-colon matches
+        let co_matches = fuzzy_search_accounts(&accounts, "co");
+        println!("Matches for 'co': {co_matches:#?}");
+
+        // Expenses:Communications:Phone should rank highly due to intra-word match
+        let communications_score = co_matches
+            .iter()
+            .find(|(name, _)| name == "Expenses:Communications:Phone")
+            .map(|(_, score)| *score)
+            .unwrap();
+
+        // Should have significant intra-word score
+        assert!(
+            communications_score > 3000.0,
+            "Intra-word match should have high score"
+        );
     }
 
     #[test]
