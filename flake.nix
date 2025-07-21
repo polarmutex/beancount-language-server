@@ -135,6 +135,7 @@
             [
               git-cliff
               beancount
+              cargo-dist
               (rust-bin.stable.latest.default.override {
                 extensions = [
                   "cargo"

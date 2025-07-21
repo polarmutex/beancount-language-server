@@ -66,5 +66,8 @@ insta.workspace = true
 test-log = { version = "0.2", features = ["trace"] }
 tempfile = "3.0"
 
+[package.metadata.dist]
+dist = true
+
 [package.metadata.release]
 tag = true
