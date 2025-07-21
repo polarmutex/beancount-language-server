@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2025-07-21
+
+### Bug Fixes
+
+- Do not insert ending quote if already present
+- Errors with file paths on windows
+- Switch default logging to info
+- Improve formatting logic and added tests
+- Refactor and improve to be closer to bean-format
+- Typing capital should show all under Assets, Liabl, etc
+- Handle bean-check global errors without line numbers
+- Fixes #639 handles include files with no journal root
+- Already present end quote on completions
+- Improve logging
+- Forest generator processing
+- Account completion oddness
+
+### Documentation
+
+- Add claude.md file
+- Update readme
+
+### Features
+
+- Impl rename and references
+- Add aarch64-darwin to flake
+- Support relative path in journal_root
+- Improved completions supporting colons and fixing upper case
+- Make formatting behave like bean-format
+- Add formatting option to control number currency spacing
+- Add formatting optional option to normalize indents
+- Switch to nucleo-matcher for fuzzy searching completions
+
+### Refactor
+
+- To put logic in the providers folder
+- Completion with some new completions added
+- Diagnostics
+
 ## [1.3.7] - 2025-01-26
 
 ### Bug Fixes
@@ -11,7 +50,6 @@ All notable changes to this project will be documented in this file.
 ### Features
 
 - Add version command to cli
-
 
 ## [1.3.6] - 2024-10-27
 
