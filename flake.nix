@@ -48,16 +48,7 @@
         };
         inherit (pkgs) lib;
 
-        craneLib = (crane.mkLib pkgs).overrideToolchain (pkgs.rust-bin.stable.latest.default.override {
-          extensions = [
-            "cargo"
-            "clippy"
-            "rust-src"
-            "rust-analyzer"
-            "rustc"
-            "rustfmt"
-          ];
-        });
+        craneLib = (crane.mkLib pkgs).overrideToolchain (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml);
 
         src = craneLib.cleanCargoSource ./.;
 
@@ -136,16 +127,7 @@
               git-cliff
               beancount
               cargo-dist
-              (rust-bin.stable.latest.default.override {
-                extensions = [
-                  "cargo"
-                  "clippy"
-                  "rust-src"
-                  "rust-analyzer"
-                  "rustc"
-                  "rustfmt"
-                ];
-              })
+              (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
             ]
             ++ lib.optionals stdenv.isLinux [systemd];
 
