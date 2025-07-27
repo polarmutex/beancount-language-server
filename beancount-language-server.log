@@ -1,2 +1,19 @@
 2025-07-27T17:47:09.835410Z  INFO ThreadId(01) Starting beancount-language-server v1.4.1
 2025-07-27T17:47:09.835450Z  INFO ThreadId(01) beancount-language-server started
+2025-07-27T19:17:36.369616Z  INFO ThreadId(01) Starting beancount-language-server v1.4.1
+2025-07-27T19:17:36.369687Z DEBUG ThreadId(01) Command line args: stdio=true, log_level=Some("debug")
+2025-07-27T19:17:36.369726Z  INFO ThreadId(01) beancount-language-server started
+2025-07-27T19:17:36.369746Z DEBUG ThreadId(01) Setting up stdio connections
+2025-07-27T19:17:36.369862Z DEBUG ThreadId(01) Waiting for client initialization
+2025-07-27T19:17:53.455800Z  INFO ThreadId(01) Starting beancount-language-server v1.4.1
+2025-07-27T19:17:53.455872Z  INFO ThreadId(01) beancount-language-server started
+2025-07-27T19:19:05.776081Z  INFO ThreadId(01) Starting beancount-language-server v1.4.1
+2025-07-27T19:19:05.776151Z DEBUG ThreadId(01) Command line args: stdio=true, log_to_file=true, log_level=None
+2025-07-27T19:19:05.776191Z  INFO ThreadId(01) beancount-language-server started
+2025-07-27T19:19:05.776205Z DEBUG ThreadId(01) Setting up stdio connections
+2025-07-27T19:19:05.776317Z DEBUG ThreadId(01) Waiting for client initialization
+2025-07-27T19:19:14.817888Z  INFO ThreadId(01) Starting beancount-language-server v1.4.1
+2025-07-27T19:19:14.817958Z DEBUG ThreadId(01) Command line args: stdio=true, log_to_file=true, log_level=Some("trace")
+2025-07-27T19:19:14.817998Z  INFO ThreadId(01) beancount-language-server started
+2025-07-27T19:19:14.818019Z DEBUG ThreadId(01) Setting up stdio connections
+2025-07-27T19:19:14.818161Z DEBUG ThreadId(01) Waiting for client initialization
