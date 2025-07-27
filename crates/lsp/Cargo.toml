@@ -52,6 +52,9 @@ dashmap = "6.1"
 bytes = "1.10"
 linked-list = "0.1"
 
+# Python integration (optional)
+pyo3 = { version = "0.23", features = ["auto-initialize"], optional = true }
+
 # Logging
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
@@ -73,3 +76,7 @@ dist = true
 
 [package.metadata.release]
 tag = true
+
+[features]
+default = []
+python-embedded = ["pyo3"]
