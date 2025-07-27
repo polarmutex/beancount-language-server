@@ -848,7 +848,61 @@ fn complete_account_with_prefix(
     prefix: &str,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::account with prefix: '{}'", prefix);
-    complete_account_internal(data, prefix, true) // true = triggered by colon, use filtering
+    complete_account_internal_colon_triggered(data, prefix)
+}
+
+fn complete_account_internal_colon_triggered(
+    data: HashMap<PathBuf, Arc<BeancountData>>,
+    prefix: &str,
+) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
+    debug!(
+        "providers::completion::account colon-triggered with prefix: '{}'",
+        prefix
+    );
+    let mut completions = Vec::new();
+
+    for data in data.values() {
+        let accounts: Vec<String> = data.get_accounts().into_iter().collect();
+
+        // Find accounts that start with the prefix
+        let matching_accounts: Vec<String> = accounts
+            .into_iter()
+            .filter(|account| account.starts_with(prefix))
+            .collect();
+
+        // Extract the parts after the prefix
+        for account in matching_accounts {
+            if let Some(suffix) = account.strip_prefix(prefix) {
+                // Remove leading colon if present
+                let suffix = suffix.strip_prefix(':').unwrap_or(suffix);
+
+                // Only show the next segment (up to the next colon, if any)
+                let next_segment = if let Some(colon_pos) = suffix.find(':') {
+                    &suffix[..colon_pos]
+                } else {
+                    suffix
+                };
+
+                // Skip empty segments and avoid duplicates
+                if !next_segment.is_empty() {
+                    let completion_text = next_segment.to_string();
+
+                    // Check if we already have this completion
+                    if !completions
+                        .iter()
+                        .any(|item: &lsp_types::CompletionItem| item.label == completion_text)
+                    {
+                        completions.push(create_completion_item(completion_text, 1.0));
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort completions alphabetically
+    completions.sort_by(|a, b| a.label.cmp(&b.label));
+
+    Ok(Some(completions))
 }
 
 fn complete_account_internal(
@@ -1701,16 +1755,16 @@ mod tests {
             .unwrap_or_default();
         assert_eq!(items.len(), 2);
 
-        // Should have both Assets accounts
+        // Should have both Assets accounts parts after the colon
         let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-        assert!(labels.contains(&&"Assets:Test".to_string()));
-        assert!(labels.contains(&&"Assets:Checking".to_string()));
+        assert!(labels.contains(&&"Test".to_string()));
+        assert!(labels.contains(&&"Checking".to_string()));
 
         // Check properties of all items
         for item in &items {
             assert_eq!(item.kind, Some(lsp_types::CompletionItemKind::ENUM));
             assert_eq!(item.detail, Some("Beancount Account".to_string()));
-            assert!(item.label.starts_with("Assets:"));
+            // Note: labels now contain only the part after the colon, not the full account name
         }
     }
 
@@ -2087,32 +2141,28 @@ include "accounts1.bean"
         // Should include accounts from both files
         let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
 
-        // Accounts from main file
+        // Account parts after "Expenses:" from main file
         assert!(
-            labels.contains(&&"Expenses:Food".to_string()),
-            "Should include Expenses:Food from main file"
+            labels.contains(&&"Food".to_string()),
+            "Should include Food from main file"
         );
         assert!(
-            labels.contains(&&"Expenses:Transport".to_string()),
-            "Should include Expenses:Transport from main file"
-        );
-
-        // Accounts from included file - this is what was missing!
-        assert!(
-            labels.contains(&&"Expenses:Included1".to_string()),
-            "Should include Expenses:Included1 from included file"
-        );
-        assert!(
-            labels.contains(&&"Expenses:Included2".to_string()),
-            "Should include Expenses:Included2 from included file"
+            labels.contains(&&"Transport".to_string()),
+            "Should include Transport from main file"
         );
 
-        // Should have 4 Expenses accounts total
-        let expenses_count = labels
-            .iter()
-            .filter(|label| label.starts_with("Expenses:"))
-            .count();
-        assert_eq!(expenses_count, 4, "Should have 4 Expenses accounts total");
+        // Account parts after "Expenses:" from included file - this is what was missing!
+        assert!(
+            labels.contains(&&"Included1".to_string()),
+            "Should include Included1 from included file"
+        );
+        assert!(
+            labels.contains(&&"Included2".to_string()),
+            "Should include Included2 from included file"
+        );
+
+        // Should have 4 account parts total (after "Expenses:")
+        assert_eq!(labels.len(), 4, "Should have 4 account parts total");
     }
 
     #[test]
@@ -2155,33 +2205,94 @@ include "accounts1.bean"
 
         let labels: Vec<String> = items.iter().map(|item| item.label.clone()).collect();
 
-        // Should include accounts from both files
+        // Should include account parts after "Expenses:" from both files
         assert!(
-            labels.contains(&"Expenses:Food".to_string()),
-            "Should include Expenses:Food from main file"
+            labels.contains(&"Food".to_string()),
+            "Should include Food from main file"
         );
         assert!(
-            labels.contains(&"Expenses:Transport".to_string()),
-            "Should include Expenses:Transport from main file"
+            labels.contains(&"Transport".to_string()),
+            "Should include Transport from main file"
         );
         assert!(
-            labels.contains(&"Expenses:Included1".to_string()),
-            "Should include Expenses:Included1 from included file"
+            labels.contains(&"Included1".to_string()),
+            "Should include Included1 from included file"
         );
         assert!(
-            labels.contains(&"Expenses:Included2".to_string()),
-            "Should include Expenses:Included2 from included file"
+            labels.contains(&"Included2".to_string()),
+            "Should include Included2 from included file"
         );
 
-        // Should have 4 Expenses accounts total
-        let expenses_count = labels
-            .iter()
-            .filter(|label| label.starts_with("Expenses:"))
-            .count();
+        // Should have 4 account parts total (after "Expenses:")
         assert_eq!(
-            expenses_count, 4,
-            "Should have 4 Expenses accounts total: {labels:?}"
+            labels.len(),
+            4,
+            "Should have 4 account parts total: {labels:?}"
         );
+    }
+
+    #[test]
+    fn test_colon_triggered_completion_behavior() {
+        // Test that colon-triggered completion returns only parts after the colon
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Assets:Checking:Personal USD
+2023-10-01 open Assets:Checking:Business USD
+2023-10-01 open Assets:Savings:Emergency USD
+2023-10-01 open Expenses:Food:Groceries USD
+2023-10-01 open Expenses:Food:Restaurants USD
+2023-10-01 txn "Test transaction"
+  Assets:Checking:
+                 |
+                 ^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, Some(':'), cursor)
+            .unwrap()
+            .unwrap_or_default();
+
+        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+        
+        // Should return only the parts after "Assets:Checking:"
+        assert_eq!(items.len(), 2);
+        assert!(labels.contains(&&"Personal".to_string()));
+        assert!(labels.contains(&&"Business".to_string()));
+        
+        // Should NOT contain full account paths
+        assert!(!labels.contains(&&"Assets:Checking:Personal".to_string()));
+        assert!(!labels.contains(&&"Assets:Checking:Business".to_string()));
+    }
+
+    #[test]
+    fn test_top_level_colon_completion() {
+        // Test completion at top level (e.g., typing "Assets:")
+        let fixture = r#"
+%! /main.beancount  
+2023-10-01 open Assets:Checking USD
+2023-10-01 open Assets:Savings USD
+2023-10-01 open Expenses:Food USD
+2023-10-01 txn "Test transaction"
+  Assets:
+        |
+        ^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, Some(':'), cursor)
+            .unwrap()
+            .unwrap_or_default();
+
+        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
+        
+        // Should return only the parts after "Assets:"
+        assert_eq!(items.len(), 2);
+        assert!(labels.contains(&&"Checking".to_string()));
+        assert!(labels.contains(&&"Savings".to_string()));
+        
+        // Should NOT contain full account paths or accounts from other hierarchies
+        assert!(!labels.contains(&&"Assets:Checking".to_string()));
+        assert!(!labels.contains(&&"Food".to_string()));
     }
 
     #[test]
