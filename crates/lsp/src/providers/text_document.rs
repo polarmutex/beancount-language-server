@@ -1,4 +1,5 @@
 use crate::beancount_data::BeancountData;
+use crate::checkers::create_checker;
 use crate::document::Document;
 use crate::providers::diagnostics;
 use crate::server::LspServerState;
@@ -283,7 +284,22 @@ fn handle_diagnostics(
     uri: lsp_types::Uri,
 ) -> Result<()> {
     tracing::debug!("text_document::handle_diagnostics");
-    let bean_check_cmd = &PathBuf::from("bean-check");
+
+    // Create the appropriate checker based on configuration
+    tracing::debug!(
+        "Bean check configuration: method={:?}, bean_check_cmd={}, python_cmd={}, python_script={}",
+        snapshot.config.bean_check.method,
+        snapshot.config.bean_check.bean_check_cmd.display(),
+        snapshot.config.bean_check.python_cmd.display(),
+        snapshot.config.bean_check.python_script_path.display()
+    );
+
+    let checker = create_checker(&snapshot.config.bean_check);
+    tracing::debug!(
+        "Using checker: {}, available: {}",
+        checker.name(),
+        checker.is_available()
+    );
 
     sender
         .send(Task::Progress(ProgressMsg::BeanCheck { done: 0, total: 1 }))
@@ -296,8 +312,11 @@ fn handle_diagnostics(
         uri.to_file_path().unwrap_or_default()
     };
 
-    let diags =
-        diagnostics::diagnostics(snapshot.beancount_data, bean_check_cmd, &root_journal_path);
+    let diags = diagnostics::diagnostics(
+        snapshot.beancount_data,
+        checker.as_ref(),
+        &root_journal_path,
+    );
 
     sender
         .send(Task::Progress(ProgressMsg::BeanCheck { done: 1, total: 1 }))
