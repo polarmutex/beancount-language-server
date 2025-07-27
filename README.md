@@ -57,8 +57,9 @@ cargo install beancount-language-server
 Download the latest release for your platform from the [releases page](https://github.com/polarmutex/beancount-language-server/releases).
 
 **Supported Platforms:**
+
 - Linux (x86_64, aarch64, loongarch64)
-- macOS (x86_64, aarch64)  
+- macOS (x86_64, aarch64)
 - Windows (x86_64)
 
 ### Method 3: Homebrew (macOS/Linux)
@@ -85,7 +86,12 @@ nix develop
 ```bash
 git clone https://github.com/polarmutex/beancount-language-server.git
 cd beancount-language-server
+
+# Standard build
 cargo build --release
+
+# Build with PyO3 embedded Python support (experimental)
+cargo build --release --features python-embedded
 ```
 
 The binary will be available at `target/release/beancount-language-server`.
@@ -93,16 +99,25 @@ The binary will be available at `target/release/beancount-language-server`.
 ## 🔧 Requirements
 
 ### Required
+
 - **Beancount**: Install the Python beancount package for diagnostics
-  ```bash
-  pip install beancount
-  ```
+    ```bash
+    pip install beancount
+    ```
 
 ### Optional
+
 - **Bean-format**: The language server includes built-in formatting that's fully compatible with bean-format. Installing bean-format is optional for comparison or standalone use
-  ```bash
-  pip install bean-format
-  ```
+    ```bash
+    pip install bean-format
+    ```
+
+### Experimental Features
+
+- **PyO3 Embedded Python**: For improved performance, build with embedded Python support
+    ```bash
+    cargo build --features python-embedded
+    ```
 
 ## ⚙️ Configuration
 
@@ -110,41 +125,117 @@ The language server accepts configuration via LSP initialization options:
 
 ```json
 {
-  "journal_file": "/path/to/main.beancount",
-  "formatting": {
-    "prefix_width": 30,
-    "num_width": 10,
-    "currency_column": 60,
-    "account_amount_spacing": 2,
-    "number_currency_spacing": 1
-  }
+    "journal_file": "/path/to/main.beancount",
+    "bean_check": {
+        "method": "system",
+        "bean_check_cmd": "bean-check"
+    },
+    "formatting": {
+        "prefix_width": 30,
+        "num_width": 10,
+        "currency_column": 60,
+        "account_amount_spacing": 2,
+        "number_currency_spacing": 1
+    }
 }
 ```
 
 ### Configuration Options
 
-| Option | Type | Description | Default |
-|--------|------|-------------|---------|
-| `journal_file` | string | Path to the main beancount journal file | None |
+| Option         | Type   | Description                             | Default |
+| -------------- | ------ | --------------------------------------- | ------- |
+| `journal_file` | string | Path to the main beancount journal file | None    |
+
+### Bean-check Configuration
+
+| Option                      | Type   | Description                                                        | Default                  |
+| --------------------------- | ------ | ------------------------------------------------------------------ | ------------------------ |
+| `bean_check.method`         | string | Validation method: "system", "python-script", or "python-embedded" | "system"                 |
+| `bean_check.bean_check_cmd` | string | Path to bean-check binary (for "system" method)                    | "bean-check"             |
+| `bean_check.python_cmd`     | string | Path to Python executable (for Python methods)                     | "python3"                |
+| `bean_check.python_script`  | string | Path to Python validation script (for "python-script" method)      | "./python/bean_check.py" |
+
+#### Bean-check Methods
+
+The language server supports three different methods for validating beancount files:
+
+**System Method** (default):
+
+- Uses the traditional `bean-check` binary via subprocess
+- Fastest startup time, lower memory usage
+- Requires `bean-check` binary to be installed and available in PATH
+- Compatible with all existing bean-check installations
+
+**Python Script Method** (experimental):
+
+- Executes a Python script that uses the beancount library directly
+- Provides structured JSON output for better error handling
+- Supports both validation errors and flagged entry detection
+- Requires Python with beancount library installed
+
+**Python Embedded Method** (experimental):
+
+- Uses PyO3 to embed Python directly in the Rust process
+- Highest performance with no subprocess overhead
+- Best error handling and flagged entry support
+- Requires compilation with `python-embedded` feature
+- Must have beancount library available to embedded Python
+
+#### Configuration Examples
+
+**Traditional system call approach:**
+
+```json
+{
+    "bean_check": {
+        "method": "system",
+        "bean_check_cmd": "/usr/local/bin/bean-check"
+    }
+}
+```
+
+**Python script with custom paths:**
+
+```json
+{
+    "bean_check": {
+        "method": "python-script",
+        "python_cmd": "/usr/bin/python3",
+        "python_script": "./python/bean_check.py"
+    }
+}
+```
+
+**Embedded Python (requires python-embedded feature):**
+
+```json
+{
+    "bean_check": {
+        "method": "python-embedded"
+    }
+}
+```
 
 ### Formatting Options
 
-| Option | Type | Description | Default | Bean-format Equivalent |
-|--------|------|-------------|---------|----------------------|
-| `prefix_width` | number | Fixed width for account names (overrides auto-detection) | Auto-calculated | `--prefix-width` (`-w`) |
-| `num_width` | number | Fixed width for number alignment (overrides auto-detection) | Auto-calculated | `--num-width` (`-W`) |
-| `currency_column` | number | Align currencies at this specific column | None (right-align) | `--currency-column` (`-c`) |
-| `account_amount_spacing` | number | Minimum spaces between account names and amounts | 2 | N/A |
-| `number_currency_spacing` | number | Number of spaces between number and currency | 1 | N/A |
+| Option                    | Type   | Description                                                 | Default            | Bean-format Equivalent     |
+| ------------------------- | ------ | ----------------------------------------------------------- | ------------------ | -------------------------- |
+| `prefix_width`            | number | Fixed width for account names (overrides auto-detection)    | Auto-calculated    | `--prefix-width` (`-w`)    |
+| `num_width`               | number | Fixed width for number alignment (overrides auto-detection) | Auto-calculated    | `--num-width` (`-W`)       |
+| `currency_column`         | number | Align currencies at this specific column                    | None (right-align) | `--currency-column` (`-c`) |
+| `account_amount_spacing`  | number | Minimum spaces between account names and amounts            | 2                  | N/A                        |
+| `number_currency_spacing` | number | Number of spaces between number and currency                | 1                  | N/A                        |
 
 #### Formatting Modes
 
 **Default Mode** (no `currency_column` specified):
+
 - Accounts are left-aligned
 - Numbers are right-aligned with consistent end positions
 - Behaves like `bean-format` with no special options
 
 **Currency Column Mode** (`currency_column` specified):
+
 - Currencies are aligned at the specified column
 - Numbers are positioned to place currencies at the target column
 - Equivalent to `bean-format --currency-column N`
@@ -152,53 +243,59 @@ The language server accepts configuration via LSP initialization options:
 #### Examples
 
 **Basic formatting with auto-detection:**
+
 ```json
 {
-  "formatting": {}
+    "formatting": {}
 }
 ```
 
 **Fixed prefix width (like `bean-format -w 25`):**
+
 ```json
 {
-  "formatting": {
-    "prefix_width": 25
-  }
+    "formatting": {
+        "prefix_width": 25
+    }
 }
 ```
 
 **Currency column alignment (like `bean-format -c 60`):**
+
 ```json
 {
-  "formatting": {
-    "currency_column": 60
-  }
+    "formatting": {
+        "currency_column": 60
+    }
 }
 ```
 
 **Number-currency spacing control:**
+
 ```json
 {
-  "formatting": {
-    "number_currency_spacing": 2
-  }
+    "formatting": {
+        "number_currency_spacing": 2
+    }
 }
 ```
 
 This controls the whitespace between numbers and currency codes:
+
 - `0`: No space (`100.00USD`)
 - `1`: Single space (`100.00 USD`) - default
 - `2`: Two spaces (`100.00  USD`)
 
 **Combined options:**
+
 ```json
 {
-  "formatting": {
-    "prefix_width": 30,
-    "currency_column": 65,
-    "account_amount_spacing": 3,
-    "number_currency_spacing": 1
-  }
+    "formatting": {
+        "prefix_width": 30,
+        "currency_column": 65,
+        "account_amount_spacing": 3,
+        "number_currency_spacing": 1
+    }
 }
 ```
 
@@ -229,6 +326,11 @@ local lspconfig = require('lspconfig')
 lspconfig.beancount.setup({
   init_options = {
     journal_file = "/path/to/main.beancount",
+    bean_check = {
+      method = "python-script",
+      python_cmd = "python3",
+      python_script = "./python/bean_check.py",
+    },
     formatting = {
       prefix_width = 30,
       currency_column = 60,
@@ -239,6 +341,7 @@ lspconfig.beancount.setup({
 ```
 
 **File type detection**: Ensure beancount files are detected. Add to your config:
+
 ```lua
 vim.filetype.add({
   extension = {
@@ -259,6 +362,10 @@ args = ["--stdio"]
 
 [language-server.beancount-language-server.config]
 journal_file = "/path/to/main.beancount"
+
+[language-server.beancount-language-server.config.bean_check]
+method = "system"
+bean_check_cmd = "bean-check"
 
 [language-server.beancount-language-server.config.formatting]
 prefix_width = 30
@@ -285,6 +392,7 @@ Using [lsp-mode](https://github.com/emacs-lsp/lsp-mode):
     :server-id 'beancount-language-server
     :initialization-options
     (lambda () (list :journal_file "/path/to/main.beancount"
+                     :bean_check '(:method "python-embedded")
                      :formatting '(:prefix_width 30 :currency_column 60 :number_currency_spacing 1))))))
 ```
 
@@ -300,6 +408,10 @@ if executable('beancount-language-server')
         \ 'allowlist': ['beancount'],
         \ 'initialization_options': {
         \   'journal_file': '/path/to/main.beancount',
+        \   'bean_check': {
+        \     'method': 'system',
+        \     'bean_check_cmd': 'bean-check'
+        \   },
         \   'formatting': {
         \     'prefix_width': 30,
         \     'currency_column': 60,
@@ -315,23 +427,24 @@ endif
 Using [LSP](https://packagecontrol.io/packages/LSP):
 
 Add to LSP settings:
+
 ```json
 {
-  "clients": {
-    "beancount-language-server": {
-      "enabled": true,
-      "command": ["beancount-language-server"],
-      "selector": "source.beancount",
-      "initializationOptions": {
-        "journal_file": "/path/to/main.beancount",
-        "formatting": {
-          "prefix_width": 30,
-          "currency_column": 60,
-          "number_currency_spacing": 1
+    "clients": {
+        "beancount-language-server": {
+            "enabled": true,
+            "command": ["beancount-language-server"],
+            "selector": "source.beancount",
+            "initializationOptions": {
+                "journal_file": "/path/to/main.beancount",
+                "formatting": {
+                    "prefix_width": 30,
+                    "currency_column": 60,
+                    "number_currency_spacing": 1
+                }
+            }
         }
-      }
     }
-  }
 }
 ```
 
@@ -355,7 +468,8 @@ Add to LSP settings:
 - **LSP Server**: Main Rust application handling LSP protocol
 - **Tree-sitter Parser**: Fast, incremental parsing of Beancount syntax
 - **Completion Engine**: Smart autocompletion with context awareness
-- **Diagnostic Provider**: Integration with beancount Python for validation
+- **Diagnostic Provider**: Multi-method validation system with pluggable checkers
+- **Bean-check Integration**: Three validation methods (system, python-embedded)
 - **Formatter**: Code formatting fully compatible with bean-format, supporting prefix-width, num-width, and currency-column options
 
 ### Project Structure
@@ -366,9 +480,13 @@ beancount-language-server/
 │   ├── src/
 │   │   ├── handlers.rs   # LSP request/notification handlers
 │   │   ├── providers/    # Feature providers (completion, diagnostics, etc.)
+│   │   ├── checkers/     # Bean-check validation implementations
+│   │   │   ├── mod.rs    # Strategy trait and factory pattern
+│   │   │   ├── system_call.rs     # Traditional bean-check binary
+│   │   │   ├── pyo3_embedded.rs   # PyO3 embedded Python
+│   │   │   └── types.rs           # Shared data structures
 │   │   └── server.rs     # Core LSP server logic
 ├── vscode/               # VS Code extension
-├── python/               # Python integration utilities
 └── flake.nix            # Nix development environment
 ```
 
@@ -383,11 +501,13 @@ beancount-language-server/
 ### Development Environment
 
 **Using Nix (Recommended):**
+
 ```bash
 nix develop
 ```
 
 **Manual Setup:**
+
 ```bash
 # Install Rust dependencies
 cargo build
@@ -407,6 +527,9 @@ cargo test
 
 # Run with coverage
 cargo llvm-cov --all-features --locked --workspace --lcov --output-path lcov.info
+
+# Run tests with PyO3 feature
+cargo test --features python-embedded
 
 # Run specific test
 cargo test test_completion
@@ -430,9 +553,9 @@ cargo fmt -- --check
 1. **Make changes** to the Rust code
 2. **Test locally** with `cargo test`
 3. **Run LSP server** in development mode:
-   ```bash
-   cargo run --bin beancount-language-server
-   ```
+    ```bash
+    cargo run --bin beancount-language-server
+    ```
 4. **Test with editor** by configuring it to use the local binary
 
 ### VS Code Extension Development
@@ -450,20 +573,22 @@ The project uses [cargo-dist](https://opensource.axo.dev/cargo-dist/) for automa
 
 1. **Tag a release**: `git tag v1.0.0 && git push --tags`
 2. **GitHub Actions** automatically builds and publishes:
-   - Binaries for all supported platforms
-   - Crates.io release
-   - GitHub release with assets
+    - Binaries for all supported platforms
+    - Crates.io release
+    - GitHub release with assets
 
 ## 🤝 Contributing
 
 Contributions are welcome! Here are some ways to help:
 
 ### 🐛 Bug Reports
+
 - Search existing issues first
 - Include beancount file examples that trigger the bug
 - Provide editor and OS information
 
 ### 💡 Feature Requests
+
 - Check the [planned features](#-planned-features) list
 - Describe the use case and expected behavior
 - Consider the LSP specification constraints
@@ -481,6 +606,7 @@ Contributions are welcome! Here are some ways to help:
 ### 🎯 Good First Issues
 
 Look for issues labeled `good-first-issue`:
+
 - Add new completion types
 - Improve error messages
 - Add editor configuration examples
