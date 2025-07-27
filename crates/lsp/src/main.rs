@@ -10,7 +10,7 @@ fn main() {
     let matches = Command::new("beancount-language-server")
         .args(&[
             arg!(--stdio "specifies to use stdio to communicate with lsp"),
-            arg!(--log "write log to file"),
+            arg!(--log [LOG_LEVEL] "write log to file with optional level (trace, debug, info, warn, error)"),
             arg!(version: -v --version),
         ])
         .get_matches();
@@ -20,17 +20,19 @@ fn main() {
         return;
     }
 
-    let log_to_file = matches.get_flag("log");
-    setup_logging(log_to_file);
+    let log_to_file = matches.contains_id("log");
+    let log_level = matches.get_one::<String>("log");
+    setup_logging(log_to_file, log_level);
 
     tracing::info!(
         "Starting beancount-language-server v{}",
         env!("CARGO_PKG_VERSION")
     );
     tracing::debug!(
-        "Command line args: stdio={}, log_to_file={}",
+        "Command line args: stdio={}, log_to_file={}, log_level={:?}",
         matches.get_flag("stdio"),
-        log_to_file
+        log_to_file,
+        log_level
     );
 
     match beancount_language_server::run_server() {
@@ -44,8 +46,19 @@ fn main() {
     }
 }
 
-fn setup_logging(file: bool) {
-    let file = if file {
+fn setup_logging(log_to_file: bool, log_level_arg: Option<&String>) {
+    let level = match log_level_arg {
+        Some(level_str) => parse_log_level(level_str),
+        None => {
+            if log_to_file {
+                LevelFilter::DEBUG  // Default level when logging to file
+            } else {
+                LevelFilter::INFO   // Default level when logging to stderr
+            }
+        }
+    };
+
+    let file = if log_to_file {
         match fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -69,7 +82,7 @@ fn setup_logging(file: bool) {
         None => BoxMakeWriter::new(io::stderr),
     };
 
-    let filter = EnvFilter::default().add_directive(Directive::from(LevelFilter::DEBUG));
+    let filter = EnvFilter::default().add_directive(Directive::from(level));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(writer)
@@ -77,4 +90,19 @@ fn setup_logging(file: bool) {
         .with_thread_ids(true)
         .with_level(true)
         .init();
+}
+
+fn parse_log_level(level_str: &str) -> LevelFilter {
+    match level_str.to_lowercase().as_str() {
+        "trace" => LevelFilter::TRACE,
+        "debug" => LevelFilter::DEBUG,
+        "info" => LevelFilter::INFO,
+        "warn" => LevelFilter::WARN,
+        "error" => LevelFilter::ERROR,
+        "off" => LevelFilter::OFF,
+        _ => {
+            eprintln!("Invalid log level '{}'. Using 'info' as default. Valid levels: trace, debug, info, warn, error, off", level_str);
+            LevelFilter::INFO
+        }
+    }
 }
