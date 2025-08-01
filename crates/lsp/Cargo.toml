@@ -51,7 +51,7 @@ bytes = "1.10"
 linked-list = "0.1"
 
 # Python integration (optional)
-pyo3 = { version = "0.23", features = ["auto-initialize"], optional = true }
+pyo3 = { version = "0.25", features = ["auto-initialize"], optional = true }
 
 # Logging
 tracing-subscriber = { version = "0.3", default-features = false, features = [
