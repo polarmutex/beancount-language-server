@@ -2239,12 +2239,12 @@ include "accounts1.bean"
             .unwrap_or_default();
 
         let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-        
+
         // Should return only the parts after "Assets:Checking:"
         assert_eq!(items.len(), 2);
         assert!(labels.contains(&&"Personal".to_string()));
         assert!(labels.contains(&&"Business".to_string()));
-        
+
         // Should NOT contain full account paths
         assert!(!labels.contains(&&"Assets:Checking:Personal".to_string()));
         assert!(!labels.contains(&&"Assets:Checking:Business".to_string()));
@@ -2254,7 +2254,7 @@ include "accounts1.bean"
     fn test_top_level_colon_completion() {
         // Test completion at top level (e.g., typing "Assets:")
         let fixture = r#"
-%! /main.beancount  
+%! /main.beancount
 2023-10-01 open Assets:Checking USD
 2023-10-01 open Assets:Savings USD
 2023-10-01 open Expenses:Food USD
@@ -2270,12 +2270,12 @@ include "accounts1.bean"
             .unwrap_or_default();
 
         let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-        
+
         // Should return only the parts after "Assets:"
         assert_eq!(items.len(), 2);
         assert!(labels.contains(&&"Checking".to_string()));
         assert!(labels.contains(&&"Savings".to_string()));
-        
+
         // Should NOT contain full account paths or accounts from other hierarchies
         assert!(!labels.contains(&&"Assets:Checking".to_string()));
         assert!(!labels.contains(&&"Food".to_string()));
