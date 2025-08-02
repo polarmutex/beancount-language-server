@@ -51,9 +51,9 @@ fn setup_logging(log_to_file: bool, log_level_arg: Option<&String>) {
         Some(level_str) => parse_log_level(level_str),
         None => {
             if log_to_file {
-                LevelFilter::DEBUG  // Default level when logging to file
+                LevelFilter::DEBUG // Default level when logging to file
             } else {
-                LevelFilter::INFO   // Default level when logging to stderr
+                LevelFilter::INFO // Default level when logging to stderr
             }
         }
     };
@@ -101,7 +101,7 @@ fn parse_log_level(level_str: &str) -> LevelFilter {
         "error" => LevelFilter::ERROR,
         "off" => LevelFilter::OFF,
         _ => {
-            eprintln!("Invalid log level '{}'. Using 'info' as default. Valid levels: trace, debug, info, warn, error, off", level_str);
+            eprintln!("Invalid log level '{level_str}'. Using 'info' as default. Valid levels: trace, debug, info, warn, error, off");
             LevelFilter::INFO
         }
     }

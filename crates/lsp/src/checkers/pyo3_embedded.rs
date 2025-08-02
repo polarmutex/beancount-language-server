@@ -136,7 +136,7 @@ impl PyO3EmbeddedChecker {
                         beancount_errors.push(BeancountError::new(
                             journal_file.to_path_buf(),
                             0,
-                            format!("Failed to process beancount error: {}", e),
+                            format!("Failed to process beancount error: {e}"),
                         ));
                     }
                 }
@@ -460,8 +460,7 @@ mod tests {
             Err(e) => {
                 // If beancount is not properly configured, that's OK for this test
                 eprintln!(
-                    "Beancount check failed (possibly due to environment): {}",
-                    e
+                    "Beancount check failed (possibly due to environment): {e}"
                 );
             }
         }
@@ -501,8 +500,7 @@ mod tests {
             Err(e) => {
                 // If beancount is not properly configured, that's OK for this test
                 eprintln!(
-                    "Beancount check failed (possibly due to environment): {}",
-                    e
+                    "Beancount check failed (possibly due to environment): {e}"
                 );
             }
         }
@@ -544,8 +542,7 @@ mod tests {
             Err(e) => {
                 // If beancount is not properly configured, that's OK for this test
                 eprintln!(
-                    "Beancount check failed (possibly due to environment): {}",
-                    e
+                    "Beancount check failed (possibly due to environment): {e}"
                 );
             }
         }
@@ -600,7 +597,7 @@ another error on line 9
 
                 // Check if we have proper line numbers (not all 0 or 1)
                 let has_proper_line_numbers = check_result.errors.iter().any(|e| e.line > 1);
-                println!("Has proper line numbers: {}", has_proper_line_numbers);
+                println!("Has proper line numbers: {has_proper_line_numbers}");
 
                 if !has_proper_line_numbers {
                     eprintln!("WARNING: Line number fix may not be working - all errors showing line 0 or 1");
@@ -610,8 +607,7 @@ another error on line 9
             }
             Err(e) => {
                 eprintln!(
-                    "Beancount check failed (possibly due to environment): {}",
-                    e
+                    "Beancount check failed (possibly due to environment): {e}"
                 );
             }
         }
