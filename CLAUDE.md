@@ -7,8 +7,15 @@ This is a **beancount language server** implementation written in Rust that prov
 This is a Rust workspace with the following structure:
 
 - **`crates/lsp/`** - Main Rust language server implementation
+  - **`src/checkers/`** - Bean-check validation implementations (Strategy pattern)
+    - **`mod.rs`** - Strategy trait and factory pattern
+    - **`system_call.rs`** - Traditional bean-check binary execution
+    - **`python.rs`** - Python script integration via subprocess
+    - **`pyo3_embedded.rs`** - PyO3 embedded Python integration
+    - **`types.rs`** - Shared data structures
 - **`vscode/`** - VSCode extension (TypeScript)
 - **`python/`** - Python utilities for beancount integration
+  - **`bean_check.py`** - Enhanced Python validation script with JSON output
 - **Root workspace** - Cargo workspace configuration
 
 ## Key Files
@@ -27,8 +34,14 @@ This is a Rust workspace with the following structure:
 # Build the language server
 cargo build
 
+# Build with PyO3 embedded Python support (experimental)
+cargo build --features python-embedded
+
 # Run tests with coverage
 cargo llvm-cov --all-features --locked --workspace --lcov --output-path lcov.info -- --include-ignored
+
+# Run tests with PyO3 feature
+cargo test --features python-embedded
 
 # Format code
 cargo fmt
@@ -83,10 +96,23 @@ nix flake check
 
 ### Language Server Features
 
-- **Diagnostics** - Provided via beancount Python integration
+- **Diagnostics** - Multi-method validation system with pluggable checkers
+  - **System Call** - Traditional bean-check binary execution (default)
+  - **Python Script** - Enhanced Python script with JSON output (experimental)
+  - **PyO3 Embedded** - Direct Python library integration (experimental)
 - **Formatting** - Generates edits similar to bean-format
 - **Completions** - Shows completions for Payees, Accounts, Dates
 - **Future planned**: definitions, folding, hover, rename
+
+### Bean-check Integration Architecture
+
+The diagnostics system uses a Strategy pattern with three implementations:
+
+1. **SystemCallChecker** - Executes bean-check binary via subprocess and parses stderr
+2. **PythonChecker** - Runs Python script that outputs structured JSON
+3. **PyO3EmbeddedChecker** - Calls beancount library directly via embedded Python
+
+Factory pattern in `checkers/mod.rs` handles creation based on configuration.
 
 ### Key Dependencies
 
@@ -95,13 +121,19 @@ nix flake check
 - **ropey** - Efficient text rope data structure
 - **tracing** - Structured logging
 - **anyhow** / **thiserror** - Error handling
-- **regex** - Pattern matching
+- **regex** - Pattern matching for error parsing
 - **chrono** - Date/time handling
+- **serde** / **serde_json** - JSON serialization for Python integration
+- **pyo3** - Python integration (optional, feature-gated)
 
 ## Configuration
 
 Language server accepts configuration via LSP initialization:
 - **journal_file** - Path to main beancount journal file
+- **bean_check.method** - Validation method: "system" (default), "python-script", or "python-embedded"
+- **bean_check.bean_check_cmd** - Path to bean-check binary (for system method)
+- **bean_check.python_cmd** - Path to Python executable (for Python methods)
+- **bean_check.python_script** - Path to Python validation script (for python-script method)
 
 ## Testing
 
@@ -146,7 +178,9 @@ Supports multiple editors:
 
 - **Add new LSP feature**: Modify `crates/lsp/src/handlers.rs` and related provider files
 - **Update completions**: Modify `crates/lsp/src/providers/completion.rs`
-- **Add diagnostics**: Integrate with beancount via `python/bean_check.py`
+- **Add new checker method**: Implement `BeancountChecker` trait in `crates/lsp/src/checkers/`
+- **Modify bean-check integration**: Update checker implementations or factory in `crates/lsp/src/checkers/`
+- **Enhance Python validation**: Modify `python/bean_check.py` script
 - **Update VSCode extension**: Modify files in `vscode/src/`
 
 ## External Dependencies

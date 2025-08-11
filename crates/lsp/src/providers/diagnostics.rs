@@ -1,9 +1,8 @@
 use crate::beancount_data::BeancountData;
+use crate::checkers::{BeancountChecker, BeancountError, FlaggedEntry};
 use std::collections::HashMap;
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::Command;
-use std::sync::{Arc, OnceLock};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 #[cfg(test)]
 use tempfile;
 use tracing::debug;
@@ -27,191 +26,172 @@ impl Default for DiagnosticData {
     }
 }
 
-/// Static regex for parsing bean-check error output.
-/// Pattern: "file:line: error_message"
-/// Compiled once at startup for optimal performance.
-static ERROR_LINE_REGEX: OnceLock<regex::Regex> = OnceLock::new();
-
-fn get_error_line_regex() -> &'static regex::Regex {
-    ERROR_LINE_REGEX.get_or_init(|| {
-        regex::Regex::new(r"^([^:]+):(\d+):\s*(.*)$").expect("Failed to compile error line regex")
-    })
-}
-
 /// Provider function for LSP `textDocument/publishDiagnostics`.
 ///
 /// This function collects diagnostics from two sources:
-/// 1. External bean-check command output (syntax/semantic errors)
+/// 1. Bean-check validation (via configurable checker implementation)
 /// 2. Internal flagged entries from parsed beancount data (warnings)
 ///
 /// # Arguments
 /// * `beancount_data` - Parsed beancount data containing flagged entries
-/// * `bean_check_cmd` - Path to the bean-check executable
+/// * `checker` - Bean-check implementation (system call or Python)
 /// * `root_journal_file` - Main beancount file to validate
 ///
 /// # Returns
 /// HashMap mapping file paths to their diagnostic messages
 ///
 /// # Performance Notes
-/// - Runs external bean-check synchronously (consider async in future)
-/// - Parses stderr output line by line for memory efficiency
-/// - Uses static regex compilation for optimal parsing performance
+/// - Checker execution depends on implementation (system call vs Python)
+/// - Combines results from checker with internal flagged entry analysis
+/// - Uses structured error types for better error handling
 pub fn diagnostics(
     beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
-    bean_check_cmd: &Path,
+    checker: &dyn BeancountChecker,
     root_journal_file: &Path,
 ) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
     tracing::info!("Starting diagnostics for: {}", root_journal_file.display());
-    tracing::debug!("Using bean-check command: {}", bean_check_cmd.display());
+    tracing::debug!("Using checker: {}", checker.name());
     tracing::debug!(
         "Processing beancount data for {} files",
         beancount_data.len()
     );
 
-    // Execute bean-check command and capture output
-    // TODO: Consider adding timeout to prevent hanging on large files
-    let output = match Command::new(bean_check_cmd).arg(root_journal_file).output() {
-        Ok(output) => {
-            tracing::debug!("bean-check command executed successfully");
-            tracing::debug!("bean-check exit status: {}", output.status);
-            if !output.stderr.is_empty() {
-                tracing::debug!(
-                    "bean-check stderr: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-            output
+    // Execute bean-check validation using the configured checker
+    tracing::debug!(
+        "Calling checker.check() with file: {}",
+        root_journal_file.display()
+    );
+    let check_result = match checker.check(root_journal_file) {
+        Ok(result) => {
+            tracing::debug!(
+                "Bean-check {} completed: {} errors, {} flagged entries",
+                checker.name(),
+                result.errors.len(),
+                result.flagged_entries.len()
+            );
+            result
         }
         Err(e) => {
-            tracing::error!("Failed to execute bean-check command: {}", e);
-            tracing::warn!("Continuing with flagged entries only");
+            tracing::error!("Bean-check {} execution failed: {}", checker.name(), e);
+            tracing::warn!("Continuing with flagged entries from parsed data only");
+
             // Continue processing in tests to allow testing of flagged entries
-            // Don't return early in tests - continue to process flagged entries
             #[cfg(not(test))]
-            return HashMap::new();
+            {
+                let mut diagnostics_map = HashMap::new();
+                merge_flagged_entries_from_parsed_data(&mut diagnostics_map, beancount_data);
+                return diagnostics_map;
+            }
 
             #[cfg(test)]
             {
-                // In tests, create a fake successful output so we can test flagged entries
-                // We'll use a simple approach - just continue processing with empty bean-check data
-                std::process::Output {
-                    status: std::process::Command::new("true")
-                        .status()
-                        .unwrap_or_else(|_| {
-                            // Fallback if 'true' command fails
-                            std::process::Command::new("echo").status().unwrap()
-                        }),
-                    stdout: Vec::new(),
-                    stderr: Vec::new(),
-                }
+                // In tests, create an empty result so we can test flagged entries
+                Default::default()
             }
         }
     };
-    debug!(
-        "bean-check output status: {}, stderr lines: {}",
-        output.status,
-        std::str::from_utf8(&output.stderr)
-            .map(|s| s.lines().count())
-            .unwrap_or(0)
-    );
 
-    // Parse bean-check output for error diagnostics
-    let bean_check_diags = if !output.status.success() {
-        debug!("Parsing bean-check error output");
+    // Convert checker errors to LSP diagnostics
+    let mut diagnostics_map = convert_errors_to_diagnostics(check_result.errors);
 
-        // Parse stderr output as UTF-8
-        let stderr_str = match std::str::from_utf8(&output.stderr) {
-            Ok(s) => s,
-            Err(e) => {
-                debug!("Failed to parse bean-check stderr as UTF-8: {}", e);
-                return HashMap::new();
-            }
+    // Add flagged entries from checker (if supported by implementation)
+    merge_flagged_entries_from_checker(&mut diagnostics_map, check_result.flagged_entries);
+
+    // Add diagnostics for flagged entries from parsed beancount data
+    // (These are additional to any flagged entries returned by the checker)
+    merge_flagged_entries_from_parsed_data(&mut diagnostics_map, beancount_data);
+
+    debug!("Generated diagnostics for {} files", diagnostics_map.len());
+    diagnostics_map
+}
+
+/// Convert checker errors to LSP diagnostic format.
+fn convert_errors_to_diagnostics(
+    errors: Vec<BeancountError>,
+) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
+    let mut diagnostics_map: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
+
+    for error in errors {
+        // Convert 1-based line numbers to 0-based for LSP (except for line 0 which stays 0)
+        let line_number = if error.line == 0 {
+            0
+        } else {
+            error.line.saturating_sub(1)
         };
 
-        let mut diagnostics_map: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
+        let position = lsp_types::Position {
+            line: line_number,
+            character: 0, // Start of line (bean-check doesn't provide column info)
+        };
 
-        // Process each line of stderr output
-        for line in stderr_str.lines() {
-            debug!("Processing error line: {}", line);
+        let diagnostic = lsp_types::Diagnostic {
+            range: lsp_types::Range {
+                start: position,
+                end: position, // Point diagnostic
+            },
+            message: error.message,
+            severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+            source: Some("bean-check".to_string()),
+            code: None,
+            code_description: None,
+            tags: None,
+            related_information: None,
+            data: None,
+        };
 
-            // Try to parse the line as a structured error message
-            if let Some(caps) = get_error_line_regex().captures(line) {
-                debug!(
-                    "Parsed error: file={}, line={}, message={}",
-                    &caps[1], &caps[2], &caps[3]
-                );
-
-                // Parse line number (1-based) and convert to 0-based for LSP
-                // Special case: line 0 from bean-check indicates a file-level error
-                let line_number = match caps[2].parse::<u32>() {
-                    Ok(0) => 0,                         // Keep as 0 for file-level errors
-                    Ok(line) => line.saturating_sub(1), // Convert to 0-based
-                    Err(e) => {
-                        debug!("Failed to parse line number '{}': {}", &caps[2], e);
-                        continue;
-                    }
-                };
-
-                let position = lsp_types::Position {
-                    line: line_number,
-                    character: 0, // Start of line (bean-check doesn't provide column info)
-                };
-
-                // Convert file path string to PathBuf
-                // Bean-check outputs paths in a consistent format that we can parse directly
-                // For line 0 errors (file-level), use the root journal file
-                let file_path_str = &caps[1];
-                let parsed_line_number = caps[2].parse::<u32>().unwrap_or(1);
-                let file_path = if parsed_line_number == 0 {
-                    // File-level error: use root journal file
-                    root_journal_file.to_path_buf()
-                } else {
-                    // Line-specific error: use the file mentioned in the error
-                    match PathBuf::from(file_path_str).canonicalize() {
-                        Ok(path) => path,
-                        Err(_) => {
-                            // Fallback to raw path if canonicalization fails
-                            PathBuf::from(file_path_str)
-                        }
-                    }
-                };
-
-                // Create diagnostic with error severity
-                let diagnostic = lsp_types::Diagnostic {
-                    range: lsp_types::Range {
-                        start: position,
-                        end: position, // Point diagnostic (no column info from bean-check)
-                    },
-                    message: caps[3].trim().to_string(),
-                    severity: Some(lsp_types::DiagnosticSeverity::ERROR),
-                    source: Some("bean-check".to_string()),
-                    code: None, // Bean-check doesn't provide error codes
-                    code_description: None,
-                    tags: None,
-                    related_information: None,
-                    data: None,
-                };
-
-                // Add diagnostic to the appropriate file's diagnostic list
-                diagnostics_map
-                    .entry(file_path)
-                    .or_default()
-                    .push(diagnostic);
-            }
-        }
         diagnostics_map
-    } else {
-        debug!("bean-check completed successfully with no errors");
-        HashMap::new()
-    };
+            .entry(error.file)
+            .or_default()
+            .push(diagnostic);
+    }
 
-    // Combine bean-check diagnostics with flagged entry diagnostics
-    let mut combined_diagnostics: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = bean_check_diags;
+    diagnostics_map
+}
 
-    // Merge bean-check errors into the result map
-    // (This step is now redundant since we're using bean_check_diags directly,
-    //  but kept for clarity and future extensibility)
-    // Add diagnostics for flagged entries (marked with ! or * flags)
+/// Merge flagged entries from checker into diagnostics map.
+fn merge_flagged_entries_from_checker(
+    diagnostics_map: &mut HashMap<PathBuf, Vec<lsp_types::Diagnostic>>,
+    flagged_entries: Vec<FlaggedEntry>,
+) {
+    for entry in flagged_entries {
+        // Convert 1-based line numbers to 0-based for LSP
+        let line_number = if entry.line == 0 {
+            0
+        } else {
+            entry.line.saturating_sub(1)
+        };
+
+        let position = lsp_types::Position {
+            line: line_number,
+            character: 0,
+        };
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: lsp_types::Range {
+                start: position,
+                end: position,
+            },
+            message: entry.message,
+            severity: Some(lsp_types::DiagnosticSeverity::WARNING),
+            source: Some("bean-check".to_string()),
+            code: Some(lsp_types::NumberOrString::String(
+                "flagged-entry".to_string(),
+            )),
+            ..lsp_types::Diagnostic::default()
+        };
+
+        diagnostics_map
+            .entry(entry.file)
+            .or_default()
+            .push(diagnostic);
+    }
+}
+
+/// Merge flagged entries from parsed beancount data into diagnostics map.
+fn merge_flagged_entries_from_parsed_data(
+    diagnostics_map: &mut HashMap<PathBuf, Vec<lsp_types::Diagnostic>>,
+    beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
+) {
     for (file_path, data) in beancount_data.iter() {
         for flagged_entry in &data.flagged_entries {
             let position = lsp_types::Position {
@@ -233,19 +213,12 @@ pub fn diagnostics(
                 ..lsp_types::Diagnostic::default()
             };
 
-            // Add flagged entry diagnostic to the file's diagnostic list
-            combined_diagnostics
+            diagnostics_map
                 .entry(file_path.clone())
                 .or_default()
                 .push(diagnostic);
         }
     }
-
-    debug!(
-        "Generated diagnostics for {} files",
-        combined_diagnostics.len()
-    );
-    combined_diagnostics
 }
 
 #[cfg(test)]
@@ -319,12 +292,15 @@ mod tests {
 
     #[test]
     fn test_diagnostics_no_errors() {
+        use crate::checkers::SystemCallChecker;
+
         let (_temp_dir, file_path) =
             create_temp_beancount_file("2023-01-01 open Assets:Cash\n2023-01-01 close Assets:Cash");
         let beancount_data = HashMap::new();
         let mock_bean_check = create_mock_bean_check_success();
+        let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &mock_bean_check, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path);
 
         assert!(
             result.is_empty(),
@@ -334,12 +310,14 @@ mod tests {
 
     #[test]
     fn test_diagnostics_bean_check_errors() {
+        use crate::checkers::SystemCallChecker;
+
         let (_temp_dir, file_path) = create_temp_beancount_file("invalid beancount syntax");
         let beancount_data = HashMap::new();
-
         let mock_bean_check = create_mock_bean_check_with_errors();
+        let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &mock_bean_check, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path);
 
         // Since /bin/false doesn't output structured errors, we expect empty result
         // but the test verifies that the function handles command failures gracefully
@@ -351,14 +329,16 @@ mod tests {
 
     #[test]
     fn test_diagnostics_flagged_entries() {
+        use crate::checkers::SystemCallChecker;
+
         let flagged_content =
             "2023-01-01 ! \"Flagged transaction\"\n  Assets:Cash 100 USD\n  Expenses:Food";
         let (_temp_dir, file_path) = create_temp_beancount_file(flagged_content);
         let beancount_data = create_mock_beancount_data_with_flags(&file_path, flagged_content);
-
         let mock_bean_check = create_mock_bean_check_success();
+        let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &mock_bean_check, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path);
 
         assert!(
             !result.is_empty(),
@@ -396,13 +376,15 @@ mod tests {
 
     #[test]
     fn test_diagnostics_combined_errors_and_flags() {
+        use crate::checkers::SystemCallChecker;
+
         let flagged_content = "2023-01-01 ! \"Test\"\n  Assets:Cash\n  Expenses:Food";
         let (_temp_dir, file_path) = create_temp_beancount_file(flagged_content);
         let beancount_data = create_mock_beancount_data_with_flags(&file_path, flagged_content);
-
         let mock_bean_check = create_mock_bean_check_with_errors();
+        let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &mock_bean_check, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path);
 
         assert!(
             !result.is_empty(),
@@ -431,11 +413,14 @@ mod tests {
 
     #[test]
     fn test_diagnostics_invalid_bean_check_command() {
+        use crate::checkers::SystemCallChecker;
+
         let (_temp_dir, file_path) = create_temp_beancount_file("test content");
         let beancount_data = HashMap::new();
         let invalid_command = PathBuf::from("/nonexistent/command/that/does/not/exist");
+        let checker = SystemCallChecker::new(invalid_command);
 
-        let result = diagnostics(beancount_data, &invalid_command, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path);
 
         assert!(
             result.is_empty(),
@@ -445,12 +430,14 @@ mod tests {
 
     #[test]
     fn test_diagnostics_malformed_error_output() {
+        use crate::checkers::SystemCallChecker;
+
         let (_temp_dir, file_path) = create_temp_beancount_file("test content");
         let beancount_data = HashMap::new();
-
         let mock_bean_check = create_mock_bean_check_with_errors();
+        let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &mock_bean_check, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path);
 
         // Should handle command failures gracefully (no panics)
         assert!(
@@ -461,6 +448,8 @@ mod tests {
 
     #[test]
     fn test_diagnostics_multiple_files() {
+        use crate::checkers::SystemCallChecker;
+
         let (_temp_dir1, file_path1) = create_temp_beancount_file("content1");
         let (_temp_dir2, file_path2) = create_temp_beancount_file("content2");
 
@@ -473,8 +462,9 @@ mod tests {
         beancount_data.extend(create_mock_beancount_data_with_flags(&file_path2, content2));
 
         let mock_bean_check = create_mock_bean_check_success();
+        let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &mock_bean_check, &file_path1);
+        let result = diagnostics(beancount_data, &checker, &file_path1);
 
         // Should have diagnostics for files with flagged entries
         assert!(
@@ -492,8 +482,8 @@ mod tests {
 
     #[test]
     fn test_error_line_regex() {
-        // Test the static regex directly
-        let regex = get_error_line_regex();
+        // Test the regex pattern directly
+        let regex = regex::Regex::new(r"^([^:]+):(\d+):\s*(.*)$").unwrap();
 
         // Valid error formats
         assert!(regex.is_match("/path/to/file.beancount:123: Error message"));
@@ -518,11 +508,14 @@ mod tests {
 
     #[test]
     fn test_diagnostics_empty_beancount_data() {
+        use crate::checkers::SystemCallChecker;
+
         let (_temp_dir, file_path) = create_temp_beancount_file("empty");
         let beancount_data = HashMap::new(); // No beancount data
         let mock_bean_check = create_mock_bean_check_success();
+        let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &mock_bean_check, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path);
 
         assert!(
             result.is_empty(),
@@ -532,12 +525,14 @@ mod tests {
 
     #[test]
     fn test_diagnostic_position_conversion() {
+        use crate::checkers::SystemCallChecker;
+
         let (_temp_dir, file_path) = create_temp_beancount_file("test");
         let beancount_data = HashMap::new();
-
         let mock_bean_check = create_mock_bean_check_success();
+        let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &mock_bean_check, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path);
 
         // Since we're not testing actual bean-check error parsing here,
         // we just verify that the function works without crashing
@@ -550,7 +545,7 @@ mod tests {
 
     #[test]
     fn test_error_line_regex_with_line_zero() {
-        let regex = get_error_line_regex();
+        let regex = regex::Regex::new(r"^([^:]+):(\d+):\s*(.*)$").unwrap();
 
         // Test line 0 format (file-level errors)
         assert!(regex.is_match("<check_commodity>:0: Missing Commodity directive for 'HFCGX'"));
