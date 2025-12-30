@@ -10,6 +10,10 @@ updates:
       prefix: "chore:"
     labels:
       - dependabot
+    groups:
+      cargo-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: github-actions
     directory: "/"
     target-branch: "develop"
@@ -18,3 +22,7 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - dependabot
+    groups:
+      github-actions:
+        patterns:
+          - "*"
