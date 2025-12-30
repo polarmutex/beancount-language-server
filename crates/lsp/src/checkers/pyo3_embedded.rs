@@ -459,9 +459,7 @@ mod tests {
             }
             Err(e) => {
                 // If beancount is not properly configured, that's OK for this test
-                eprintln!(
-                    "Beancount check failed (possibly due to environment): {e}"
-                );
+                eprintln!("Beancount check failed (possibly due to environment): {e}");
             }
         }
     }
@@ -499,9 +497,7 @@ mod tests {
             }
             Err(e) => {
                 // If beancount is not properly configured, that's OK for this test
-                eprintln!(
-                    "Beancount check failed (possibly due to environment): {e}"
-                );
+                eprintln!("Beancount check failed (possibly due to environment): {e}");
             }
         }
     }
@@ -541,9 +537,7 @@ mod tests {
             }
             Err(e) => {
                 // If beancount is not properly configured, that's OK for this test
-                eprintln!(
-                    "Beancount check failed (possibly due to environment): {e}"
-                );
+                eprintln!("Beancount check failed (possibly due to environment): {e}");
             }
         }
     }
@@ -606,9 +600,7 @@ another error on line 9
                 }
             }
             Err(e) => {
-                eprintln!(
-                    "Beancount check failed (possibly due to environment): {e}"
-                );
+                eprintln!("Beancount check failed (possibly due to environment): {e}");
             }
         }
     }

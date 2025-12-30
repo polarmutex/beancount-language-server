@@ -413,20 +413,25 @@ fn analyze_transaction_context(
     // We're somewhere in a transaction but not in a specific field
     // Try to determine if we're in payee/narration position by analyzing the line content
     let line_text = content.line(cursor.row).to_string();
-    
+
     // Check if this line contains "txn" and we're after it
     if line_text.contains("txn") {
         if let Some(txn_pos) = line_text.find("txn") {
-            if cursor.column > txn_pos + 3 { // After "txn "
+            if cursor.column > txn_pos + 3 {
+                // After "txn "
                 // Count quotes to determine if we're in payee or narration position
                 let before_cursor = &line_text[..std::cmp::min(cursor.column, line_text.len())];
                 let completed_quotes = before_cursor.matches("\"").count();
-                
+
                 // Check if we already have a complete payee (closed quotes)
-                let has_complete_payee = before_cursor.contains("\"") && 
-                    before_cursor.split("\"").filter(|s| !s.trim().is_empty()).count() >= 1 &&
-                    completed_quotes >= 2;
-                
+                let has_complete_payee = before_cursor.contains("\"")
+                    && before_cursor
+                        .split("\"")
+                        .filter(|s| !s.trim().is_empty())
+                        .count()
+                        >= 1
+                    && completed_quotes >= 2;
+
                 if has_complete_payee {
                     // We have a completed payee field, so this should be narration
                     return CompletionContext {
@@ -447,7 +452,7 @@ fn analyze_transaction_context(
             }
         }
     }
-    
+
     // Default to account completion if we can't determine payee/narration context
     CompletionContext {
         structure_type: StructureType::Transaction,
@@ -574,20 +579,22 @@ fn complete_based_on_context(
                     if let Some(txn_pos) = line_text.find("txn") {
                         let after_txn = &line_text[txn_pos + 3..];
                         let quote_count = after_txn.matches('"').count();
-                        
+
                         // If we're right after txn with no quotes, likely payee position
-                        if quote_count == 0 && cursor_point.column <= txn_pos + 4 + after_txn.trim_start().len() {
+                        if quote_count == 0
+                            && cursor_point.column <= txn_pos + 4 + after_txn.trim_start().len()
+                        {
                             return complete_payee_with_full_context(
-                                beancount_data, 
-                                &context.prefix, 
-                                trigger_character, 
-                                Some(&line_text), 
-                                cursor_point.column
+                                beancount_data,
+                                &context.prefix,
+                                trigger_character,
+                                Some(&line_text),
+                                cursor_point.column,
                             );
                         }
                     }
                 }
-                
+
                 // Default to narration completion for other cases
                 return complete_narration_with_quotes_context(
                     beancount_data,
@@ -615,7 +622,9 @@ fn complete_based_on_context(
                 let line_text = content.line(cursor_point.row).to_string();
                 complete_narration_with_quotes(beancount_data, &line_text, cursor_point.column)
             }
-            ExpectedType::Payee => complete_payee_with_context(beancount_data, &context.prefix, trigger_character),
+            ExpectedType::Payee => {
+                complete_payee_with_context(beancount_data, &context.prefix, trigger_character)
+            }
             ExpectedType::Tag => complete_tag(beancount_data),
             ExpectedType::Link => complete_link(beancount_data),
             ExpectedType::TransactionKind => complete_kind(),
@@ -645,9 +654,12 @@ fn complete_based_on_context(
                 )?
                 .unwrap_or_default()
             }
-            ExpectedType::Payee => {
-                complete_payee_with_context(beancount_data.clone(), &context.prefix, trigger_character)?.unwrap_or_default()
-            }
+            ExpectedType::Payee => complete_payee_with_context(
+                beancount_data.clone(),
+                &context.prefix,
+                trigger_character,
+            )?
+            .unwrap_or_default(),
             ExpectedType::Tag => complete_tag(beancount_data.clone())?.unwrap_or_default(),
             ExpectedType::Link => complete_link(beancount_data.clone())?.unwrap_or_default(),
             ExpectedType::TransactionKind => complete_kind()?.unwrap_or_default(),
@@ -775,13 +787,12 @@ fn complete_payee_with_full_context(
 
     // Determine if we should add quotes based on trigger
     let triggered_by_quote = trigger_character == Some('"');
-    
+
     // Check if there's already a closing quote after the cursor (for triggered by quote case)
-    let has_closing_quote = if triggered_by_quote && line_text.is_some() {
-        line_text.unwrap().chars().skip(cursor_char).any(|c| c == '"')
-    } else {
-        false
-    };
+    let has_closing_quote = triggered_by_quote
+        && line_text
+            .map(|text| text.chars().skip(cursor_char).any(|c| c == '"'))
+            .unwrap_or(false);
 
     let items: Vec<lsp_types::CompletionItem> = payees
         .into_iter()
@@ -801,7 +812,7 @@ fn complete_payee_with_full_context(
                 // Normal completion includes quotes in both label and insert text
                 (format!("\"{}\"", payee), format!("\"{}\"", payee))
             };
-            
+
             lsp_types::CompletionItem {
                 label,
                 detail: Some("Payee".to_string()),
@@ -814,7 +825,6 @@ fn complete_payee_with_full_context(
 
     Ok(if items.is_empty() { None } else { Some(items) })
 }
-
 
 pub(crate) fn complete_date() -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::date");
@@ -1716,7 +1726,7 @@ mod tests {
         assert_eq!(
             items,
             [lsp_types::CompletionItem {
-                label: String::from("Test Co"),  // No quotes in label when triggered by quote
+                label: String::from("Test Co"), // No quotes in label when triggered by quote
                 kind: Some(lsp_types::CompletionItemKind::ENUM),
                 detail: Some(String::from("Beancount Narration")),
                 insert_text: Some(String::from("Test Co\"")), // Add closing quote when triggered by quote and no closing quote exists
@@ -1746,9 +1756,8 @@ mod tests {
             .unwrap_or_default();
         // New intelligent system provides narration completions after payee
         assert!(!items.is_empty());
-        assert!(items.iter().any(|item| item.label == "Foo Bar"));  // No quotes when triggered by quote
+        assert!(items.iter().any(|item| item.label == "Foo Bar")); // No quotes when triggered by quote
     }
-
 
     #[test]
     fn handle_narration_completion_with_existing_closing_quote() {
@@ -1774,7 +1783,7 @@ mod tests {
         assert!(!items.is_empty());
         let test_co_completion = items
             .iter()
-            .find(|item| item.label == "Test Co")  // No quotes in label when triggered by quote
+            .find(|item| item.label == "Test Co") // No quotes in label when triggered by quote
             .unwrap();
         assert_eq!(
             test_co_completion.insert_text,
@@ -1783,7 +1792,7 @@ mod tests {
 
         let foo_bar_completion = items
             .iter()
-            .find(|item| item.label == "Foo Bar")  // No quotes in label when triggered by quote
+            .find(|item| item.label == "Foo Bar") // No quotes in label when triggered by quote
             .unwrap();
         assert_eq!(
             foo_bar_completion.insert_text,
@@ -1813,7 +1822,7 @@ mod tests {
         assert_eq!(
             items,
             [lsp_types::CompletionItem {
-                label: String::from("Foo Bar"),  // No quotes in label when triggered by quote
+                label: String::from("Foo Bar"), // No quotes in label when triggered by quote
                 kind: Some(lsp_types::CompletionItemKind::ENUM),
                 detail: Some(String::from("Beancount Narration")),
                 insert_text: Some(String::from("Foo Bar\"")), // Add closing quote when triggered by quote and no closing quote exists
