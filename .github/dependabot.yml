@@ -14,7 +14,7 @@ updates:
     directory: "/"
     target-branch: "develop"
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 10
     labels:
       - dependabot
