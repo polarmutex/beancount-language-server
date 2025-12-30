@@ -35,19 +35,13 @@ pub trait BeancountChecker: Send + Sync {
 }
 
 /// Configuration for bean-check execution method selection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum BeancountCheckMethod {
     /// Use system call to execute bean-check binary (traditional approach)
+    #[default]
     SystemCall,
     /// Use embedded Python via PyO3 to call beancount library directly (best performance)
     PythonEmbedded,
-}
-
-impl Default for BeancountCheckMethod {
-    fn default() -> Self {
-        // Default to system call for backward compatibility
-        Self::SystemCall
-    }
 }
 
 /// Configuration options for bean-check execution.
