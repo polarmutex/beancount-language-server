@@ -60,7 +60,7 @@ impl PyO3EmbeddedChecker {
         }
 
         debug!("PyO3EmbeddedChecker: entering Python GIL context");
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             debug!("PyO3EmbeddedChecker: successfully acquired Python GIL");
 
             // Import required Python modules (cached for performance)
@@ -332,7 +332,7 @@ impl BeancountChecker for PyO3EmbeddedChecker {
 
         // Use cached result if available for performance
         let cache_result = BEANCOUNT_LOADER_CACHE.get_or_init(|| {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 debug!("PyO3EmbeddedChecker: trying to import beancount.loader in GIL context");
                 match py.import("beancount.loader") {
                     Ok(_) => {
