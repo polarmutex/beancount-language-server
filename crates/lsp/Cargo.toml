@@ -47,7 +47,7 @@ url = "2.0"
 
 # Data structures
 dashmap = "6.1"
-bytes = "1.10"
+bytes = "1.11"
 linked-list = "0.1"
 
 # Python integration (optional)
