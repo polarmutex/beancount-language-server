@@ -16,7 +16,7 @@ thiserror = "2.0"
 tracing = "0.1"
 
 # LSP and server functionality
-lsp-server = "0.7"
+lsp-server = "=0.7.9" # Pinned due to Dependabot updater bug
 lsp-types = "0.97"
 crossbeam-channel = "0.5"
 
