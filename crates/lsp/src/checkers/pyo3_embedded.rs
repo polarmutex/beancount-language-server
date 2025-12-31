@@ -1,7 +1,7 @@
 #[cfg(feature = "python-embedded")]
-use super::types::*;
-#[cfg(feature = "python-embedded")]
 use super::BeancountChecker;
+#[cfg(feature = "python-embedded")]
+use super::types::*;
 #[cfg(feature = "python-embedded")]
 use anyhow::{Context, Result};
 #[cfg(feature = "python-embedded")]
@@ -168,7 +168,11 @@ impl PyO3EmbeddedChecker {
                         // Not flagged, skip silently for performance
                     }
                     Err(e) => {
-                        debug!("PyO3EmbeddedChecker: failed to extract flagged entry info for entry {}: {}", entry_index + 1, e);
+                        debug!(
+                            "PyO3EmbeddedChecker: failed to extract flagged entry info for entry {}: {}",
+                            entry_index + 1,
+                            e
+                        );
                         // Non-critical, continue processing
                     }
                 }
@@ -302,7 +306,9 @@ impl BeancountChecker for PyO3EmbeddedChecker {
 
         // Check availability first (cached for performance)
         if !self.is_available() {
-            warn!("PyO3EmbeddedChecker: checker is not available - beancount library cannot be imported");
+            warn!(
+                "PyO3EmbeddedChecker: checker is not available - beancount library cannot be imported"
+            );
             return Err(anyhow::anyhow!(
                 "PyO3EmbeddedChecker is not available - beancount library cannot be imported"
             ));
@@ -312,8 +318,11 @@ impl BeancountChecker for PyO3EmbeddedChecker {
 
         match self.execute_beancount_check(journal_file) {
             Ok(result) => {
-                debug!("PyO3EmbeddedChecker::check() completed successfully with {} errors and {} flagged entries",
-                       result.errors.len(), result.flagged_entries.len());
+                debug!(
+                    "PyO3EmbeddedChecker::check() completed successfully with {} errors and {} flagged entries",
+                    result.errors.len(),
+                    result.flagged_entries.len()
+                );
                 Ok(result)
             }
             Err(e) => {
@@ -594,7 +603,9 @@ another error on line 9
                 println!("Has proper line numbers: {has_proper_line_numbers}");
 
                 if !has_proper_line_numbers {
-                    eprintln!("WARNING: Line number fix may not be working - all errors showing line 0 or 1");
+                    eprintln!(
+                        "WARNING: Line number fix may not be working - all errors showing line 0 or 1"
+                    );
                 } else {
                     println!("SUCCESS: Line number fix is working correctly");
                 }

@@ -1,5 +1,5 @@
-use super::types::*;
 use super::BeancountChecker;
+use super::types::*;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
