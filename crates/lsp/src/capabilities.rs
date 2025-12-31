@@ -1,4 +1,8 @@
+use crate::providers::semantic_tokens;
 use lsp_types::RenameOptions;
+use lsp_types::SemanticTokensFullOptions;
+use lsp_types::SemanticTokensOptions;
+use lsp_types::SemanticTokensServerCapabilities;
 use lsp_types::WorkDoneProgressOptions;
 use lsp_types::{
     CompletionOptions, OneOf, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
@@ -38,6 +42,14 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
                 work_done_progress: None,
             },
         })),
+        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+            SemanticTokensOptions {
+                legend: semantic_tokens::legend(),
+                full: Some(SemanticTokensFullOptions::Bool(true)),
+                range: None,
+                ..Default::default()
+            },
+        )),
         ..Default::default()
     }
 }

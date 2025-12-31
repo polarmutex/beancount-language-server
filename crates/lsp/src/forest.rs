@@ -5,7 +5,7 @@ use crate::server::Task;
 use crate::utils::ToFilePath;
 use crossbeam_channel::Sender;
 use glob::glob;
-use std::collections::{linked_list::LinkedList, HashMap, HashSet};
+use std::collections::{HashMap, HashSet, linked_list::LinkedList};
 use std::fs;
 use std::path;
 use std::path::PathBuf;
@@ -27,11 +27,11 @@ fn read_file_cached(path: &PathBuf, cache: &mut FileCacheMap) -> anyhow::Result<
     let metadata = fs::metadata(path)?;
     let modified = metadata.modified()?;
 
-    if let Some(cached) = cache.get(path) {
-        if cached.modified >= modified {
-            tracing::debug!("Cache hit for file: {:?}", path);
-            return Ok(cached.content.clone());
-        }
+    if let Some(cached) = cache.get(path)
+        && cached.modified >= modified
+    {
+        tracing::debug!("Cache hit for file: {:?}", path);
+        return Ok(cached.content.clone());
     }
 
     tracing::debug!("Reading file from disk: {:?}", path);

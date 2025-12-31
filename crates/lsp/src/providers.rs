@@ -4,6 +4,8 @@ pub mod diagnostics;
 pub mod formatting;
 /// Provider definitions for LSP `textDocument/references` and `textDocument/rename`.
 pub mod references;
+/// Provider definitions for LSP semantic tokens (syntax highlighting).
+pub mod semantic_tokens;
 /// Provider definitions for LSP text document lifecycle events.
 pub mod text_document;
 /// Utilities for cross-platform URI handling.

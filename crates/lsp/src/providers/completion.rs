@@ -5,8 +5,8 @@ use crate::utils::ToFilePath;
 use anyhow::Result;
 use chrono::Datelike;
 use nucleo::{
-    pattern::{CaseMatching, Normalization, Pattern},
     Config, Matcher, Utf32Str,
+    pattern::{CaseMatching, Normalization, Pattern},
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -1094,11 +1094,7 @@ fn score_intra_word_match(account: &str, query: &str) -> Option<f32> {
         }
     }
 
-    if found_match {
-        Some(best_score)
-    } else {
-        None
-    }
+    if found_match { Some(best_score) } else { None }
 }
 
 /// Use nucleo for fuzzy matching across segments
@@ -1477,18 +1473,28 @@ mod tests {
             items.iter().filter(|item| item.detail.is_some()).collect();
 
         assert_eq!(date_items.len(), 4);
-        assert!(items
-            .iter()
-            .any(|item| item.label == today && item.detail == Some("today".to_string())));
-        assert!(items
-            .iter()
-            .any(|item| item.label == cur_month && item.detail == Some("this month".to_string())));
-        assert!(items
-            .iter()
-            .any(|item| item.label == prev_month && item.detail == Some("prev month".to_string())));
-        assert!(items
-            .iter()
-            .any(|item| item.label == next_month && item.detail == Some("next month".to_string())))
+        assert!(
+            items
+                .iter()
+                .any(|item| item.label == today && item.detail == Some("today".to_string()))
+        );
+        assert!(
+            items.iter().any(
+                |item| item.label == cur_month && item.detail == Some("this month".to_string())
+            )
+        );
+        assert!(
+            items
+                .iter()
+                .any(|item| item.label == prev_month
+                    && item.detail == Some("prev month".to_string()))
+        );
+        assert!(
+            items
+                .iter()
+                .any(|item| item.label == next_month
+                    && item.detail == Some("next month".to_string()))
+        )
     }
 
     #[test]
@@ -1931,23 +1937,31 @@ mod tests {
         // Test date completion - this doesn't depend on data
         let date_items = complete_date().unwrap().unwrap();
         assert_eq!(date_items.len(), 4);
-        assert!(date_items
-            .iter()
-            .any(|item| item.detail == Some("today".to_string())));
-        assert!(date_items
-            .iter()
-            .any(|item| item.detail == Some("this month".to_string())));
-        assert!(date_items
-            .iter()
-            .any(|item| item.detail == Some("prev month".to_string())));
-        assert!(date_items
-            .iter()
-            .any(|item| item.detail == Some("next month".to_string())));
+        assert!(
+            date_items
+                .iter()
+                .any(|item| item.detail == Some("today".to_string()))
+        );
+        assert!(
+            date_items
+                .iter()
+                .any(|item| item.detail == Some("this month".to_string()))
+        );
+        assert!(
+            date_items
+                .iter()
+                .any(|item| item.detail == Some("prev month".to_string()))
+        );
+        assert!(
+            date_items
+                .iter()
+                .any(|item| item.detail == Some("next month".to_string()))
+        );
     }
 
     #[test]
     fn test_search_mode_determination() {
-        use crate::providers::completion::{determine_search_mode, SearchMode};
+        use crate::providers::completion::{SearchMode, determine_search_mode};
 
         // Single A, L, I, E should trigger prefix search for account types
         assert_eq!(determine_search_mode("A"), SearchMode::Prefix);
@@ -2332,7 +2346,7 @@ include "accounts1.bean"
         );
 
         // Test search mode determination
-        use crate::providers::completion::{determine_search_mode, SearchMode};
+        use crate::providers::completion::{SearchMode, determine_search_mode};
         assert_eq!(determine_search_mode("food"), SearchMode::Fuzzy);
         assert_eq!(determine_search_mode("FOOD"), SearchMode::Prefix);
         assert_eq!(determine_search_mode("Food"), SearchMode::Exact);
@@ -2606,7 +2620,7 @@ include "accounts1.bean"
     #[test]
     fn test_mixed_case_exact_completion() {
         // Test the search mode determination for mixed case
-        use crate::providers::completion::{determine_search_mode, SearchMode};
+        use crate::providers::completion::{SearchMode, determine_search_mode};
 
         // Mixed case should use exact matching
         assert_eq!(determine_search_mode("Assets"), SearchMode::Exact);

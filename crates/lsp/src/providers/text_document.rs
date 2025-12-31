@@ -95,22 +95,21 @@ fn process_includes(
                 if parser
                     .set_language(&tree_sitter_beancount::language())
                     .is_ok()
+                    && let Some(tree) = parser.parse(&text, None)
                 {
-                    if let Some(tree) = parser.parse(&text, None) {
-                        let content = ropey::Rope::from_str(&text);
-                        let beancount_data = BeancountData::new(&tree, &content);
+                    let content = ropey::Rope::from_str(&text);
+                    let beancount_data = BeancountData::new(&tree, &content);
 
-                        // Add to state
-                        state.forest.insert(path.clone(), Arc::new(tree));
-                        state
-                            .beancount_data
-                            .insert(path.clone(), Arc::new(beancount_data));
+                    // Add to state
+                    state.forest.insert(path.clone(), Arc::new(tree));
+                    state
+                        .beancount_data
+                        .insert(path.clone(), Arc::new(beancount_data));
 
-                        debug!("Processed included file: {:?}", path);
+                    debug!("Processed included file: {:?}", path);
 
-                        // Recursively process includes in this file
-                        process_includes(state, &path, processed)?;
-                    }
+                    // Recursively process includes in this file
+                    process_includes(state, &path, processed)?;
                 }
             }
         }

@@ -19,6 +19,7 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 | **Formatting** | Document formatting compatible with `bean-format`, with support for prefix-width, num-width, and currency-column options | ✅ |
 | **Rename** | Rename symbols across files | ✅ |
 | **References** | Find all references to accounts, payees, etc. | ✅ |
+| **Semantic Highlighting** | Advanced syntax highlighting with semantic information | ✅ |
 
 ### 📋 Completion Types
 
@@ -38,7 +39,6 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 | **Go to Definition** | Jump to account/payee/commodity definitions | High |
 | **Document Symbols** | Outline view showing accounts, transactions, and structure | High |
 | **Folding Ranges** | Fold transactions, account hierarchies, and multi-line entries | Medium |
-| **Semantic Highlighting** | Advanced syntax highlighting with semantic information | Medium |
 | **Code Actions** | Quick fixes, refactoring, auto-balance transactions | Medium |
 | **Inlay Hints** | Show computed balances, exchange rates, running totals | Low |
 | **Signature Help** | Help with transaction syntax and directive parameters | Low |
