@@ -10,6 +10,8 @@ updates:
       prefix: "chore:"
     labels:
       - dependabot
+    # Update Cargo.lock even when Cargo.toml constraints already allow the new version
+    versioning-strategy: increase
   - package-ecosystem: github-actions
     directory: "/"
     target-branch: "develop"
