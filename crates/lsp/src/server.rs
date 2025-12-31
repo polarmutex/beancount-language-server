@@ -159,11 +159,11 @@ impl LspServerState {
 
         tracing::debug!("Entering main event loop");
         while let Some(event) = self.next_event(&receiver) {
-            if let Event::Lsp(lsp_server::Message::Notification(notification)) = &event {
-                if notification.method == lsp_types::notification::Exit::METHOD {
-                    tracing::info!("Received exit notification, shutting down");
-                    return Ok(());
-                }
+            if let Event::Lsp(lsp_server::Message::Notification(notification)) = &event
+                && notification.method == lsp_types::notification::Exit::METHOD
+            {
+                tracing::info!("Received exit notification, shutting down");
+                return Ok(());
             }
             self.handle_event(event)?;
         }
@@ -305,6 +305,9 @@ impl LspServerState {
             .on::<lsp_types::request::Formatting>(handlers::text_document::formatting)?
             .on::<lsp_types::request::Rename>(handlers::text_document::handle_rename)?
             .on::<lsp_types::request::References>(handlers::text_document::handle_references)?
+            .on::<lsp_types::request::SemanticTokensFullRequest>(
+                handlers::text_document::semantic_tokens_full,
+            )?
             .finish();
         Ok(())
     }

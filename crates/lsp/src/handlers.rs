@@ -2,6 +2,7 @@ pub mod text_document {
     use crate::providers::completion;
     use crate::providers::formatting;
     use crate::providers::references;
+    use crate::providers::semantic_tokens;
     use crate::providers::text_document;
     use crate::server::LspServerState;
     use crate::server::LspServerStateSnapshot;
@@ -196,5 +197,16 @@ pub mod text_document {
                 Err(e)
             }
         }
+    }
+
+    pub(crate) fn semantic_tokens_full(
+        snapshot: LspServerStateSnapshot,
+        params: lsp_types::SemanticTokensParams,
+    ) -> Result<Option<lsp_types::SemanticTokensResult>> {
+        tracing::debug!(
+            "Semantic tokens requested for: {}",
+            params.text_document.uri.as_str()
+        );
+        semantic_tokens::semantic_tokens_full(snapshot, params)
     }
 }

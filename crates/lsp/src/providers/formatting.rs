@@ -233,10 +233,10 @@ fn extract_formateable_lines(
             }
         }
 
-        if let (Some(prefix), Some(number)) = (prefix_node, number_node) {
-            if let Some(line) = extract_line_components(doc, prefix, number) {
-                formateable_lines.push(line);
-            }
+        if let (Some(prefix), Some(number)) = (prefix_node, number_node)
+            && let Some(line) = extract_line_components(doc, prefix, number)
+        {
+            formateable_lines.push(line);
         }
     }
 
@@ -555,10 +555,10 @@ fn apply_indent_normalization_to_remaining_lines(
                     let new_line = format!("{target_indent}{trimmed_line}");
 
                     // Only create edit if indentation actually changes
-                    if current_line.trim_end() != new_line.trim_end() {
-                        if let Some(edit) = create_line_replacement_edit(line_num, &new_line, doc) {
-                            existing_edits.push(edit);
-                        }
+                    if current_line.trim_end() != new_line.trim_end()
+                        && let Some(edit) = create_line_replacement_edit(line_num, &new_line, doc)
+                    {
+                        existing_edits.push(edit);
                     }
                 }
             }
@@ -1200,23 +1200,23 @@ mod tests {
 
             // Check that minimum spacing is maintained (like bean-format does)
             for line in [line1, line2] {
-                if line.contains("balance") && line.contains("USD") {
-                    if let Some(balance_pos) = line.find("balance") {
-                        let after_balance = &line[balance_pos + 8..]; // Skip "balance "
-                        if let Some(first_space) = after_balance.find(' ') {
-                            let _account_part = &after_balance[..first_space];
-                            let after_account = &after_balance[first_space..];
+                if line.contains("balance")
+                    && line.contains("USD")
+                    && let Some(balance_pos) = line.find("balance")
+                {
+                    let after_balance = &line[balance_pos + 8..]; // Skip "balance "
+                    if let Some(first_space) = after_balance.find(' ') {
+                        let _account_part = &after_balance[..first_space];
+                        let after_account = &after_balance[first_space..];
 
-                            // Count spaces before the amount
-                            let spaces_count =
-                                after_account.chars().take_while(|&c| c == ' ').count();
+                        // Count spaces before the amount
+                        let spaces_count = after_account.chars().take_while(|&c| c == ' ').count();
 
-                            // Should have at least account_amount_spacing (2) spaces
-                            assert!(
-                                spaces_count >= 2,
-                                "Balance directive should maintain minimum spacing, but found {spaces_count} spaces in: '{line}'"
-                            );
-                        }
+                        // Should have at least account_amount_spacing (2) spaces
+                        assert!(
+                            spaces_count >= 2,
+                            "Balance directive should maintain minimum spacing, but found {spaces_count} spaces in: '{line}'"
+                        );
                     }
                 }
             }
@@ -1392,7 +1392,9 @@ mod tests {
                             .is_some_and(|c| c.is_numeric())
                         {
                             // No space between number and currency - this would be wrong with default spacing
-                            panic!("Found number directly followed by currency without space in: '{line}'");
+                            panic!(
+                                "Found number directly followed by currency without space in: '{line}'"
+                            );
                         }
                         if before_currency.ends_with("  ") && !before_currency.ends_with("   ") {
                             // Exactly 2 spaces - would be wrong with spacing=1
@@ -1400,7 +1402,9 @@ mod tests {
                         }
                         if before_currency.ends_with("     ") {
                             // 5 spaces - should be reduced to 1
-                            panic!("Found excess spaces (5) before currency that weren't fixed in: '{line}'");
+                            panic!(
+                                "Found excess spaces (5) before currency that weren't fixed in: '{line}'"
+                            );
                         }
 
                         // Verify proper spacing (should end with exactly 1 space for number_currency_spacing=1)
@@ -1477,7 +1481,7 @@ mod tests {
                     // Pattern: "2023-01-01 price USD                       1.0 EUR"
                     if let Some(price_pos) = line.find("price") {
                         let after_price = &line[price_pos + 5..].trim_start(); // Skip "price" and initial spaces
-                                                                               // Find the first currency (USD)
+                        // Find the first currency (USD)
                         if let Some(first_space) = after_price.find(' ') {
                             let currency_part = &after_price[..first_space];
                             let after_currency = &after_price[first_space..];
@@ -1485,7 +1489,9 @@ mod tests {
                             let spaces_count =
                                 after_currency.chars().take_while(|&c| c == ' ').count();
 
-                            println!("  Price directive currency: '{currency_part}', spaces to amount: {spaces_count}");
+                            println!(
+                                "  Price directive currency: '{currency_part}', spaces to amount: {spaces_count}"
+                            );
 
                             // Price directives should have appropriate spacing for alignment
                             // The exact amount depends on the alignment system, but should be reasonable
