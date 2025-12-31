@@ -143,6 +143,7 @@
               git-cliff
               beancount
               cargo-llvm-cov
+              just
               (pkgs.cargo-dist.overrideAttrs (oldAttrs: {
                 version = "0.28.1";
                 src = cargo-dist-src;
