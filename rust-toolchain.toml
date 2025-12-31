@@ -1,5 +1,5 @@
 [toolchain]
-channel = "1.92.0"
+channel = "stable"
 components = ["rustfmt", "clippy", "rust-src", "rust-analyzer"]
 targets = [
     "aarch64-apple-darwin",
