@@ -53,7 +53,18 @@
         };
         inherit (pkgs) lib;
 
-        craneLib = (crane.mkLib pkgs).overrideToolchain (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml);
+        # Use latest stable Rust instead of pinning to specific version
+        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+          extensions = ["rust-src" "rust-analyzer"];
+          targets = [
+            "aarch64-apple-darwin"
+            "aarch64-pc-windows-msvc"
+            "aarch64-unknown-linux-gnu"
+            "x86_64-pc-windows-msvc"
+            "x86_64-unknown-linux-gnu"
+          ];
+        };
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
         src = craneLib.cleanCargoSource ./.;
 
@@ -138,7 +149,7 @@
                   lockFile = "${cargo-dist-src}/Cargo.lock";
                 };
               }))
-              (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+              rustToolchain
             ]
             ++ lib.optionals stdenv.isLinux [systemd];
 
