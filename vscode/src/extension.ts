@@ -8,9 +8,6 @@ import {
 } from "vscode-languageclient/node";
 
 import { PersistentState } from "./persistent_state";
-import * as util from "./util";
-
-//import { SemanticTokensProvider, buildLegend } from "./semantic_tokens";
 
 let client: LanguageClient;
 
@@ -25,8 +22,8 @@ export async function activate(
   if (!server_path) {
     await vscode.window.showErrorMessage(
       "The beancount-language-server extension doesn't ship with prebuilt binaries for your platform yet. " +
-        "You can still use it by cloning the polarmutex/beancount-language-server repo from GitHub to build the LSP " +
-        "yourself and use it with this extension with the beancount-language-server.server_path setting"
+      "You can still use it by cloning the polarmutex/beancount-language-server repo from GitHub to build the LSP " +
+      "yourself and use it with this extension with the beancountLangServer.serverPath setting"
     );
     return;
   }
@@ -61,18 +58,6 @@ export async function activate(
 
   // Start the client. This will also launch the server
   client.start();
-
-  //const legend = buildLegend();
-  //const tokenProvider = new SemanticTokensProvider(legend);
-  //await tokenProvider.ast.init();
-
-  //context.subscriptions.push(
-  //  vscode.languages.registerDocumentSemanticTokensProvider(
-  //    { language: "beancount" },
-  //    tokenProvider,
-  //    legend
-  //  )
-  //);
 }
 
 export function deactivate(): Thenable<void> | undefined {
@@ -161,10 +146,10 @@ async function get_server_path(
   state: PersistentState
 ): Promise<string | undefined> {
   const config = vscode.workspace.getConfiguration("beancountLangServer");
-  const explicitPath = ""; //config.get("beancountLangServer.server_path");
-  //if (typeof explicitPath === "string" && explicitPath !== "") {
-  //    return explicitPath;
-  //}
+  const explicitPath = config.get("serverPath");
+  if (typeof explicitPath === "string" && explicitPath !== "") {
+    return explicitPath;
+  }
 
   const triplet = PLATFORM_TRIPLETS[process.platform]?.[process.arch];
   if (!triplet) {

@@ -19,6 +19,7 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 | **Formatting** | Document formatting compatible with `bean-format`, with support for prefix-width, num-width, and currency-column options | ✅ |
 | **Rename** | Rename symbols across files | ✅ |
 | **References** | Find all references to accounts, payees, etc. | ✅ |
+| **Semantic Highlighting** | Advanced syntax highlighting with semantic information | Partial |
 
 ### 📋 Completion Types
 
@@ -38,7 +39,6 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 | **Go to Definition** | Jump to account/payee/commodity definitions | High |
 | **Document Symbols** | Outline view showing accounts, transactions, and structure | High |
 | **Folding Ranges** | Fold transactions, account hierarchies, and multi-line entries | Medium |
-| **Semantic Highlighting** | Advanced syntax highlighting with semantic information | Medium |
 | **Code Actions** | Quick fixes, refactoring, auto-balance transactions | Medium |
 | **Inlay Hints** | Show computed balances, exchange rates, running totals | Low |
 | **Signature Help** | Help with transaction syntax and directive parameters | Low |
@@ -210,8 +210,8 @@ This controls the whitespace between numbers and currency codes:
 2. Configure in `settings.json`:
    ```json
    {
-     "beancount.journal_file": "/path/to/main.beancount",
-     "beancount.formatting": {
+     "beancountLangServer.journalFile": "/path/to/main.beancount",
+     "beancountLangServer.formatting": {
        "prefix_width": 30,
        "currency_column": 60,
        "number_currency_spacing": 1
@@ -393,7 +393,7 @@ nix develop
 cargo build
 
 # Install Node.js dependencies (for VS Code extension)
-cd vscode && npm install
+cd vscode && pnpm install
 
 # Install development tools
 cargo install cargo-watch
@@ -439,9 +439,9 @@ cargo fmt -- --check
 
 ```bash
 cd vscode
-npm run build      # Build extension
-npm run watch      # Watch for changes
-npm run package    # Package extension
+pnpm run build      # Build extension
+pnpm run watch      # Watch for changes
+pnpm run package    # Package extension
 ```
 
 ### Release Process
