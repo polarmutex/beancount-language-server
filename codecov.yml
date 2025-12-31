@@ -1,0 +1,51 @@
+# Codecov configuration for Beancount Language Server
+
+# Coverage settings
+coverage:
+  # Precision for coverage percentages (2 decimal places)
+  precision: 2
+  # Round coverage values
+  round: down
+  # Coverage range (red to green)
+  range: "50..90"
+
+  # Status checks
+  status:
+    # Overall project coverage
+    project:
+      default:
+        # Require project coverage to stay within threshold
+        target: auto
+        # Allow coverage to drop by up to 1%
+        threshold: 1%
+        # Only post status if coverage changes
+        if_ci_failed: error
+
+    # Coverage of changed code (patch)
+    patch:
+      default:
+        # Require at least 50% coverage on new code
+        target: 50%
+        # Allow some flexibility for small changes
+        threshold: 10%
+        # Only post status if coverage changes
+        if_ci_failed: error
+
+# Comment settings for PRs
+comment:
+  # Post coverage comment on PRs
+  require_changes: true
+  # Comment layout
+  layout: "diff, flags, files"
+  # Behavior when coverage changes
+  behavior: default
+
+# Ignore certain paths from coverage
+ignore:
+  - "tests/**/*"
+  - "**/*test*.rs"
+  - "examples/**/*"
+  - "benches/**/*"
+  - "target/**/*"
+  - "vscode/**/*"
+  - "python/**/*"
