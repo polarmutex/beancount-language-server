@@ -2,19 +2,17 @@ version: 2
 updates:
   - package-ecosystem: cargo
     directory: "/"
-    target-branch: "develop"
+    target-branch: "main"
     schedule:
       interval: monthly
-    open-pull-requests-limit: 10
     commit-message:
       prefix: "chore:"
     labels:
       - dependabot
   - package-ecosystem: github-actions
     directory: "/"
-    target-branch: "develop"
+    target-branch: "main"
     schedule:
       interval: monthly
-    open-pull-requests-limit: 10
     labels:
       - dependabot
