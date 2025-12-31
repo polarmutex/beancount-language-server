@@ -419,38 +419,38 @@ fn analyze_transaction_context(
         && let Some(txn_pos) = line_text.find("txn")
         && cursor.column > txn_pos + 3
     {
-                // After "txn "
-                // Count quotes to determine if we're in payee or narration position
-                let before_cursor = &line_text[..std::cmp::min(cursor.column, line_text.len())];
-                let completed_quotes = before_cursor.matches("\"").count();
+        // After "txn "
+        // Count quotes to determine if we're in payee or narration position
+        let before_cursor = &line_text[..std::cmp::min(cursor.column, line_text.len())];
+        let completed_quotes = before_cursor.matches("\"").count();
 
-                // Check if we already have a complete payee (closed quotes)
-                let has_complete_payee = before_cursor.contains("\"")
-                    && before_cursor
-                        .split("\"")
-                        .filter(|s| !s.trim().is_empty())
-                        .count()
-                        >= 1
-                    && completed_quotes >= 2;
+        // Check if we already have a complete payee (closed quotes)
+        let has_complete_payee = before_cursor.contains("\"")
+            && before_cursor
+                .split("\"")
+                .filter(|s| !s.trim().is_empty())
+                .count()
+                >= 1
+            && completed_quotes >= 2;
 
-                if has_complete_payee {
-                    // We have a completed payee field, so this should be narration
-                    return CompletionContext {
-                        structure_type: StructureType::Transaction,
-                        expected_next: vec![ExpectedType::Narration],
-                        prefix: String::new(),
-                        parent_context: Some("transaction".to_string()),
-                    };
-                } else {
-                    // Default to narration for backward compatibility
-                    return CompletionContext {
-                        structure_type: StructureType::Transaction,
-                        expected_next: vec![ExpectedType::Narration],
-                        prefix: String::new(),
-                        parent_context: Some("transaction".to_string()),
-                    };
-                }
-            }
+        if has_complete_payee {
+            // We have a completed payee field, so this should be narration
+            return CompletionContext {
+                structure_type: StructureType::Transaction,
+                expected_next: vec![ExpectedType::Narration],
+                prefix: String::new(),
+                parent_context: Some("transaction".to_string()),
+            };
+        } else {
+            // Default to narration for backward compatibility
+            return CompletionContext {
+                structure_type: StructureType::Transaction,
+                expected_next: vec![ExpectedType::Narration],
+                prefix: String::new(),
+                parent_context: Some("transaction".to_string()),
+            };
+        }
+    }
 
     // Default to account completion if we can't determine payee/narration context
     CompletionContext {
@@ -577,22 +577,22 @@ fn complete_based_on_context(
                 if line_text.contains("txn")
                     && let Some(txn_pos) = line_text.find("txn")
                 {
-                        let after_txn = &line_text[txn_pos + 3..];
-                        let quote_count = after_txn.matches('"').count();
+                    let after_txn = &line_text[txn_pos + 3..];
+                    let quote_count = after_txn.matches('"').count();
 
-                        // If we're right after txn with no quotes, likely payee position
-                        if quote_count == 0
-                            && cursor_point.column <= txn_pos + 4 + after_txn.trim_start().len()
-                        {
-                            return complete_payee_with_full_context(
-                                beancount_data,
-                                &context.prefix,
-                                trigger_character,
-                                Some(&line_text),
-                                cursor_point.column,
-                            );
-                        }
+                    // If we're right after txn with no quotes, likely payee position
+                    if quote_count == 0
+                        && cursor_point.column <= txn_pos + 4 + after_txn.trim_start().len()
+                    {
+                        return complete_payee_with_full_context(
+                            beancount_data,
+                            &context.prefix,
+                            trigger_character,
+                            Some(&line_text),
+                            cursor_point.column,
+                        );
                     }
+                }
 
                 // Default to narration completion for other cases
                 return complete_narration_with_quotes_context(
