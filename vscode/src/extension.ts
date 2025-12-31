@@ -15,8 +15,8 @@ export async function activate(
   if (!server_path) {
     await vscode.window.showErrorMessage(
       "The beancount-language-server extension doesn't ship with prebuilt binaries for your platform yet. " +
-        "You can still use it by cloning the polarmutex/beancount-language-server repo from GitHub to build the LSP " +
-        "yourself and use it with this extension with the beancountLangServer.serverPath setting"
+      "You can still use it by cloning the polarmutex/beancount-language-server repo from GitHub to build the LSP " +
+      "yourself and use it with this extension with the beancountLangServer.serverPath setting"
     );
     return;
   }
@@ -33,10 +33,10 @@ export async function activate(
   const config = vscode.workspace.getConfiguration("beancountLangServer");
   const client_options: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "beancount" }],
-    //synchronize: {
-    //  // Notify the server about file changes to '.clientrc files contained in the workspace
-    //  fileEvents: vscode.workspace.createFileSystemWatcher("**/.beancount"),
-    //},
+    synchronize: {
+      //  // Notify the server about file changes to '.clientrc files contained in the workspace
+      fileEvents: vscode.workspace.createFileSystemWatcher("**/.{bean,beancount}"),
+    },
     initializationOptions: {
       journal_file: config.get("journalFile"),
     },
