@@ -55,7 +55,7 @@
 
         # Use latest stable Rust instead of pinning to specific version
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-          extensions = ["rust-src" "rust-analyzer"];
+          extensions = ["rust-src" "rust-analyzer" "llvm-tools-preview"];
           targets = [
             "aarch64-apple-darwin"
             "aarch64-pc-windows-msvc"
@@ -142,6 +142,7 @@
             [
               git-cliff
               beancount
+              cargo-llvm-cov
               (pkgs.cargo-dist.overrideAttrs (oldAttrs: {
                 version = "0.28.1";
                 src = cargo-dist-src;

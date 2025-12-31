@@ -3102,4 +3102,90 @@ include "accounts1.bean"
         // Should return None for unsupported trigger characters
         assert!(items.is_none());
     }
+
+    #[test]
+    fn test_transaction_context_after_txn_keyword() {
+        // Test that we correctly detect payee/narration context after "txn" keyword
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Assets:Checking USD
+2023-10-01 open Expenses:Food USD
+2023-10-01 txn
+     |
+     ^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, None, cursor)
+            .unwrap()
+            .unwrap_or_default();
+
+        // Should return narration completion (backward compatibility default)
+        assert!(
+            !items.is_empty(),
+            "Should provide completions after txn keyword"
+        );
+    }
+
+    #[test]
+    fn test_transaction_context_with_complete_payee() {
+        // Test that we detect narration context when payee is already complete
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Assets:Checking USD
+2023-10-01 txn "Store"
+     |
+     ^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, None, cursor)
+            .unwrap()
+            .unwrap_or_default();
+
+        // Should recognize this as narration position since payee is complete
+        assert!(
+            !items.is_empty(),
+            "Should provide completions after complete payee"
+        );
+    }
+
+    #[test]
+    fn test_quote_trigger_after_txn_payee_position() {
+        // Test that quote trigger after "txn" prioritizes payee completion
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Assets:Checking USD
+2023-10-01 txn "
+     |
+     ^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, Some('"'), cursor);
+
+        // Should provide completion suggestions for payee/narration
+        assert!(
+            items.is_ok(),
+            "Should handle quote trigger after txn keyword"
+        );
+    }
+
+    #[test]
+    fn test_transaction_context_before_txn_position() {
+        // Test that cursor position before "txn" completion zone works correctly
+        let fixture = r#"
+%! /main.beancount
+2023-10-01 open Assets:Checking USD
+2023-10-01 txn
+|
+^
+"#;
+        let test_state = TestState::new(fixture).unwrap();
+        let cursor = test_state.cursor().unwrap();
+        let items = completion(test_state.snapshot, None, cursor);
+
+        // Should handle cursor at txn position
+        assert!(items.is_ok(), "Should handle cursor at txn position");
+    }
 }

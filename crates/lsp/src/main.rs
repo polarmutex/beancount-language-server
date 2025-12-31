@@ -108,3 +108,46 @@ fn parse_log_level(level_str: &str) -> LevelFilter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_log_level_valid_lowercase() {
+        assert_eq!(parse_log_level("trace"), LevelFilter::TRACE);
+        assert_eq!(parse_log_level("debug"), LevelFilter::DEBUG);
+        assert_eq!(parse_log_level("info"), LevelFilter::INFO);
+        assert_eq!(parse_log_level("warn"), LevelFilter::WARN);
+        assert_eq!(parse_log_level("error"), LevelFilter::ERROR);
+        assert_eq!(parse_log_level("off"), LevelFilter::OFF);
+    }
+
+    #[test]
+    fn test_parse_log_level_valid_uppercase() {
+        assert_eq!(parse_log_level("TRACE"), LevelFilter::TRACE);
+        assert_eq!(parse_log_level("DEBUG"), LevelFilter::DEBUG);
+        assert_eq!(parse_log_level("INFO"), LevelFilter::INFO);
+        assert_eq!(parse_log_level("WARN"), LevelFilter::WARN);
+        assert_eq!(parse_log_level("ERROR"), LevelFilter::ERROR);
+        assert_eq!(parse_log_level("OFF"), LevelFilter::OFF);
+    }
+
+    #[test]
+    fn test_parse_log_level_valid_mixed_case() {
+        assert_eq!(parse_log_level("Trace"), LevelFilter::TRACE);
+        assert_eq!(parse_log_level("Debug"), LevelFilter::DEBUG);
+        assert_eq!(parse_log_level("Info"), LevelFilter::INFO);
+        assert_eq!(parse_log_level("Warn"), LevelFilter::WARN);
+        assert_eq!(parse_log_level("Error"), LevelFilter::ERROR);
+        assert_eq!(parse_log_level("Off"), LevelFilter::OFF);
+    }
+
+    #[test]
+    fn test_parse_log_level_invalid_defaults_to_info() {
+        assert_eq!(parse_log_level("invalid"), LevelFilter::INFO);
+        assert_eq!(parse_log_level("unknown"), LevelFilter::INFO);
+        assert_eq!(parse_log_level(""), LevelFilter::INFO);
+        assert_eq!(parse_log_level("123"), LevelFilter::INFO);
+    }
+}
