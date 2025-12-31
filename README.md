@@ -210,8 +210,8 @@ This controls the whitespace between numbers and currency codes:
 2. Configure in `settings.json`:
    ```json
    {
-     "beancount.journal_file": "/path/to/main.beancount",
-     "beancount.formatting": {
+     "beancountLangServer.journalFile": "/path/to/main.beancount",
+     "beancountLangServer.formatting": {
        "prefix_width": 30,
        "currency_column": 60,
        "number_currency_spacing": 1
@@ -393,7 +393,7 @@ nix develop
 cargo build
 
 # Install Node.js dependencies (for VS Code extension)
-cd vscode && npm install
+cd vscode && pnpm install
 
 # Install development tools
 cargo install cargo-watch
@@ -439,9 +439,9 @@ cargo fmt -- --check
 
 ```bash
 cd vscode
-npm run build      # Build extension
-npm run watch      # Watch for changes
-npm run package    # Package extension
+pnpm run build      # Build extension
+pnpm run watch      # Watch for changes
+pnpm run package    # Package extension
 ```
 
 ### Release Process
