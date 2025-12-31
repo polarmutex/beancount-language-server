@@ -31,7 +31,7 @@
   },
   "packageManager": "pnpm@10.26.2",
   "dependencies": {
-    "vscode-languageclient": "8.0.0-next.14"
+    "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",
