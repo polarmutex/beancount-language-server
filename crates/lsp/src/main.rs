@@ -101,7 +101,9 @@ fn parse_log_level(level_str: &str) -> LevelFilter {
         "error" => LevelFilter::ERROR,
         "off" => LevelFilter::OFF,
         _ => {
-            eprintln!("Invalid log level '{level_str}'. Using 'info' as default. Valid levels: trace, debug, info, warn, error, off");
+            eprintln!(
+                "Invalid log level '{level_str}'. Using 'info' as default. Valid levels: trace, debug, info, warn, error, off"
+            );
             LevelFilter::INFO
         }
     }
