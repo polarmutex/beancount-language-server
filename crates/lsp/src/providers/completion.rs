@@ -415,9 +415,10 @@ fn analyze_transaction_context(
     let line_text = content.line(cursor.row).to_string();
 
     // Check if this line contains "txn" and we're after it
-    if line_text.contains("txn") {
-        if let Some(txn_pos) = line_text.find("txn") {
-            if cursor.column > txn_pos + 3 {
+    if line_text.contains("txn")
+        && let Some(txn_pos) = line_text.find("txn")
+        && cursor.column > txn_pos + 3
+    {
                 // After "txn "
                 // Count quotes to determine if we're in payee or narration position
                 let before_cursor = &line_text[..std::cmp::min(cursor.column, line_text.len())];
@@ -450,8 +451,6 @@ fn analyze_transaction_context(
                     };
                 }
             }
-        }
-    }
 
     // Default to account completion if we can't determine payee/narration context
     CompletionContext {
@@ -575,8 +574,9 @@ fn complete_based_on_context(
                 // When quote is triggered, try to be smart about payee vs narration
                 let line_text = content.line(cursor_point.row).to_string();
                 // Smart detection: if this looks like it could be payee position, prioritize payee completion
-                if line_text.contains("txn") {
-                    if let Some(txn_pos) = line_text.find("txn") {
+                if line_text.contains("txn")
+                    && let Some(txn_pos) = line_text.find("txn")
+                {
                         let after_txn = &line_text[txn_pos + 3..];
                         let quote_count = after_txn.matches('"').count();
 
@@ -593,7 +593,6 @@ fn complete_based_on_context(
                             );
                         }
                     }
-                }
 
                 // Default to narration completion for other cases
                 return complete_narration_with_quotes_context(
