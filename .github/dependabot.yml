@@ -22,6 +22,9 @@ updates:
       prefix: "chore:"
     labels:
       - dependabot
+    ignore:
+      # vscode doesn't use latest node
+      - dependency-name: "@types/node"
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
