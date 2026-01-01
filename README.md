@@ -318,6 +318,29 @@ This controls the whitespace between numbers and currency codes:
 
 ### Neovim
 
+Using `nvim.lsp` (nvim > 0.11)
+
+`lsp/beancount.lua`
+```lua
+return {
+    commands = { "beancount-language-server", "--stdio" },
+    root_markers = { "main.bean", ".git" },
+    init_options = {
+        journal_file = "main.bean",
+    }
+    settings = {
+        beancount = {
+            formatting = {
+                prefix_width = 30,
+                currency_column = 60,
+                number_currency_spacing = 1,
+            }
+        }
+    }
+}
+```
+
+
 Using [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig):
 
 ```lua
