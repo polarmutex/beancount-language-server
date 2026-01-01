@@ -25,8 +25,8 @@
     "build-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node20",
     "build": "npm run build-base -- --sourcemap",
     "watch": "npm run build-base -- --sourcemap --watch",
-    "lint": "prettier --check . && eslint -c eslint.config.js --ext .ts ./src",
-    "fix": "prettier --write . && eslint -c eslint.config.js --ext .ts ./src --fix",
+    "lint": "prettier --check . && eslint -c eslint.config.mjs --ext .ts ./src",
+    "fix": "prettier --write . && eslint -c eslint.config.mjs --ext .ts ./src --fix",
     "pretest": "tsc && npm run build"
   },
   "packageManager": "pnpm@10.26.2",
@@ -34,6 +34,7 @@
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
     "@types/node": "^22.19.3",
     "@types/vscode": "~1.107.0",
     "@typescript-eslint/eslint-plugin": "^8.51.0",
@@ -45,7 +46,8 @@
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.7.4",
     "tslib": "^2.8.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.51.0"
   },
   "activationEvents": [
     "onLanguage:beancount"
