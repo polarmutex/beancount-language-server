@@ -1,21 +1,14 @@
-#[cfg(feature = "python-embedded")]
+#![cfg(feature = "python-embedded")]
+
 use super::BeancountChecker;
-#[cfg(feature = "python-embedded")]
 use super::types::*;
-#[cfg(feature = "python-embedded")]
 use anyhow::{Context, Result};
-#[cfg(feature = "python-embedded")]
 use pyo3::prelude::*;
-#[cfg(feature = "python-embedded")]
 use pyo3::types::{PyDict, PyList, PyString};
-#[cfg(feature = "python-embedded")]
 use std::path::{Path, PathBuf};
-#[cfg(feature = "python-embedded")]
 use std::sync::OnceLock;
-#[cfg(feature = "python-embedded")]
 use tracing::{debug, warn};
 
-#[cfg(feature = "python-embedded")]
 /// Bean-check implementation using embedded Python via PyO3.
 ///
 /// This approach embeds the Python interpreter directly into the Rust process
@@ -28,10 +21,8 @@ pub struct PyO3EmbeddedChecker {
 }
 
 /// Cache for the beancount.loader module to avoid repeated imports
-#[cfg(feature = "python-embedded")]
 static BEANCOUNT_LOADER_CACHE: OnceLock<Result<(), String>> = OnceLock::new();
 
-#[cfg(feature = "python-embedded")]
 impl PyO3EmbeddedChecker {
     /// Create a new PyO3 embedded checker.
     pub fn new() -> Self {
@@ -289,14 +280,12 @@ impl PyO3EmbeddedChecker {
     }
 }
 
-#[cfg(feature = "python-embedded")]
 impl Default for PyO3EmbeddedChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(feature = "python-embedded")]
 impl BeancountChecker for PyO3EmbeddedChecker {
     fn check(&self, journal_file: &Path) -> Result<BeancountCheckResult> {
         debug!(
@@ -415,14 +404,12 @@ mod tests {
     fn test_pyo3_checker_creation() {
         let checker = PyO3EmbeddedChecker::new();
 
-        #[cfg(feature = "python-embedded")]
         assert_eq!(checker.name(), "PyO3Embedded");
 
         #[cfg(not(feature = "python-embedded"))]
         assert_eq!(checker.name(), "PyO3Embedded (disabled)");
     }
 
-    #[cfg(feature = "python-embedded")]
     #[test]
     fn test_pyo3_checker_availability() {
         let checker = PyO3EmbeddedChecker::new();
@@ -440,7 +427,6 @@ mod tests {
         assert_eq!(checker.name(), "PyO3Embedded (disabled)");
     }
 
-    #[cfg(feature = "python-embedded")]
     #[test]
     fn test_pyo3_checker_with_valid_file() {
         use std::fs;
@@ -473,7 +459,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "python-embedded")]
     #[test]
     fn test_pyo3_checker_with_flagged_entry() {
         use std::fs;
@@ -511,7 +496,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "python-embedded")]
     #[test]
     fn test_pyo3_checker_ignores_cleared_transactions() {
         use std::fs;
@@ -551,7 +535,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "python-embedded")]
     #[test]
     fn test_pyo3_checker_line_number_fix() {
         use std::fs;
