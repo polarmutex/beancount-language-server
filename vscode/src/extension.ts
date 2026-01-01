@@ -9,14 +9,14 @@ import {
 let client: LanguageClient;
 
 export async function activate(
-  context: vscode.ExtensionContext
+  context: vscode.ExtensionContext,
 ): Promise<void> {
   const server_path = await get_server_path(context);
   if (!server_path) {
     await vscode.window.showErrorMessage(
       "The beancount-language-server extension doesn't ship with prebuilt binaries for your platform yet. " +
         "You can still use it by cloning the polarmutex/beancount-language-server repo from GitHub to build the LSP " +
-        "yourself and use it with this extension with the beancountLangServer.serverPath setting"
+        "yourself and use it with this extension with the beancountLangServer.serverPath setting",
     );
     return;
   }
@@ -36,7 +36,7 @@ export async function activate(
     synchronize: {
       //  // Notify the server about file changes to '.clientrc files contained in the workspace
       fileEvents: vscode.workspace.createFileSystemWatcher(
-        "**/.{bean,beancount}"
+        "**/.{bean,beancount}",
       ),
     },
     initializationOptions: {
@@ -49,11 +49,11 @@ export async function activate(
     "beancount-language-server",
     "Beancount Language Server",
     server_options,
-    client_options
+    client_options,
   );
 
   // Start the client. This will also launch the server
-  client.start();
+  await client.start();
 }
 
 export function deactivate(): Thenable<void> | undefined {
@@ -80,7 +80,7 @@ const PLATFORM_TRIPLETS: PlatformTriplets = {
 };
 
 async function get_server_path(
-  context: vscode.ExtensionContext
+  context: vscode.ExtensionContext,
 ): Promise<string | undefined> {
   const config = vscode.workspace.getConfiguration("beancountLangServer");
   const explicitPath = config.get("serverPath");
@@ -100,11 +100,11 @@ async function get_server_path(
   const bundlePath = vscode.Uri.joinPath(
     context.extensionUri,
     "server",
-    binaryName
+    binaryName,
   );
   const bundleExists = await vscode.workspace.fs.stat(bundlePath).then(
     () => true,
-    () => false
+    () => false,
   );
 
   return bundleExists ? bundlePath.fsPath : undefined;
