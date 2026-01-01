@@ -2,11 +2,17 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use tracing::debug;
 
-pub mod pyo3_embedded;
+#[cfg(feature = "python-embedded")]
+mod pyo3_embedded;
+#[cfg(not(feature = "python-embedded"))]
+mod pyo3_embedded_stub;
 pub mod system_call;
 pub mod types;
 
+#[cfg(feature = "python-embedded")]
 pub use pyo3_embedded::PyO3EmbeddedChecker;
+#[cfg(not(feature = "python-embedded"))]
+pub use pyo3_embedded_stub::PyO3EmbeddedChecker;
 pub use system_call::SystemCallChecker;
 pub use types::*;
 
