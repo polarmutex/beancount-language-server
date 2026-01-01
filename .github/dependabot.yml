@@ -1,18 +1,30 @@
 version: 2
 updates:
+  - package-ecosystem: rust-toolchain
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels:
+      - dependabot
   - package-ecosystem: cargo
     directory: "/"
-    target-branch: "main"
     schedule:
-      interval: monthly
+      interval: weekly
+    commit-message:
+      prefix: "chore:"
+    labels:
+      - dependabot
+  - package-ecosystem: npm
+    directory: "/vscode"
+    schedule:
+      interval: weekly
     commit-message:
       prefix: "chore:"
     labels:
       - dependabot
   - package-ecosystem: github-actions
     directory: "/"
-    target-branch: "main"
     schedule:
-      interval: monthly
+      interval: weekly
     labels:
       - dependabot
