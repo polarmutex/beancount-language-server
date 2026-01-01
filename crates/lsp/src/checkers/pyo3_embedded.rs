@@ -1,7 +1,4 @@
-#![cfg(feature = "python-embedded")]
-
-use super::BeancountChecker;
-use super::types::*;
+use super::{BeancountChecker, types::*};
 use anyhow::{Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString};
@@ -357,44 +354,7 @@ impl BeancountChecker for PyO3EmbeddedChecker {
     }
 }
 
-// Provide a stub implementation when the feature is not enabled
-#[cfg(not(feature = "python-embedded"))]
-pub struct PyO3EmbeddedChecker;
-
-#[cfg(not(feature = "python-embedded"))]
-impl PyO3EmbeddedChecker {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-#[cfg(not(feature = "python-embedded"))]
-impl Default for PyO3EmbeddedChecker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(not(feature = "python-embedded"))]
-impl crate::checkers::BeancountChecker for PyO3EmbeddedChecker {
-    fn check(
-        &self,
-        _journal_file: &std::path::Path,
-    ) -> anyhow::Result<crate::checkers::BeancountCheckResult> {
-        Err(anyhow::anyhow!(
-            "PyO3 embedded checker not available - compile with 'python-embedded' feature"
-        ))
-    }
-
-    fn name(&self) -> &'static str {
-        "PyO3Embedded (disabled)"
-    }
-
-    fn is_available(&self) -> bool {
-        false
-    }
-}
-
+#[cfg(feature = "python-embedded")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,11 +363,7 @@ mod tests {
     #[test]
     fn test_pyo3_checker_creation() {
         let checker = PyO3EmbeddedChecker::new();
-
         assert_eq!(checker.name(), "PyO3Embedded");
-
-        #[cfg(not(feature = "python-embedded"))]
-        assert_eq!(checker.name(), "PyO3Embedded (disabled)");
     }
 
     #[test]
@@ -417,14 +373,6 @@ mod tests {
         // In CI/CD, we'd want to control this with test environment setup
         let _is_available = checker.is_available();
         // Don't assert specific value since it depends on environment
-    }
-
-    #[cfg(not(feature = "python-embedded"))]
-    #[test]
-    fn test_pyo3_checker_disabled() {
-        let checker = PyO3EmbeddedChecker::new();
-        assert!(!checker.is_available());
-        assert_eq!(checker.name(), "PyO3Embedded (disabled)");
     }
 
     #[test]

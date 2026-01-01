@@ -39,15 +39,15 @@ pub struct FormattingConfig {
     pub indent_width: Option<usize>,
 }
 
-impl FormattingConfig {
-    pub fn default() -> Self {
+impl Default for FormattingConfig {
+    fn default() -> Self {
         Self {
             prefix_width: None,
             num_width: None,
             currency_column: None,
-            account_amount_spacing: 2,  // Default spacing like bean-format
-            number_currency_spacing: 1, // Default 1 space between number and currency
-            indent_width: None,         // Default: no indent normalization
+            account_amount_spacing: 2,
+            number_currency_spacing: 1,
+            indent_width: None,
         }
     }
 }
@@ -142,6 +142,28 @@ pub struct FormattingOptions {
 
     /// Enforce consistent indentation width for postings and directives.
     pub indent_width: Option<usize>,
+}
+
+impl From<FormattingOptions> for FormattingConfig {
+    fn from(opts: FormattingOptions) -> Self {
+        let mut cfg = FormattingConfig {
+            prefix_width: opts.prefix_width,
+            num_width: opts.num_width,
+            currency_column: opts.currency_column,
+            indent_width: opts.indent_width,
+            ..Default::default()
+        };
+
+        cfg.account_amount_spacing = opts
+            .account_amount_spacing
+            .unwrap_or(cfg.account_amount_spacing);
+
+        cfg.number_currency_spacing = opts
+            .number_currency_spacing
+            .unwrap_or(cfg.number_currency_spacing);
+
+        cfg
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

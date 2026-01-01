@@ -1,7 +1,7 @@
 mod beancount_data;
 mod capabilities;
 pub mod checkers;
-mod config;
+pub mod config;
 mod dispatcher;
 pub mod document;
 //pub mod error;
