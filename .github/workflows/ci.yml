@@ -33,8 +33,8 @@ jobs:
       - name: Build | Format
         uses: actions-rs/cargo@v1
         with:
-            command: fmt
-            args: -- --check
+          command: fmt
+          args: -- --check
 
   # Run the `clippy` linting tool
   clippy:
@@ -58,8 +58,8 @@ jobs:
       - name: Build | Lint
         uses: actions-rs/cargo@v1
         with:
-            command: clippy
-            args: --all-targets --all-features
+          command: clippy
+          args: --all-targets --all-features
 
   # Run stable Ubuntu tests (required for auto-merge)
   test-ubuntu-stable:
@@ -172,6 +172,35 @@ jobs:
           override: true
           profile: minimal
       - run: cargo doc --all-features --no-deps --workspace
+
+  vscode-extension:
+    name: VS Code Extension (pnpm)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode
+    steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup | Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: vscode/pnpm-lock.yaml
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm exec tsc --noEmit
+
+      - name: Build extension
+        run: pnpm run build
 
   # Consolidated job for required checks (used for branch protection)
   required-checks:
