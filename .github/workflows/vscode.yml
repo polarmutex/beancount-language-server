@@ -1,0 +1,48 @@
+name: vscode
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'vscode/**'
+      - '.github/workflows/vscode.yml'
+  pull_request:
+    paths:
+      - 'vscode/**'
+      - '.github/workflows/vscode.yml'
+
+jobs:
+  vscode-extension:
+    name: VS Code Extension (pnpm)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode
+    steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup | pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ./vscode/package.json
+
+      - name: Setup | Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: vscode/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint & format
+        run: pnpm run lint
+
+      - name: Type check
+        run: pnpm exec tsc --noEmit
+
+      - name: Build extension
+        run: pnpm run build
