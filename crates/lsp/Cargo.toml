@@ -28,8 +28,8 @@ threadpool = "1.8"
 
 # Text processing and parsing
 ropey.workspace = true
-tree-sitter-beancount = "2.4.2"
-# tree-sitter-beancount = { git = "https://github.com/polarmutex/tree-sitter-beancount.git", branch = "devel" }
+# tree-sitter-beancount = "2.4.2"
+tree-sitter-beancount = { git = "https://github.com/trim21/tree-sitter-beancount.git", rev = "8686801"}
 regex.workspace = true
 nucleo = "0.5"
 strum = "0.27.2"
