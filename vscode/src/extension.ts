@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import * as vscode from "vscode";
 import {
   Executable,
@@ -5,6 +7,8 @@ import {
   LanguageClientOptions,
   ServerOptions,
 } from "vscode-languageclient/node";
+
+import { log } from "./util";
 
 let client: LanguageClient;
 
@@ -20,6 +24,8 @@ export async function activate(
     );
     return;
   }
+
+  log.info("use lsp executable", server_path);
 
   const server_executable: Executable = {
     command: server_path,
@@ -100,6 +106,7 @@ async function get_server_path(
   const bundlePath = vscode.Uri.joinPath(
     context.extensionUri,
     "server",
+    triplet,
     binaryName,
   );
   const bundleExists = await vscode.workspace.fs.stat(bundlePath).then(
@@ -107,5 +114,31 @@ async function get_server_path(
     () => false,
   );
 
-  return bundleExists ? bundlePath.fsPath : undefined;
+  if (bundleExists) {
+    return bundlePath.fsPath;
+  }
+
+  const onPath = await find_on_path(binaryName);
+  return onPath ?? undefined;
+}
+
+async function find_on_path(binaryName: string): Promise<string | null> {
+  const candidates = process.env.PATH?.split(path.delimiter) ?? [];
+  const names =
+    process.platform === "win32"
+      ? [binaryName, `${binaryName}.exe`]
+      : [binaryName];
+
+  for (const dir of candidates) {
+    for (const name of names) {
+      const full = path.join(dir, name);
+      try {
+        await fs.promises.access(full, fs.constants.X_OK);
+        return full;
+      } catch (_) {
+        // continue searching
+      }
+    }
+  }
+  return null;
 }

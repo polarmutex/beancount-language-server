@@ -145,3 +145,12 @@ all: fmt clippy test build
 release-prep: fmt-check clippy test-all build-release coverage-lcov
     @echo "✅ Release preparation complete!"
     @echo "📊 Coverage report generated at lcov.info"
+
+
+
+# lazy version so it will only be executed when we need it
+VSCODE_EXT_VERSION:="(jq -r '.version' vscode/package.json)"
+
+# Create a VS Code release tag (vscode/vX.Y.Z) using version from vscode/package.json
+tag-vscode:
+    git tag -a "vscode/v`{{VSCODE_EXT_VERSION}}`" -m "bump(vscode): v`{{VSCODE_EXT_VERSION}}`"
