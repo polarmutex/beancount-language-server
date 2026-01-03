@@ -5,16 +5,16 @@ on:
     branches:
       - main
     paths:
-      - 'vscode/**'
-      - '.github/workflows/vscode.yml'
+      - "vscode/**"
+      - ".github/workflows/vscode.yml"
   pull_request:
     paths:
-      - 'vscode/**'
-      - '.github/workflows/vscode.yml'
+      - "vscode/**"
+      - ".github/workflows/vscode.yml"
 
 jobs:
   vscode-extension:
-    name: VS Code Extension (pnpm)
+    name: VS Code Extension
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -46,3 +46,10 @@ jobs:
 
       - name: Build extension
         run: pnpm run build
+
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v6
+        with:
+          name: vscode-extension-web
+          path: vscode/dist/*.vsix
+          if-no-files-found: error

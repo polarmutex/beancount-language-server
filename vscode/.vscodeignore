@@ -1,0 +1,9 @@
+.cache/
+scripts/
+.vscode/
+eslint.config.mjs
+tsconfig*.json
+src/
+dist/
+pnpm-*.yaml
+.*ignore

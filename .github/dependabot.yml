@@ -25,6 +25,8 @@ updates:
     ignore:
       # vscode doesn't use latest node
       - dependency-name: "@types/node"
+      # should match the version of `engines.vscode`
+      - dependency-name: "@types/vscode"
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

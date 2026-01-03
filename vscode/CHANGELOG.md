@@ -1,1 +1,0 @@
-../crates/lsp/CHANGELOG.md

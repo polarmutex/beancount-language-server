@@ -1,0 +1,67 @@
+name: vscode-release
+
+on:
+  push:
+    tags:
+      - "vscode/v[0-9]+.[0-9]+.[0-9]+"
+
+jobs:
+  publish:
+    name: Publish VS Code Extensions
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode
+    steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup | pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ./vscode/package.json
+
+      - name: Setup | Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: vscode/pnpm-lock.yaml
+
+      - name: Setup | Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install Python deps
+        run: python -m pip install --upgrade pip requests
+
+      - name: Read version from package.json
+        id: version
+        run: |
+          PKG_VERSION=$(jq -r '.version' package.json)
+          echo "pkg_version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Package all targets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm run package:all
+
+      - name: Publish all VSIX to Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_TOKEN }}
+        run: |
+          set -euo pipefail
+          for f in dist/*.vsix; do
+            echo "Publishing $f"
+            pnpm exec vsce publish --no-dependencies --packagePath "$f" --pat "$VSCE_PAT"
+          done
+
+      - name: Upload packaged extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: beancount-language-server-${{ steps.version.outputs.pkg_version }}
+          path: vscode/dist/*.vsix

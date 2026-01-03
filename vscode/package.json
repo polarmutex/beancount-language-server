@@ -17,17 +17,17 @@
   ],
   "icon": "icon.png",
   "engines": {
-    "vscode": "^1.66.0"
+    "vscode": "^1.100.0"
   },
   "scripts": {
-    "vscode:prepublish": "npm run build-base -- --minify",
-    "package": "vsce package --no-dependencies -o beancount-language-server.vsix",
-    "build-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node20",
-    "build": "npm run build-base -- --sourcemap",
-    "watch": "npm run build-base -- --sourcemap --watch",
+    "package": "pnpm exec vsce package --no-dependencies -o dist/beancount-language-server.vsix",
+    "package:all": "node ./scripts/package-all.mjs",
+    "download:binaries": "python ./scripts/fetch_server_binaries.py",
+    "build-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node20 --sourcemap",
+    "build": "pnpm run build-base && pnpm run package",
+    "watch": "pnpm run build-base --sourcemap --watch",
     "lint": "prettier --check . && eslint -c eslint.config.mjs --ext .ts ./src",
-    "fix": "prettier --write . && eslint -c eslint.config.mjs --ext .ts ./src --fix",
-    "pretest": "tsc && npm run build"
+    "fix": "prettier --write . && eslint -c eslint.config.mjs --ext .ts ./src --fix"
   },
   "packageManager": "pnpm@10.26.2",
   "dependencies": {
@@ -36,7 +36,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@types/node": "^22.19.3",
-    "@types/vscode": "~1.107.0",
+    "@types/vscode": "^1.100.0",
     "@typescript-eslint/eslint-plugin": "^8.51.0",
     "@typescript-eslint/parser": "^8.51.0",
     "@vscode/test-electron": "^2.5.2",
