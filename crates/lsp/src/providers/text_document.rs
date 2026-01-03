@@ -332,22 +332,10 @@ fn handle_diagnostics(
                 method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
                 params: to_json(lsp_types::PublishDiagnosticsParams {
                     uri: {
-                        // Handle cross-platform file URI creation
-                        let file_path_str = file.to_str().unwrap();
-                        let uri_str = if cfg!(windows)
-                            && file_path_str.len() > 1
-                            && file_path_str.chars().nth(1) == Some(':')
-                        {
-                            // Windows absolute path like "C:\path"
-                            format!("file:///{}", file_path_str.replace('\\', "/"))
-                        } else if cfg!(windows) && file_path_str.starts_with('/') {
-                            // Unix-style path on Windows, convert to Windows style
-                            format!("file:///C:{}", file_path_str.replace('\\', "/"))
-                        } else {
-                            // Unix path or other platforms
-                            format!("file://{file_path_str}")
-                        };
-                        lsp_types::Uri::from_str(&uri_str).unwrap()
+                        let url = url::Url::from_file_path(file)
+                            .expect("Failed to convert file path to URI");
+                        lsp_types::Uri::from_str(url.as_str())
+                            .expect("Failed to parse URL as LSP URI")
                     },
                     diagnostics,
                     version: None,
