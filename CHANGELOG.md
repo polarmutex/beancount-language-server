@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-01-04
+
+### Bug Fixes
+
+- ':' account completions to only write what comes after
+- Allow setting log level on the file log option
+- Tweak payee/narration quote handleing
+- Resolve Dependabot errors and pinn lsp-server
+- Tighten version constraints to match locked minor versions
+- Collapse nested if statements per clippy recommendations
+- Correct indentation after collapsing nested if statements
+- Remove invalid 'workflows' permission from dependabot-automerge
+
+### Documentation
+
+- Improve VS Code extension build script documentation
+
+### Features
+
+- Add auto-merge workflow for dependabot PRs
+- Add semantic highlight (#684)t
+- Added experimental python-embedded to test improved speeds of calling bean-check
+- Enable Cargo version increases in Dependabot
+- Add justfile and codecov configuration
+- Add highlight for keywords
+
+### Refactor
+
+- Remove uesless language parser and upgrade deps (#695)
+
+### Testing
+
+- Improve test coverage for codecov compliance
+
 ## [1.4.1] - 2025-07-21
 
 ### Bug Fixes
