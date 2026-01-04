@@ -15,10 +15,6 @@
       url = "github:rustsec/advisory-db";
       flake = false;
     };
-    cargo-dist-src = {
-      url = "github:axodotdev/cargo-dist/v0.28.1";
-      flake = false;
-    };
   };
 
   outputs = inputs @ {
@@ -28,7 +24,6 @@
     flake-parts,
     rust-overlay,
     advisory-db,
-    cargo-dist-src,
     ...
   }:
     flake-parts.lib.mkFlake {inherit inputs;} {
@@ -141,16 +136,11 @@
           packages = with pkgs;
             [
               git-cliff
+              cargo-edit
               beancount
               cargo-llvm-cov
+              cargo-hack
               just
-              (pkgs.cargo-dist.overrideAttrs (oldAttrs: {
-                version = "0.28.1";
-                src = cargo-dist-src;
-                cargoDeps = pkgs.rustPlatform.importCargoLock {
-                  lockFile = "${cargo-dist-src}/Cargo.lock";
-                };
-              }))
               rustToolchain
             ]
             ++ lib.optionals stdenv.isLinux [systemd];

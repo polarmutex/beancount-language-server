@@ -16,23 +16,6 @@
         "type": "github"
       }
     },
-    "cargo-dist-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1753046518,
-        "narHash": "sha256-8FWmCRbNyOFi49LH0uLTjUGC88ZAuEA7P9SpaJ4yGNM=",
-        "owner": "axodotdev",
-        "repo": "cargo-dist",
-        "rev": "ae2ad719faf414da36285b98fe10e49670e5e0bd",
-        "type": "github"
-      },
-      "original": {
-        "owner": "axodotdev",
-        "ref": "v0.28.1",
-        "repo": "cargo-dist",
-        "type": "github"
-      }
-    },
     "crane": {
       "locked": {
         "lastModified": 1766774972,
@@ -100,7 +83,6 @@
     "root": {
       "inputs": {
         "advisory-db": "advisory-db",
-        "cargo-dist-src": "cargo-dist-src",
         "crane": "crane",
         "flake-parts": "flake-parts",
         "nixpkgs": "nixpkgs",

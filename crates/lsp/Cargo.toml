@@ -12,7 +12,6 @@ documentation = "https://docs.rs/beancount-language-server"
 keywords = ["beancount", "lsp", "language-server", "accounting", "finance"]
 categories = ["development-tools", "text-editors"]
 description = "A Language Server Protocol implementation for Beancount, providing rich editing features like completions, diagnostics, and formatting"
-publish = false
 
 [dependencies]
 # Core functionality
