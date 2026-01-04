@@ -157,11 +157,11 @@ CARGO_VERSION:="(grep -A5 '^\\[workspace.package\\]' Cargo.toml | grep '^version
 
 # Create a VS Code release tag (vscode/vX.Y.Z) using version from vscode/package.json
 tag-vscode:
-    git tag -a "vscode/v`{{VSCODE_EXT_VERSION}}`" -m "bump(vscode): v`{{VSCODE_EXT_VERSION}}`"
+    git tag -a "vscode/`{{VSCODE_EXT_VERSION}}`" -m "bump(vscode): `{{VSCODE_EXT_VERSION}}`"
 
 # Create a cargo release tag (vX.Y.Z) using version from Cargo.toml workspace
 tag-cargo:
-    git tag -a "v`{{CARGO_VERSION}}`" -m "chore(release): v`{{CARGO_VERSION}}`"
+    git tag -a "`{{CARGO_VERSION}}`" -m "chore(release): `{{CARGO_VERSION}}`"
 
 # ========================================
 # Release Management
