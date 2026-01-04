@@ -23,18 +23,12 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Setup | Rust
-        uses: actions-rs/toolchain@v1.0.7
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
-          override: true
-          profile: minimal
           components: rustfmt
 
       - name: Build | Format
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: -- --check
+        run: cargo fmt -- --check
 
   # Run the `clippy` linting tool
   clippy:
@@ -44,22 +38,13 @@ jobs:
       - name: Setup | Checkout
         uses: actions/checkout@v6
 
-      - name: Setup | Cache
-        uses: Swatinem/rust-cache@v2
-
       - name: Setup | Rust
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
-          override: true
-          profile: minimal
           components: clippy
 
       - name: Build | Lint
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all-targets --all-features
+        run: cargo clippy --all-targets --all-features
 
   # Run stable Ubuntu tests (required for auto-merge)
   test-ubuntu-stable:
@@ -69,16 +54,10 @@ jobs:
       - name: Setup | Checkout
         uses: actions/checkout@v6
 
-      - name: Setup | Cache
-        uses: Swatinem/rust-cache@v2
-
       - name: Setup | Rust
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
           components: llvm-tools-preview
-          profile: minimal
-          override: true
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -125,17 +104,13 @@ jobs:
       - name: Setup | Checkout
         uses: actions/checkout@v6
 
-      - name: Setup | Cache
-        uses: Swatinem/rust-cache@v2
 
       # Install all the required dependencies for testing
       - name: Setup | Rust
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ matrix.rust }}
           components: llvm-tools-preview
-          profile: minimal
-          override: true
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -172,11 +147,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
-          override: true
-          profile: minimal
       - run: cargo doc --all-features --no-deps --workspace
 
   # Consolidated job for required checks (used for branch protection)
