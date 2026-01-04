@@ -84,7 +84,7 @@ pub(crate) struct LspServerState {
 }
 
 /// A snapshot of the state of the language server
-pub(crate) struct LspServerStateSnapshot {
+pub struct LspServerStateSnapshot {
     pub beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
     pub config: Config,
     pub forest: HashMap<PathBuf, Arc<tree_sitter::Tree>>,

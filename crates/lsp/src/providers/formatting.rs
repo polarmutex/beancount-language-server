@@ -1,3 +1,4 @@
+use crate::config::FormattingConfig;
 use crate::server::LspServerStateSnapshot;
 use crate::utils::ToFilePath;
 use anyhow::Result;
@@ -91,7 +92,7 @@ impl<'a> tree_sitter::TextProvider<&'a [u8]> for RopeProvider<'a> {
 /// 2. Calculates alignment widths like bean-format
 /// 3. Applies bean-format's formatting template or currency column logic
 /// 4. Generates minimal text edits for the changes
-pub(crate) fn formatting(
+pub fn formatting(
     snapshot: LspServerStateSnapshot,
     params: lsp_types::DocumentFormattingParams,
 ) -> Result<Option<Vec<lsp_types::TextEdit>>> {
@@ -117,6 +118,19 @@ pub(crate) fn formatting(
         }
     };
 
+    format_document(doc, tree, &snapshot.config.formatting)
+}
+
+/// Format a single document/tree pair using only formatting configuration.
+///
+/// This helper makes it possible to reuse the formatter outside of the full
+/// LSP snapshot (e.g., CLI formatting) by providing the document, parse tree,
+/// and formatting configuration directly.
+pub fn format_document(
+    doc: &crate::document::Document,
+    tree: &tree_sitter::Tree,
+    formatting_config: &FormattingConfig,
+) -> Result<Option<Vec<lsp_types::TextEdit>>> {
     // Extract formateable lines using tree-sitter
     let formateable_lines = match extract_formateable_lines(doc, tree) {
         Ok(lines) => {
@@ -135,23 +149,23 @@ pub(crate) fn formatting(
     }
 
     // Calculate formatting configuration
-    let format_config = calculate_format_config(&formateable_lines, &snapshot.config.formatting);
+    let format_config = calculate_format_config(&formateable_lines, formatting_config);
 
     // Generate text edits based on formatting mode
-    let text_edits = if let Some(currency_col) = snapshot.config.formatting.currency_column {
+    let text_edits = if let Some(currency_col) = formatting_config.currency_column {
         generate_currency_column_edits(&formateable_lines, currency_col, doc)
     } else {
         generate_template_edits(
             &formateable_lines,
             &format_config,
-            snapshot.config.formatting.number_currency_spacing,
-            snapshot.config.formatting.indent_width,
+            formatting_config.number_currency_spacing,
+            formatting_config.indent_width,
             doc,
         )
     };
 
     // Apply indent normalization to remaining lines if configured
-    let final_text_edits = if let Some(indent_width) = snapshot.config.formatting.indent_width {
+    let final_text_edits = if let Some(indent_width) = formatting_config.indent_width {
         apply_indent_normalization_to_remaining_lines(doc, tree, indent_width, text_edits)?
     } else {
         text_edits

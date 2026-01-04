@@ -105,13 +105,6 @@ The binary will be available at `target/release/beancount-language-server`.
     pip install beancount
     ```
 
-### Optional
-
-- **Bean-format**: The language server includes built-in formatting that's fully compatible with bean-format. Installing bean-format is optional for comparison or standalone use
-    ```bash
-    pip install bean-format
-    ```
-
 ### Experimental Features
 
 - **PyO3 Embedded Python**: For improved performance, build with embedded Python support
