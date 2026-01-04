@@ -134,6 +134,12 @@ impl LspServerState {
 
             // Check if exists
             if !journal_root.exists() {
+                self.send_notification::<lsp_types::notification::ShowMessage>(
+                    lsp_types::ShowMessageParams {
+                        typ: lsp_types::MessageType::ERROR,
+                        message: format!("Journal root does not exist: {}", journal_root.display()),
+                    },
+                );
                 tracing::error!("Journal root does not exist: {}", journal_root.display());
                 return Err(anyhow::anyhow!(
                     "Journal root does not exist: {}",
