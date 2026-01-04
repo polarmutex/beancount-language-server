@@ -20,6 +20,7 @@ use tree_sitter_beancount::tree_sitter::{self, Node};
 #[allow(dead_code)] // Some kinds may be mapped in the legend before being emitted.
 enum TokenKind {
     Keyword,
+    Function,
     Comment,
     String,
     Number,
@@ -51,6 +52,7 @@ fn token_type(kind: TokenKind) -> SemanticTokenType {
         TokenKind::Parameter => SemanticTokenType::PARAMETER,
         TokenKind::Property => SemanticTokenType::PROPERTY,
         TokenKind::Class => SemanticTokenType::CLASS,
+        TokenKind::Function => SemanticTokenType::FUNCTION,
     }
 }
 
@@ -181,6 +183,25 @@ fn classify_node(kind: NodeKind) -> Option<TokenKind> {
         NodeKind::Narration => Option::Some(TokenKind::String),
         NodeKind::Payee => Option::Some(TokenKind::String),
         NodeKind::String => Option::Some(TokenKind::String),
+
+        NodeKind::KeywordBalance => Option::Some(TokenKind::Function),
+        NodeKind::KeywordClose => Option::Some(TokenKind::Function),
+        NodeKind::KeywordCommodity => Option::Some(TokenKind::Function),
+        NodeKind::KeywordCustom => Option::Some(TokenKind::Function),
+        NodeKind::KeywordDocument => Option::Some(TokenKind::Function),
+        NodeKind::KeywordEvent => Option::Some(TokenKind::Function),
+        NodeKind::KeywordInclude => Option::Some(TokenKind::Function),
+        NodeKind::KeywordNote => Option::Some(TokenKind::Function),
+        NodeKind::KeywordOpen => Option::Some(TokenKind::Function),
+        NodeKind::KeywordOption => Option::Some(TokenKind::Function),
+        NodeKind::KeywordPad => Option::Some(TokenKind::Function),
+        NodeKind::KeywordPlugin => Option::Some(TokenKind::Function),
+        NodeKind::KeywordPopmeta => Option::Some(TokenKind::Function),
+        NodeKind::KeywordPoptag => Option::Some(TokenKind::Function),
+        NodeKind::KeywordPrice => Option::Some(TokenKind::Function),
+        NodeKind::KeywordPushmeta => Option::Some(TokenKind::Function),
+        NodeKind::KeywordPushtag => Option::Some(TokenKind::Function),
+        NodeKind::KeywordQuery => Option::Some(TokenKind::Function),
 
         NodeKind::Unknown => Option::None,
     }
