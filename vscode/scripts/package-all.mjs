@@ -102,6 +102,11 @@ async function main() {
       BLS_TARGETS: combinedTriplets.join(","),
     });
 
+    // Stash all downloaded binaries before packaging.
+    // We need to clean server/ directory between each target packaging to ensure
+    // each VSIX only contains the binary for that specific platform. Rather than
+    // re-downloading binaries for every target, we stash them once here and restore
+    // the appropriate binary for each target in packageTarget().
     const binaryNameDefault = "beancount-language-server";
     await fsp.mkdir(STASH_DIR, { recursive: true });
     for (const triplet of combinedTriplets) {
