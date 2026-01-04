@@ -5,6 +5,17 @@ Fetch prebuilt beancount-language-server binaries for packaging the VS Code exte
 Downloads release assets from GitHub, verifies SHA256 sums, and lays them out under
 server/<triplet>/. All extraction is handled with Python libraries so no system tar
 or unzip executables are required.
+
+Environment Variables:
+    BLS_VERSION: Specific release version to download (e.g., "1.4.1"). If not set,
+                 fetches the latest release from GitHub.
+    BLS_TARGETS: Comma-separated list of target triplets to download (e.g.,
+                 "x86_64-pc-windows-msvc,aarch64-apple-darwin"). If not set, downloads
+                 all default targets unless VSCE_TARGET or BLS_NO_BUNDLE is set.
+    BLS_NO_BUNDLE: Set to any value to skip downloading binaries entirely.
+    VSCE_TARGET: VS Code platform identifier (e.g., "win32-x64"). If set, only downloads
+                 the binary for that platform.
+    GITHUB_TOKEN: Optional GitHub API token for authenticated requests (increases rate limits).
 """
 
 import hashlib
