@@ -61,7 +61,7 @@ jobs:
           done
 
       - name: Upload packaged extension
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: beancount-language-server-${{ steps.version.outputs.pkg_version }}
           path: vscode/dist/*.vsix
