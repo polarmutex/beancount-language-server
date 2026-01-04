@@ -167,6 +167,18 @@ tag-cargo:
 # Release Management
 # ========================================
 
+# Verify cargo-dist configuration
+dist-check:
+    dist plan --output-format=json
+
+# Generate release artifacts locally for testing (doesn't publish, auto-detects local platform)
+dist-build:
+    dist build --artifacts=host
+
+# Regenerate release workflow (run after cargo-dist config changes)
+dist-init:
+    dist init --yes
+
 # Update CHANGELOG using git-cliff
 changelog:
     git cliff --output CHANGELOG.md
