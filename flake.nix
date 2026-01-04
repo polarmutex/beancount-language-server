@@ -141,8 +141,10 @@
           packages = with pkgs;
             [
               git-cliff
+              cargo-edit
               beancount
               cargo-llvm-cov
+              cargo-hack
               just
               (pkgs.cargo-dist.overrideAttrs (oldAttrs: {
                 version = "0.28.1";
