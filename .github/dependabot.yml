@@ -3,13 +3,13 @@ updates:
   - package-ecosystem: rust-toolchain
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
     labels:
       - dependabot
   - package-ecosystem: cargo
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
     commit-message:
       prefix: "chore:"
     labels:
@@ -17,7 +17,7 @@ updates:
   - package-ecosystem: npm
     directory: "/vscode"
     schedule:
-      interval: weekly
+      interval: monthly
     commit-message:
       prefix: "chore:"
     labels:
@@ -30,6 +30,6 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
     labels:
       - dependabot
