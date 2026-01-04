@@ -12,14 +12,14 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 
 ### 🚀 Currently Implemented
 
-| LSP Feature | Description | Status |
-|-------------|-------------|---------|
-| **Completions** | Smart autocompletion for accounts, payees, dates, narration, tags, links, and transaction types | ✅ |
-| **Diagnostics** | Real-time error checking and validation via beancount Python integration | ✅ |
-| **Formatting** | Document formatting compatible with `bean-format`, with support for prefix-width, num-width, and currency-column options | ✅ |
-| **Rename** | Rename symbols across files | ✅ |
-| **References** | Find all references to accounts, payees, etc. | ✅ |
-| **Semantic Highlighting** | Advanced syntax highlighting with semantic information | ✅ |
+| LSP Feature               | Description                                                                                                              | Status |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------ |
+| **Completions**           | Smart autocompletion for accounts, payees, dates, narration, tags, links, and transaction types                          | ✅     |
+| **Diagnostics**           | Real-time error checking and validation via beancount Python integration                                                 | ✅     |
+| **Formatting**            | Document formatting compatible with `bean-format`, with support for prefix-width, num-width, and currency-column options | ✅     |
+| **Rename**                | Rename symbols across files                                                                                              | ✅     |
+| **References**            | Find all references to accounts, payees, etc.                                                                            | ✅     |
+| **Semantic Highlighting** | Advanced syntax highlighting with semantic information                                                                   | ✅     |
 
 ### 📋 Completion Types
 
@@ -33,16 +33,16 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 
 ### 🔮 Planned Features
 
-| LSP Feature | Description | Priority |
-|-------------|-------------|----------|
-| **Hover** | Show account balances, transaction details, account metadata | High |
-| **Go to Definition** | Jump to account/payee/commodity definitions | High |
-| **Document Symbols** | Outline view showing accounts, transactions, and structure | High |
-| **Folding Ranges** | Fold transactions, account hierarchies, and multi-line entries | Medium |
-| **Code Actions** | Quick fixes, refactoring, auto-balance transactions | Medium |
-| **Inlay Hints** | Show computed balances, exchange rates, running totals | Low |
-| **Signature Help** | Help with transaction syntax and directive parameters | Low |
-| **Workspace Symbols** | Find accounts, payees, commodities across all files | Low |
+| LSP Feature           | Description                                                    | Priority |
+| --------------------- | -------------------------------------------------------------- | -------- |
+| **Hover**             | Show account balances, transaction details, account metadata   | High     |
+| **Go to Definition**  | Jump to account/payee/commodity definitions                    | High     |
+| **Document Symbols**  | Outline view showing accounts, transactions, and structure     | High     |
+| **Folding Ranges**    | Fold transactions, account hierarchies, and multi-line entries | Medium   |
+| **Code Actions**      | Quick fixes, refactoring, auto-balance transactions            | Medium   |
+| **Inlay Hints**       | Show computed balances, exchange rates, running totals         | Low      |
+| **Signature Help**    | Help with transaction syntax and directive parameters          | Low      |
+| **Workspace Symbols** | Find accounts, payees, commodities across all files            | Low      |
 
 ## 📦 Installation
 
@@ -101,23 +101,23 @@ The binary will be available at `target/release/beancount-language-server`.
 ### Required
 
 - **Beancount**: Install the Python beancount package for diagnostics
-    ```bash
-    pip install beancount
-    ```
+  ```bash
+  pip install beancount
+  ```
 
 ### Optional
 
 - **Bean-format**: The language server includes built-in formatting that's fully compatible with bean-format. Installing bean-format is optional for comparison or standalone use
-    ```bash
-    pip install bean-format
-    ```
+  ```bash
+  pip install bean-format
+  ```
 
 ### Experimental Features
 
 - **PyO3 Embedded Python**: For improved performance, build with embedded Python support
-    ```bash
-    cargo build --features python-embedded
-    ```
+  ```bash
+  cargo build --features python-embedded
+  ```
 
 ## ⚙️ Configuration
 
@@ -125,18 +125,18 @@ The language server accepts configuration via LSP initialization options:
 
 ```json
 {
-    "journal_file": "/path/to/main.beancount",
-    "bean_check": {
-        "method": "system",
-        "bean_check_cmd": "bean-check"
-    },
-    "formatting": {
-        "prefix_width": 30,
-        "num_width": 10,
-        "currency_column": 60,
-        "account_amount_spacing": 2,
-        "number_currency_spacing": 1
-    }
+  "journal_file": "/path/to/main.beancount",
+  "bean_check": {
+    "method": "system",
+    "bean_check_cmd": "bean-check"
+  },
+  "formatting": {
+    "prefix_width": 30,
+    "num_width": 10,
+    "currency_column": 60,
+    "account_amount_spacing": 2,
+    "number_currency_spacing": 1
+  }
 }
 ```
 
@@ -187,10 +187,10 @@ The language server supports three different methods for validating beancount fi
 
 ```json
 {
-    "bean_check": {
-        "method": "system",
-        "bean_check_cmd": "/usr/local/bin/bean-check"
-    }
+  "bean_check": {
+    "method": "system",
+    "bean_check_cmd": "/usr/local/bin/bean-check"
+  }
 }
 ```
 
@@ -198,11 +198,11 @@ The language server supports three different methods for validating beancount fi
 
 ```json
 {
-    "bean_check": {
-        "method": "python-script",
-        "python_cmd": "/usr/bin/python3",
-        "python_script": "./python/bean_check.py"
-    }
+  "bean_check": {
+    "method": "python-script",
+    "python_cmd": "/usr/bin/python3",
+    "python_script": "./python/bean_check.py"
+  }
 }
 ```
 
@@ -210,9 +210,9 @@ The language server supports three different methods for validating beancount fi
 
 ```json
 {
-    "bean_check": {
-        "method": "python-embedded"
-    }
+  "bean_check": {
+    "method": "python-embedded"
+  }
 }
 ```
 
@@ -246,7 +246,7 @@ The language server supports three different methods for validating beancount fi
 
 ```json
 {
-    "formatting": {}
+  "formatting": {}
 }
 ```
 
@@ -254,9 +254,9 @@ The language server supports three different methods for validating beancount fi
 
 ```json
 {
-    "formatting": {
-        "prefix_width": 25
-    }
+  "formatting": {
+    "prefix_width": 25
+  }
 }
 ```
 
@@ -264,9 +264,9 @@ The language server supports three different methods for validating beancount fi
 
 ```json
 {
-    "formatting": {
-        "currency_column": 60
-    }
+  "formatting": {
+    "currency_column": 60
+  }
 }
 ```
 
@@ -274,9 +274,9 @@ The language server supports three different methods for validating beancount fi
 
 ```json
 {
-    "formatting": {
-        "number_currency_spacing": 2
-    }
+  "formatting": {
+    "number_currency_spacing": 2
+  }
 }
 ```
 
@@ -290,12 +290,12 @@ This controls the whitespace between numbers and currency codes:
 
 ```json
 {
-    "formatting": {
-        "prefix_width": 30,
-        "currency_column": 65,
-        "account_amount_spacing": 3,
-        "number_currency_spacing": 1
-    }
+  "formatting": {
+    "prefix_width": 30,
+    "currency_column": 65,
+    "account_amount_spacing": 3,
+    "number_currency_spacing": 1
+  }
 }
 ```
 
@@ -430,21 +430,21 @@ Add to LSP settings:
 
 ```json
 {
-    "clients": {
-        "beancount-language-server": {
-            "enabled": true,
-            "command": ["beancount-language-server"],
-            "selector": "source.beancount",
-            "initializationOptions": {
-                "journal_file": "/path/to/main.beancount",
-                "formatting": {
-                    "prefix_width": 30,
-                    "currency_column": 60,
-                    "number_currency_spacing": 1
-                }
-            }
+  "clients": {
+    "beancount-language-server": {
+      "enabled": true,
+      "command": ["beancount-language-server"],
+      "selector": "source.beancount",
+      "initializationOptions": {
+        "journal_file": "/path/to/main.beancount",
+        "formatting": {
+          "prefix_width": 30,
+          "currency_column": 60,
+          "number_currency_spacing": 1
         }
+      }
     }
+  }
 }
 ```
 
@@ -553,9 +553,9 @@ cargo fmt -- --check
 1. **Make changes** to the Rust code
 2. **Test locally** with `cargo test`
 3. **Run LSP server** in development mode:
-    ```bash
-    cargo run --bin beancount-language-server
-    ```
+   ```bash
+   cargo run --bin beancount-language-server
+   ```
 4. **Test with editor** by configuring it to use the local binary
 
 ### VS Code Extension Development
@@ -569,13 +569,11 @@ pnpm run package    # Package extension
 
 ### Release Process
 
-The project uses [cargo-dist](https://opensource.axo.dev/cargo-dist/) for automated releases:
-
 1. **Tag a release**: `git tag v1.0.0 && git push --tags`
 2. **GitHub Actions** automatically builds and publishes:
-    - Binaries for all supported platforms
-    - Crates.io release
-    - GitHub release with assets
+   - Binaries for all supported platforms
+   - Crates.io release
+   - GitHub release with assets
 
 ## 🤝 Contributing
 

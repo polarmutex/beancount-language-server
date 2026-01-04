@@ -141,7 +141,6 @@
               cargo-llvm-cov
               cargo-hack
               just
-              cargo-dist
               rustToolchain
             ]
             ++ lib.optionals stdenv.isLinux [systemd];
