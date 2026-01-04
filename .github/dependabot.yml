@@ -33,3 +33,5 @@ updates:
       interval: monthly
     labels:
       - dependabot
+    # Note: .github/workflows/release.yml is managed by cargo-dist
+    # If Dependabot opens a PR updating it, regenerate with: just dist-init
