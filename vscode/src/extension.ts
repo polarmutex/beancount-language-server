@@ -37,6 +37,18 @@ export async function activate(
   };
 
   const config = vscode.workspace.getConfiguration("beancountLangServer");
+
+  // Build initialization options - only include journal_file if it's valid and non-empty
+  const initializationOptions: { journal_file?: string; formatting?: unknown } =
+    {
+      formatting: config.get("formatting"),
+    };
+
+  // Only include journal_file if it has a valid value (not undefined, null, or empty string)
+  if (validatedJournalFile && validatedJournalFile.trim() !== "") {
+    initializationOptions.journal_file = validatedJournalFile;
+  }
+
   const client_options: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "beancount" }],
     synchronize: {
@@ -45,10 +57,7 @@ export async function activate(
         "**/.{bean,beancount}",
       ),
     },
-    initializationOptions: {
-      journal_file: config.get("journalFile"),
-      formatting: config.get("formatting"),
-    },
+    initializationOptions,
   };
 
   client = new LanguageClient(
