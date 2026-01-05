@@ -134,31 +134,36 @@ impl LspServerState {
 
             // Check if exists
             if !journal_root.exists() {
+                let error_msg = format!("Journal root does not exist: {}", journal_root.display());
+                tracing::error!("{}", error_msg);
+
+                // Send error message to client
                 self.send_notification::<lsp_types::notification::ShowMessage>(
                     lsp_types::ShowMessageParams {
                         typ: lsp_types::MessageType::ERROR,
-                        message: format!("Journal root does not exist: {}", journal_root.display()),
+                        message: error_msg.clone(),
                     },
                 );
-                tracing::error!("Journal root does not exist: {}", journal_root.display());
-                return Err(anyhow::anyhow!(
-                    "Journal root does not exist: {}",
-                    journal_root.display()
-                ));
-            }
 
-            tracing::info!(
-                "Initializing forest for journal root: {}",
-                journal_root.display()
-            );
-            let snapshot = self.snapshot();
-            let sender = self.task_sender.clone();
-            self.thread_pool.execute(move || {
-                match forest::parse_initial_forest(snapshot, journal_root, sender) {
-                    Ok(_) => tracing::info!("Forest initialization completed successfully"),
-                    Err(e) => tracing::error!("Forest initialization failed: {}", e),
-                }
-            });
+                // Log warning and continue without forest initialization instead of returning error
+                // This allows the language server to continue functioning for open documents
+                tracing::warn!(
+                    "Continuing without forest initialization due to invalid journal root"
+                );
+            } else {
+                tracing::info!(
+                    "Initializing forest for journal root: {}",
+                    journal_root.display()
+                );
+                let snapshot = self.snapshot();
+                let sender = self.task_sender.clone();
+                self.thread_pool.execute(move || {
+                    match forest::parse_initial_forest(snapshot, journal_root, sender) {
+                        Ok(_) => tracing::info!("Forest initialization completed successfully"),
+                        Err(e) => tracing::error!("Forest initialization failed: {}", e),
+                    }
+                });
+            }
         } else {
             tracing::warn!("No journal_root configured, skipping forest initialization");
         }

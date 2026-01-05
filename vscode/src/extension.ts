@@ -44,9 +44,9 @@ export async function activate(
       formatting: config.get("formatting"),
     };
 
-  // Only include journal_file if it has a valid value (not undefined, null, or empty string)
-  if (validatedJournalFile && validatedJournalFile.trim() !== "") {
-    initializationOptions.journal_file = validatedJournalFile;
+  const journalFile = config.get<string>("journalFile");
+  if (journalFile && journalFile.trim() !== "") {
+    initializationOptions.journal_file = journalFile;
   }
 
   const client_options: LanguageClientOptions = {
