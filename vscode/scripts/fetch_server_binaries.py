@@ -31,7 +31,6 @@ from typing import Dict, List
 
 import requests
 
-
 REPO = "polarmutex/beancount-language-server"
 
 DEFAULT_TARGETS: Dict[str, Dict[str, str]] = {
@@ -138,7 +137,7 @@ def download(url: str, destination: Path, headers: Dict[str, str]) -> None:
     destination.write_bytes(resp.content)
 
 
-def extract_archive(archive_path: Path, destination: Path) -> None:
+def extract_archive(archive_path: Path, destination: Path, binary_name: str) -> None:
     destination.mkdir(parents=True, exist_ok=True)
 
     if archive_path.suffix == ".zip":
@@ -147,8 +146,8 @@ def extract_archive(archive_path: Path, destination: Path) -> None:
         return
 
     if archive_path.suffix == ".gz":
-        # For .gz files, extract to a file with the same name minus .gz
-        output_path = destination / archive_path.stem
+        # For .gz files, extract to the specified binary name
+        output_path = destination / binary_name
         with gzip.open(archive_path, "rb") as gz_file:
             output_path.write_bytes(gz_file.read())
         return
@@ -254,7 +253,7 @@ def download_and_extract(
                 f"Checksum mismatch for {cfg['archive']}: expected {expected} got {actual}"
             )
 
-    extract_archive(archive_path, target_dir)
+    extract_archive(archive_path, target_dir, cfg["binary"])
 
     located = locate_binary(target_dir, cfg["binary"])
     if not located:
