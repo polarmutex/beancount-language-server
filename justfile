@@ -155,9 +155,64 @@ release-prep: fmt-check clippy hack-check test-all build-release coverage-lcov
 VSCODE_EXT_VERSION:="(jq -r '.version' vscode/package.json)"
 CARGO_VERSION:="(grep -A5 '^\\[workspace.package\\]' Cargo.toml | grep '^version =' | head -n1 | sed 's/version = \"\\(.*\\)\"/\\1/')"
 
+# ========================================
+# VSCode Extension
+# ========================================
+
+# Build the VSCode extension VSIX with Nix (default)
+vscode-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "🔨 Building VSIX with Nix..."
+    nix build .#beancount-vscode-vsix
+    echo "✅ VSIX built:"
+    ls -lh result/*.vsix
+
+# Install the VSCode extension locally for testing
+vscode-install: vscode-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VSIX=$(ls result/*.vsix 2>/dev/null | head -n1)
+    if [[ -z "$VSIX" ]]; then
+        echo "❌ No VSIX file found. Run 'just vscode-build' first."
+        exit 1
+    fi
+    echo "📥 Installing $VSIX..."
+    code --install-extension "$VSIX" --force
+    echo "✅ Extension installed! Reload VSCode to use it."
+
+# Test the VSCode extension (build, install, and show testing guide)
+vscode-test: vscode-install
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "🧪 Extension installed and ready for testing!"
+    echo ""
+    echo "📝 Testing checklist:"
+    echo "   1. Open a .beancount file"
+    echo "   2. Check 'Output > Beancount Language Server' for logs"
+    echo "   3. Test completions (Ctrl+Space)"
+    echo "   4. Test formatting (Shift+Alt+F)"
+    echo "   5. Verify diagnostics appear for errors"
+    echo ""
+    echo "🔍 To view extension logs:"
+    echo "   - VSCode: View > Output > Select 'Beancount Language Server'"
+    echo ""
+    echo "✅ Happy testing!"
+
+# Uninstall the VSCode extension
+vscode-uninstall:
+    code --uninstall-extension polarmutex.beancount-langserver
+
+# Clean VSCode build artifacts
+vscode-clean:
+    #!/usr/bin/env bash
+    rm -rf result
+    cd vscode 2>/dev/null && rm -rf dist/ out/ node_modules/ .cache/ || true
+    echo "✅ Cleaned VSCode build artifacts"
+
 # Create a VS Code release tag (vscode/vX.Y.Z) using version from vscode/package.json
 tag-vscode:
-    git tag -a "vscode/`{{VSCODE_EXT_VERSION}}`" -m "bump(vscode): `{{VSCODE_EXT_VERSION}}`"
+    git tag -a "vscode/v`{{VSCODE_EXT_VERSION}}`" -m "bump(vscode): v`{{VSCODE_EXT_VERSION}}`"
 
 # Create a cargo release tag (vX.Y.Z) using version from Cargo.toml workspace
 tag-cargo:
