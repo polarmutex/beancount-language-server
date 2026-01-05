@@ -9,3 +9,4 @@ lcov.info
 result
 *.py[cod]
 .serena
+beancount-language-server.log
