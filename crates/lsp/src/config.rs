@@ -70,9 +70,8 @@ impl Config {
             // Only set journal_root if journal_file is present and non-empty
             if let Some(journal_file) = beancount_lsp_settings.journal_file {
                 if !journal_file.trim().is_empty() {
-                    self.journal_root = Some(PathBuf::from(
-                        shellexpand::tilde(&journal_file).as_ref(),
-                    ));
+                    self.journal_root =
+                        Some(PathBuf::from(shellexpand::tilde(&journal_file).as_ref()));
                 } else {
                     tracing::debug!("Journal file is empty string, treating as None");
                 }

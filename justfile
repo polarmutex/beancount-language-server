@@ -203,12 +203,65 @@ vscode-test: vscode-install
 vscode-uninstall:
     code --uninstall-extension polarmutex.beancount-langserver
 
+# Install VSCode extension dependencies
+vscode-deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd vscode
+    if command -v pnpm &> /dev/null; then
+        pnpm install
+    else
+        echo "⚠️  pnpm not found. Running via nix develop..."
+        cd .. && nix develop -c bash -c 'cd vscode && pnpm install'
+    fi
+    echo "✅ VSCode dependencies installed!"
+
 # Clean VSCode build artifacts
 vscode-clean:
     #!/usr/bin/env bash
     rm -rf result
     cd vscode 2>/dev/null && rm -rf dist/ out/ node_modules/ .cache/ || true
     echo "✅ Cleaned VSCode build artifacts"
+
+# Check VSCode extension formatting and linting (auto-installs dependencies if needed)
+vscode-lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Install dependencies if node_modules doesn't exist
+    if [[ ! -d "vscode/node_modules" ]]; then
+        echo "📦 Installing dependencies first..."
+        just vscode-deps
+    fi
+    cd vscode
+    if command -v pnpm &> /dev/null; then
+        pnpm run lint
+    else
+        echo "⚠️  pnpm not found. Running via nix develop..."
+        cd .. && nix develop -c bash -c 'cd vscode && pnpm run lint'
+    fi
+    echo "✅ VSCode extension lint check passed!"
+
+# Auto-fix VSCode extension formatting and linting issues (auto-installs dependencies if needed)
+vscode-fix:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Install dependencies if node_modules doesn't exist
+    if [[ ! -d "vscode/node_modules" ]]; then
+        echo "📦 Installing dependencies first..."
+        just vscode-deps
+    fi
+    cd vscode
+    if command -v pnpm &> /dev/null; then
+        pnpm run fix
+    else
+        echo "⚠️  pnpm not found. Running via nix develop..."
+        cd .. && nix develop -c bash -c 'cd vscode && pnpm run fix'
+    fi
+    echo "✅ VSCode extension formatting and linting fixed!"
+
+# Run all VSCode extension checks (lint + build)
+vscode-check: vscode-lint vscode-build
+    @echo "✅ All VSCode extension checks passed!"
 
 # Create a VS Code release tag (vscode/vX.Y.Z) using version from vscode/package.json
 tag-vscode:
