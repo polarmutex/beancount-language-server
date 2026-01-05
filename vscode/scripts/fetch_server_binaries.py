@@ -18,6 +18,7 @@ Environment Variables:
     GITHUB_TOKEN: Optional GitHub API token for authenticated requests (increases rate limits).
 """
 
+import gzip
 import hashlib
 import os
 import shutil
@@ -36,22 +37,22 @@ REPO = "polarmutex/beancount-language-server"
 DEFAULT_TARGETS: Dict[str, Dict[str, str]] = {
     "win32-x64": {
         "triplet": "x86_64-pc-windows-msvc",
-        "archive": "beancount-language-server-x86_64-pc-windows-msvc.zip",
+        "archive": "beancount-language-server-windows-x64.gz",
         "binary": "beancount-language-server.exe",
     },
     "darwin-arm64": {
         "triplet": "aarch64-apple-darwin",
-        "archive": "beancount-language-server-aarch64-apple-darwin.tar.xz",
+        "archive": "beancount-language-server-macos-arm64.gz",
         "binary": "beancount-language-server",
     },
     "linux-x64": {
         "triplet": "x86_64-unknown-linux-gnu",
-        "archive": "beancount-language-server-x86_64-unknown-linux-gnu.tar.xz",
+        "archive": "beancount-language-server-linux-x64.gz",
         "binary": "beancount-language-server",
     },
     "linux-arm64": {
         "triplet": "aarch64-unknown-linux-gnu",
-        "archive": "beancount-language-server-aarch64-unknown-linux-gnu.tar.xz",
+        "archive": "beancount-language-server-linux-arm64.gz",
         "binary": "beancount-language-server",
     },
 }
@@ -143,6 +144,13 @@ def extract_archive(archive_path: Path, destination: Path) -> None:
     if archive_path.suffix == ".zip":
         with zipfile.ZipFile(archive_path) as zf:
             zf.extractall(destination)
+        return
+
+    if archive_path.suffix == ".gz":
+        # For .gz files, extract to a file with the same name minus .gz
+        output_path = destination / archive_path.stem
+        with gzip.open(archive_path, "rb") as gz_file:
+            output_path.write_bytes(gz_file.read())
         return
 
     suffixes = archive_path.suffixes
