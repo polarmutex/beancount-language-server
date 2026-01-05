@@ -67,10 +67,15 @@ impl Config {
         // Example: "[]" is sent by nvim-lspconfig if no initialization options are specified in
         // Lua.
         if let Ok(beancount_lsp_settings) = serde_json::from_value::<BeancountLspOptions>(json) {
-            if beancount_lsp_settings.journal_file.is_some() {
-                self.journal_root = Some(PathBuf::from(
-                    shellexpand::tilde(&beancount_lsp_settings.journal_file.unwrap()).as_ref(),
-                ));
+            // Only set journal_root if journal_file is present and non-empty
+            if let Some(journal_file) = beancount_lsp_settings.journal_file {
+                if !journal_file.trim().is_empty() {
+                    self.journal_root = Some(PathBuf::from(
+                        shellexpand::tilde(&journal_file).as_ref(),
+                    ));
+                } else {
+                    tracing::debug!("Journal file is empty string, treating as None");
+                }
             }
 
             // Update formatting configuration
@@ -219,5 +224,23 @@ mod tests {
             .update(serde_json::from_str("{\"journal_file\": \"mypath\"}").unwrap())
             .unwrap();
         assert_eq!(config.journal_root, Some("mypath".into()));
+    }
+
+    #[test]
+    fn test_empty_journal() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(serde_json::from_str("{\"journal_file\": \"\"}").unwrap())
+            .unwrap();
+        assert_eq!(config.journal_root, None);
+    }
+
+    #[test]
+    fn test_whitespace_journal() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(serde_json::from_str("{\"journal_file\": \"   \"}").unwrap())
+            .unwrap();
+        assert_eq!(config.journal_root, None);
     }
 }
