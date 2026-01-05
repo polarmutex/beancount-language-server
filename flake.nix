@@ -157,9 +157,19 @@
               runHook preBuild
 
               # Create server directory with the locally built binary
-              mkdir -p server/${system}
-              cp ${beancount-language-server}/bin/beancount-language-server server/${system}/
-              chmod +x server/${system}/beancount-language-server
+              # Map Nix system to rust triplet for VSCode extension compatibility
+              triplet=""
+              case "${system}" in
+                x86_64-linux) triplet="x86_64-unknown-linux-gnu" ;;
+                aarch64-linux) triplet="aarch64-unknown-linux-gnu" ;;
+                x86_64-darwin) triplet="x86_64-apple-darwin" ;;
+                aarch64-darwin) triplet="aarch64-apple-darwin" ;;
+                *) echo "Unsupported system: ${system}"; exit 1 ;;
+              esac
+
+              mkdir -p server/$triplet
+              cp ${beancount-language-server}/bin/beancount-language-server server/$triplet/
+              chmod +x server/$triplet/beancount-language-server
 
               # Build the extension (compiles TypeScript)
               pnpm run build-base
