@@ -16,7 +16,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
                 open_close: Some(true),
                 change: Some(TextDocumentSyncKind::INCREMENTAL),
                 will_save: None,
-                will_save_wait_until: None,
+                will_save_wait_until: Some(true),
                 save: Some(lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
                     lsp_types::SaveOptions {
                         include_text: Some(false),
@@ -86,10 +86,9 @@ mod tests {
     }
 
     #[test]
-    fn test_will_save_capabilities_disabled() {
-        // Regression test for issue #741
-        // will_save and will_save_wait_until should be disabled because
-        // the handlers are not implemented
+    fn test_will_save_capabilities() {
+        // will_save is not implemented, but will_save_wait_until is implemented
+        // for automatic format-on-save functionality
         let caps = server_capabilities();
 
         let sync = caps
@@ -103,8 +102,9 @@ mod tests {
                     "will_save should be disabled (not implemented)"
                 );
                 assert_eq!(
-                    options.will_save_wait_until, None,
-                    "will_save_wait_until should be disabled (not implemented)"
+                    options.will_save_wait_until,
+                    Some(true),
+                    "will_save_wait_until should be enabled for format-on-save"
                 );
             }
             _ => panic!("Expected TextDocumentSyncOptions"),
@@ -434,11 +434,17 @@ mod tests {
                 ) -> anyhow::Result<()> = handlers::text_document::did_save;
             }
 
-            // Verify will_save_wait_until is NOT advertised (regression test for #741)
-            assert_eq!(
-                sync_options.will_save_wait_until, None,
-                "will_save_wait_until should not be advertised without a handler implementation"
-            );
+            // will_save_wait_until handler for format-on-save
+            if sync_options.will_save_wait_until == Some(true) {
+                let _handler: fn(
+                    LspServerStateSnapshot,
+                    lsp_types::WillSaveTextDocumentParams,
+                )
+                    -> anyhow::Result<Option<Vec<lsp_types::TextEdit>>> =
+                    handlers::text_document::will_save_wait_until;
+            }
+
+            // will_save is not implemented
             assert_eq!(
                 sync_options.will_save, None,
                 "will_save should not be advertised without a handler implementation"
