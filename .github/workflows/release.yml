@@ -41,6 +41,7 @@ jobs:
                   for platform in $(cd artifacts; ls | sed 's/^beancount-language-server\.//'); do
                     exe=$(ls artifacts/beancount-language-server.$platform/beancount-language-server*)
                     gzip --stdout --name $exe > target/beancount-language-server-$platform.gz
+                    sha256sum target/beancount-language-server-$platform.gz | awk '{print $1}' > target/beancount-language-server-$platform.gz.sha256
                   done
                   rm -rf artifacts
                   ls -l target/
@@ -50,11 +51,13 @@ jobs:
               with:
                   subject-path: |
                       target/beancount-language-server-*.gz
+                      target/beancount-language-server-*.gz.sha256
 
             - name: Create release
               run: |-
                   gh release create $GITHUB_REF_NAME \
                   target/beancount-language-server-*.gz \
+                  target/beancount-language-server-*.gz.sha256 \
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
