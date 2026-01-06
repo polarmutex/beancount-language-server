@@ -62,8 +62,8 @@ filter_commits = false
 tag_pattern = "[0-9]*"
 # regex for skipping tags
 #skip_tags = "v0.1.0-beta.1"
-# regex for ignoring tags
-ignore_tags = ""
+# regex for ignoring tags (ignore old vscode/ prefixed tags)
+ignore_tags = "vscode/.*"
 # sort the tags topologically
 topo_order = false
 # sort the commits inside sections by oldest/newest order
