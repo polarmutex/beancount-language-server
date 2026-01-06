@@ -9,13 +9,14 @@ on:
             - "[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
+    # Rust binary release jobs
     build:
         uses: ./.github/workflows/build.yml
         with:
             run-test: false
 
     release:
-        name: Release on GitHub
+        name: Release Rust Binaries on GitHub
         runs-on: ubuntu-latest
         needs: build
         permissions:
@@ -62,25 +63,87 @@ jobs:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     crates_io:
-      name: Publish packages to Crates.io
-      runs-on: ubuntu-latest
-      environment: crates
-      permissions:
-        id-token: write
-        contents: read
-      needs: release
-      steps:
-        - name: Checkout repository
-          uses: actions/checkout@v6
+        name: Publish packages to Crates.io
+        runs-on: ubuntu-latest
+        environment: crates
+        permissions:
+            id-token: write
+            contents: read
+        needs: release
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v6
 
-        - name: Set up Rust
-          uses: actions-rust-lang/setup-rust-toolchain@v1
+            - name: Set up Rust
+              uses: actions-rust-lang/setup-rust-toolchain@v1
 
-        - name: Set up registry token
-          id: auth
-          uses: rust-lang/crates-io-auth-action@v1
+            - name: Set up registry token
+              id: auth
+              uses: rust-lang/crates-io-auth-action@v1
 
-        - name: Publish crates to Crates.io
-          uses: katyo/publish-crates@v2
-          with:
-            registry-token: ${{ steps.auth.outputs.token }}
+            - name: Publish crates to Crates.io
+              uses: katyo/publish-crates@v2
+              with:
+                  registry-token: ${{ steps.auth.outputs.token }}
+
+    # VSCode extension release job
+    publish-vscode:
+        name: Publish VS Code Extensions
+        runs-on: ubuntu-latest
+        needs: release
+        defaults:
+            run:
+                working-directory: vscode
+        steps:
+            - name: Setup | Checkout
+              uses: actions/checkout@v6
+
+            - name: Setup | pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  package_json_file: ./vscode/package.json
+
+            - name: Setup | Node
+              uses: actions/setup-node@v6
+              with:
+                  node-version: "22"
+                  cache: pnpm
+                  cache-dependency-path: vscode/pnpm-lock.yaml
+
+            - name: Setup | Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "3.x"
+
+            - name: Install Python deps
+              run: python -m pip install --upgrade pip requests
+
+            - name: Read version from package.json
+              id: version
+              run: |
+                  PKG_VERSION=$(jq -r '.version' package.json)
+                  echo "pkg_version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Package all targets
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: pnpm run package:all
+
+            - name: Publish all VSIX to Marketplace
+              env:
+                  VSCE_PAT: ${{ secrets.VSCE_TOKEN }}
+              run: |
+                  set -euo pipefail
+                  for f in dist/*.vsix; do
+                    echo "Publishing $f"
+                    pnpm exec vsce publish --no-dependencies --packagePath "$f" --pat "$VSCE_PAT"
+                  done
+
+            - name: Upload packaged extension
+              uses: actions/upload-artifact@v4
+              with:
+                  name: beancount-language-server-vscode-${{ steps.version.outputs.pkg_version }}
+                  path: vscode/dist/*.vsix

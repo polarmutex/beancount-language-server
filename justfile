@@ -263,13 +263,15 @@ vscode-fix:
 vscode-check: vscode-lint vscode-build
     @echo "✅ All VSCode extension checks passed!"
 
-# Create a VS Code release tag (vscode/vX.Y.Z) using version from vscode/package.json
-tag-vscode:
-    git tag -a "vscode/v`{{VSCODE_EXT_VERSION}}`" -m "bump(vscode): v`{{VSCODE_EXT_VERSION}}`"
-
-# Create a cargo release tag (vX.Y.Z) using version from Cargo.toml workspace
-tag-cargo:
-    git tag -a "`{{CARGO_VERSION}}`" -m "chore(release): `{{CARGO_VERSION}}`"
+# Create a release tag (X.Y.Z) using version from Cargo.toml workspace
+# Both Rust and VSCode releases use the same version/tag
+tag-release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VERSION=$(grep -A5 "^\[workspace.package\]" Cargo.toml | grep "^version =" | head -n1 | sed 's/version = "\(.*\)"/\1/')
+    git tag -a "$VERSION" -m "chore(release): $VERSION"
+    echo "✅ Created tag: $VERSION"
+    echo "📋 Next step: git push origin $VERSION"
 
 # ========================================
 # Release Management
@@ -311,12 +313,17 @@ release-bump LEVEL:
     NEW_VERSION=$(grep -A5 "^\[workspace.package\]" Cargo.toml | grep "^version =" | head -n1 | sed 's/version = "\(.*\)"/\1/')
     echo "📦 New version: $NEW_VERSION"
 
-    # Update CHANGELOG
+    # Update vscode/package.json version
+    echo "📝 Updating vscode/package.json version to $NEW_VERSION..."
+    jq --arg version "$NEW_VERSION" '.version = $version' vscode/package.json > vscode/package.json.tmp
+    mv vscode/package.json.tmp vscode/package.json
+
+    # Update CHANGELOG (prepend new release, keep existing)
     echo "📝 Updating CHANGELOG..."
-    git cliff --tag "v$NEW_VERSION" --output CHANGELOG.md
+    git cliff --unreleased --tag "$NEW_VERSION" --prepend CHANGELOG.md
 
     # Stage changes
-    git add Cargo.toml crates/*/Cargo.toml CHANGELOG.md Cargo.lock
+    git add Cargo.toml crates/*/Cargo.toml vscode/package.json CHANGELOG.md Cargo.lock
 
     # Commit
     echo "💾 Creating release commit..."
@@ -336,3 +343,63 @@ release-minor: release-prep
 # Prepare major release (x.0.0)
 release-major: release-prep
     just release-bump major
+
+# Auto-detect version bump from conventional commits and prepare release
+release-auto: release-prep
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Verify clean working directory
+    if [[ -n $(git status --porcelain) ]]; then
+        echo "❌ Error: Working directory is not clean. Commit or stash changes first."
+        exit 1
+    fi
+
+    # Get current version from workspace
+    CURRENT_VERSION=$(grep -A5 "^\[workspace.package\]" Cargo.toml | grep "^version =" | head -n1 | sed 's/version = "\(.*\)"/\1/')
+    echo "📦 Current version: $CURRENT_VERSION"
+
+    # Auto-detect next version using git-cliff
+    echo "🔍 Analyzing conventional commits to determine version bump..."
+    BUMPED_VERSION=$(git cliff --unreleased --bumped-version 2>/dev/null | tail -1 | sed 's/^v//')
+
+    if [[ -z "$BUMPED_VERSION" ]]; then
+        echo "❌ Error: Could not determine version bump from commits."
+        echo "💡 Hint: Use conventional commits (feat:, fix:, BREAKING CHANGE:)"
+        echo "   - feat: → minor version bump"
+        echo "   - fix: → patch version bump"
+        echo "   - BREAKING CHANGE: → major version bump"
+        exit 1
+    fi
+
+    echo "⬆️  Detected version bump: $CURRENT_VERSION → $BUMPED_VERSION"
+
+    # Set version directly
+    echo "📝 Updating version to $BUMPED_VERSION..."
+    cargo set-version --workspace "$BUMPED_VERSION"
+
+    # Update Cargo.lock with new version
+    echo "🔄 Updating Cargo.lock..."
+    cargo update --workspace
+
+    # Update vscode/package.json version
+    echo "📝 Updating vscode/package.json version to $BUMPED_VERSION..."
+    jq --arg version "$BUMPED_VERSION" '.version = $version' vscode/package.json > vscode/package.json.tmp
+    mv vscode/package.json.tmp vscode/package.json
+
+    # Update CHANGELOG (prepend new release, keep existing)
+    echo "📝 Updating CHANGELOG..."
+    git cliff --unreleased --tag "$BUMPED_VERSION" --prepend CHANGELOG.md
+
+    # Stage changes
+    git add Cargo.toml crates/*/Cargo.toml vscode/package.json CHANGELOG.md Cargo.lock
+
+    # Commit
+    echo "💾 Creating release commit..."
+    git commit -m "chore(release): prepare for v$BUMPED_VERSION"
+
+    echo ""
+    echo "✅ Release v$BUMPED_VERSION prepared!"
+    echo "📋 Next steps:"
+    echo "   1. Review the changes: git show HEAD"
+    echo "   2. Create and push tag: git tag v$BUMPED_VERSION && git push origin v$BUMPED_VERSION"
