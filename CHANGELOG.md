@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-01-06
+
+### Features
+
+- Support willSaveWaitUntil
+
 ## [1.5.0] - 2026-01-04
 
 ### Bug Fixes
