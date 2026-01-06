@@ -93,7 +93,7 @@ pub mod text_document {
             }
         };
 
-        match completion::completion(snapshot, trigger_char, params.text_document_position) {
+        match completion::completion(&snapshot, trigger_char, params.text_document_position) {
             Ok(Some(items)) => {
                 tracing::info!("Completion returned {} items", items.len());
                 Ok(Some(lsp_types::CompletionResponse::Array(items)))
