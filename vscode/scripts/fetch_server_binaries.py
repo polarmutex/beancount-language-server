@@ -220,7 +220,7 @@ def clean_server(root: Path) -> None:
 def download_and_extract(
     root: Path, version: str, cfg: Dict[str, str], headers: Dict[str, str]
 ) -> None:
-    base_url = f"https://github.com/{REPO}/releases/download/v{version}"
+    base_url = f"https://github.com/{REPO}/releases/download/{version}"
     archive_url = f"{base_url}/{cfg['archive']}"
     checksum_url = f"{archive_url}.sha256"
 
