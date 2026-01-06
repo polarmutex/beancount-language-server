@@ -149,7 +149,7 @@ enum ExpectedType {
 /// - Caches context analysis to avoid redundant parsing
 /// - Limits results to prevent UI overwhelm
 pub(crate) fn completion(
-    snapshot: LspServerStateSnapshot,
+    snapshot: &LspServerStateSnapshot,
     trigger_character: Option<char>,
     cursor: lsp_types::TextDocumentPositionParams,
 ) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
@@ -214,13 +214,17 @@ pub(crate) fn completion(
     let context = determine_completion_context(tree, &content, cursor_point);
     tracing::debug!("Determined completion context: {:?}", context);
 
+    // Pre-compute the replacement range for account completions
+    let replace_range = compute_replace_range(&context, &content, cursor_point);
+
     // Dispatch to the appropriate completion providers based on context
     match complete_based_on_context(
-        snapshot.beancount_data,
+        &snapshot.beancount_data,
         context,
         trigger_character,
         &content,
         cursor_point,
+        replace_range,
     ) {
         Ok(items) => {
             if let Some(ref completion_items) = items {
@@ -273,6 +277,67 @@ fn determine_completion_context(
     };
 
     CompletionContext { prefix, ..context }
+}
+
+/// Locate the account text around the cursor and return its range.
+/// Tree-sitter nodes may be missing when the source is incomplete, so we fall back
+/// to scanning the current line for account-like characters.
+fn find_account_replace_range(
+    content: &ropey::Rope,
+    cursor: tree_sitter::Point,
+) -> Option<lsp_types::Range> {
+    let line_text = content.line(cursor.row).to_string();
+    let chars: Vec<char> = line_text.chars().collect();
+
+    // Guard against cursor beyond line length (can happen at EOL)
+    let cursor_col = cursor.column.min(chars.len());
+
+    let is_account_char = |c: char| c != ' ' && c != '\t';
+
+    let mut start = cursor_col;
+    while start > 0 && is_account_char(chars[start - 1]) {
+        start -= 1;
+    }
+
+    let mut end = cursor_col;
+    while end < chars.len() && is_account_char(chars[end]) {
+        end += 1;
+    }
+
+    if start == end {
+        return None;
+    }
+
+    Some(lsp_types::Range::new(
+        lsp_types::Position::new(cursor.row as u32, start as u32),
+        lsp_types::Position::new(cursor.row as u32, end as u32),
+    ))
+}
+
+/// Decide which text range to replace for account completions, preferring whole accounts before prefixes.
+fn compute_replace_range(
+    context: &CompletionContext,
+    content: &ropey::Rope,
+    cursor_point: tree_sitter::Point,
+) -> Option<lsp_types::Range> {
+    if context.expected_next.contains(&ExpectedType::Account)
+        && let Some(range) = find_account_replace_range(content, cursor_point)
+    {
+        return Some(range);
+    }
+
+    if context.prefix.is_empty() {
+        return None;
+    }
+
+    let start_character = cursor_point
+        .column
+        .saturating_sub(context.prefix.chars().count()) as u32;
+
+    Some(lsp_types::Range::new(
+        lsp_types::Position::new(cursor_point.row as u32, start_character),
+        lsp_types::Position::new(cursor_point.row as u32, cursor_point.column as u32),
+    ))
 }
 
 /// Manually search for context when tree-sitter node detection fails
@@ -558,16 +623,23 @@ fn analyze_price_context(
 /// 3. Multiple expected types - provide all relevant options
 /// 4. Fallback based on structure type
 fn complete_based_on_context(
-    beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
+    beancount_data: &HashMap<PathBuf, Arc<BeancountData>>,
     context: CompletionContext,
     trigger_character: Option<char>,
     content: &ropey::Rope,
     cursor_point: tree_sitter::Point,
+    replace_range: Option<lsp_types::Range>,
 ) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
     // Handle trigger characters that override context - these have highest priority
     if let Some(trigger) = trigger_character {
         match trigger {
-            ':' => return complete_account_with_prefix(beancount_data, &context.prefix),
+            ':' => {
+                return complete_account_with_prefix(
+                    beancount_data,
+                    &context.prefix,
+                    replace_range,
+                );
+            }
             '#' => return complete_tag(beancount_data),
             '^' => return complete_link(beancount_data),
             '"' => {
@@ -611,7 +683,7 @@ fn complete_based_on_context(
         let expected = &context.expected_next[0];
         return match expected {
             ExpectedType::Account => {
-                complete_account_internal(beancount_data, &context.prefix, false)
+                complete_account_internal(beancount_data, &context.prefix, false, replace_range)
             }
             ExpectedType::Currency => complete_currency(&context.prefix),
             ExpectedType::Amount => complete_amount(&context),
@@ -637,7 +709,7 @@ fn complete_based_on_context(
     for expected in &context.expected_next {
         let completions = match expected {
             ExpectedType::Account => {
-                complete_account_internal(beancount_data.clone(), &context.prefix, false)?
+                complete_account_internal(beancount_data, &context.prefix, false, replace_range)?
                     .unwrap_or_default()
             }
             ExpectedType::Currency => complete_currency(&context.prefix)?.unwrap_or_default(),
@@ -646,21 +718,15 @@ fn complete_based_on_context(
             ExpectedType::Flag => complete_flag()?.unwrap_or_default(),
             ExpectedType::Narration => {
                 let line_text = content.line(cursor_point.row).to_string();
-                complete_narration_with_quotes(
-                    beancount_data.clone(),
-                    &line_text,
-                    cursor_point.column,
-                )?
-                .unwrap_or_default()
+                complete_narration_with_quotes(beancount_data, &line_text, cursor_point.column)?
+                    .unwrap_or_default()
             }
-            ExpectedType::Payee => complete_payee_with_context(
-                beancount_data.clone(),
-                &context.prefix,
-                trigger_character,
-            )?
-            .unwrap_or_default(),
-            ExpectedType::Tag => complete_tag(beancount_data.clone())?.unwrap_or_default(),
-            ExpectedType::Link => complete_link(beancount_data.clone())?.unwrap_or_default(),
+            ExpectedType::Payee => {
+                complete_payee_with_context(beancount_data, &context.prefix, trigger_character)?
+                    .unwrap_or_default()
+            }
+            ExpectedType::Tag => complete_tag(beancount_data)?.unwrap_or_default(),
+            ExpectedType::Link => complete_link(beancount_data)?.unwrap_or_default(),
             ExpectedType::TransactionKind => complete_kind()?.unwrap_or_default(),
         };
 
@@ -675,7 +741,7 @@ fn complete_based_on_context(
     // Fallback based on structure type when context is unclear
     match context.structure_type {
         StructureType::Transaction | StructureType::Posting => {
-            complete_account_internal(beancount_data, &context.prefix, false)
+            complete_account_internal(beancount_data, &context.prefix, false, replace_range)
         }
         StructureType::DocumentRoot => {
             // At document root, provide both dates and transaction kinds
@@ -755,7 +821,7 @@ fn complete_flag() -> Result<Option<Vec<lsp_types::CompletionItem>>> {
 
 /// Complete payee names from previous transactions with context awareness
 fn complete_payee_with_context(
-    beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
+    beancount_data: &HashMap<PathBuf, Arc<BeancountData>>,
     prefix: &str,
     trigger_character: Option<char>,
 ) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
@@ -764,7 +830,7 @@ fn complete_payee_with_context(
 
 /// Complete payee names with full context including line text for quote detection
 fn complete_payee_with_full_context(
-    beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
+    beancount_data: &HashMap<PathBuf, Arc<BeancountData>>,
     prefix: &str,
     trigger_character: Option<char>,
     line_text: Option<&str>,
@@ -917,7 +983,7 @@ pub fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
 }
 
 fn complete_narration_with_quotes(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
     line_text: &str,
     cursor_char: usize,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
@@ -925,7 +991,7 @@ fn complete_narration_with_quotes(
 }
 
 fn complete_narration_with_quotes_context(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
     line_text: &str,
     cursor_char: usize,
     triggered_by_quote: bool,
@@ -975,71 +1041,19 @@ fn complete_narration_with_quotes_context(
 }
 
 fn complete_account_with_prefix(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
     prefix: &str,
+    replace_range: Option<lsp_types::Range>,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::account with prefix: '{}'", prefix);
-    complete_account_internal_colon_triggered(data, prefix)
-}
-
-fn complete_account_internal_colon_triggered(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
-    prefix: &str,
-) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
-    debug!(
-        "providers::completion::account colon-triggered with prefix: '{}'",
-        prefix
-    );
-    let mut completions = Vec::new();
-
-    for data in data.values() {
-        let accounts: Vec<String> = data.get_accounts().into_iter().collect();
-
-        // Find accounts that start with the prefix
-        let matching_accounts: Vec<String> = accounts
-            .into_iter()
-            .filter(|account| account.starts_with(prefix))
-            .collect();
-
-        // Extract the parts after the prefix
-        for account in matching_accounts {
-            if let Some(suffix) = account.strip_prefix(prefix) {
-                // Remove leading colon if present
-                let suffix = suffix.strip_prefix(':').unwrap_or(suffix);
-
-                // Only show the next segment (up to the next colon, if any)
-                let next_segment = if let Some(colon_pos) = suffix.find(':') {
-                    &suffix[..colon_pos]
-                } else {
-                    suffix
-                };
-
-                // Skip empty segments and avoid duplicates
-                if !next_segment.is_empty() {
-                    let completion_text = next_segment.to_string();
-
-                    // Check if we already have this completion
-                    if !completions
-                        .iter()
-                        .any(|item: &lsp_types::CompletionItem| item.label == completion_text)
-                    {
-                        completions.push(create_completion_item(completion_text, 1.0));
-                    }
-                }
-            }
-        }
-    }
-
-    // Sort completions alphabetically
-    completions.sort_by(|a, b| a.label.cmp(&b.label));
-
-    Ok(Some(completions))
+    complete_account_internal(data, prefix, true, replace_range) // true = triggered by colon, use filtering}
 }
 
 fn complete_account_internal(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
     prefix: &str,
     filter_by_prefix: bool,
+    replace_range: Option<lsp_types::Range>,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!(
         "providers::completion::account internal - prefix: '{}', filter: {}",
@@ -1064,14 +1078,18 @@ fn complete_account_internal(
                         } else {
                             1.0 // Low score for non-matching accounts (but still included)
                         };
-                        completions.push(create_completion_item(account.clone(), score));
+                        completions.push(create_completion_item(
+                            account.clone(),
+                            score,
+                            replace_range,
+                        ));
                     }
                 }
                 SearchMode::Fuzzy => {
                     // Lowercase letter typed - fuzzy search all accounts
                     let fuzzy_matches = fuzzy_search_accounts(&accounts, prefix);
                     for (account, score) in fuzzy_matches {
-                        completions.push(create_completion_item(account, score));
+                        completions.push(create_completion_item(account, score, replace_range));
                     }
                 }
                 SearchMode::Exact => {
@@ -1079,7 +1097,7 @@ fn complete_account_internal(
                     let prefix_lower = prefix.to_lowercase();
                     for account in accounts {
                         if prefix.is_empty() || account.to_lowercase().starts_with(&prefix_lower) {
-                            completions.push(create_completion_item(account, 1.0));
+                            completions.push(create_completion_item(account, 1.0, replace_range));
                         }
                     }
                 }
@@ -1088,7 +1106,7 @@ fn complete_account_internal(
             // Normal completion: return ALL accounts, use fuzzy matching for ordering
             let fuzzy_matches = fuzzy_search_accounts_with_limit(&accounts, prefix, None);
             for (account, score) in fuzzy_matches {
-                completions.push(create_completion_item(account, score));
+                completions.push(create_completion_item(account, score, replace_range));
             }
         }
     }
@@ -1300,8 +1318,12 @@ fn score_with_nucleo(account: &str, query: &str) -> Option<f32> {
     }
 }
 
-fn create_completion_item(account: String, score: f32) -> lsp_types::CompletionItem {
-    lsp_types::CompletionItem {
+fn create_completion_item(
+    account: String,
+    score: f32,
+    replace_range: Option<lsp_types::Range>,
+) -> lsp_types::CompletionItem {
+    let mut item = lsp_types::CompletionItem {
         label: account.clone(),
         detail: Some("Beancount Account".to_string()),
         kind: Some(lsp_types::CompletionItemKind::ENUM),
@@ -1310,7 +1332,19 @@ fn create_completion_item(account: String, score: f32) -> lsp_types::CompletionI
         sort_text: Some(format!("{:010.0}", 99999.0 - score.min(99999.0))),
         // Let the LSP client handle text replacement based on filter_text
         ..Default::default()
+    };
+
+    if let Some(range) = replace_range {
+        let new_text = item
+            .insert_text
+            .clone()
+            .unwrap_or_else(|| item.label.clone());
+        item.text_edit = Some(lsp_types::CompletionTextEdit::Edit(
+            lsp_types::TextEdit::new(range, new_text),
+        ));
     }
+
+    item
 }
 
 /// Extract the current word/prefix being typed for completion
@@ -1338,7 +1372,7 @@ pub(crate) fn extract_completion_prefix(line_text: &str, cursor_char: usize) -> 
 }
 
 pub(crate) fn complete_tag(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::tag");
     let mut completions = Vec::new();
@@ -1356,7 +1390,7 @@ pub(crate) fn complete_tag(
 }
 
 pub(crate) fn complete_link(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
 ) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
     debug!("providers::completion::tag");
     let mut completions = Vec::new();
@@ -1601,6 +1635,51 @@ mod tests {
             let id = lsp_types::TextDocumentIdentifier::new(uri);
             Some(lsp_types::TextDocumentPositionParams::new(id, cursor))
         }
+
+        pub fn apply_completion_text_edit(&self, item: &lsp_types::CompletionItem) -> String {
+            let edit = item
+                .text_edit
+                .as_ref()
+                .expect("completion item missing text_edit");
+
+            let (range, new_text) = match edit {
+                lsp_types::CompletionTextEdit::Edit(edit) => (edit.range, edit.new_text.clone()),
+                lsp_types::CompletionTextEdit::InsertAndReplace(edit) => {
+                    (edit.replace, edit.new_text.clone())
+                }
+            };
+
+            // Prefer the document that holds the cursor; fallback to the first fixture document
+            let original_doc = self
+                .fixture
+                .documents
+                .iter()
+                .find(|d| d.cursor.is_some())
+                .or_else(|| self.fixture.documents.first())
+                .expect("fixture missing document");
+
+            let rope = ropey::Rope::from_str(&original_doc.text);
+
+            // LSP ranges are end-exclusive and expressed in UTF-16 code units, so convert to byte
+            // indices before applying the edit.
+            let start_char_idx = Self::lsp_position_to_char_idx(&rope, range.start);
+            let end_char_idx = Self::lsp_position_to_char_idx(&rope, range.end);
+
+            let start_byte = rope.char_to_byte(start_char_idx);
+            let end_byte = rope.char_to_byte(end_char_idx);
+
+            let mut updated = original_doc.text.clone();
+            updated.replace_range(start_byte..end_byte, &new_text);
+            updated
+        }
+
+        fn lsp_position_to_char_idx(text: &ropey::Rope, position: lsp_types::Position) -> usize {
+            let line_idx = position.line as usize;
+            let line_char_idx = text.line_to_char(line_idx);
+            let line_utf16_idx = text.char_to_utf16_cu(line_char_idx);
+            let absolute_utf16_idx = line_utf16_idx + position.character as usize;
+            text.utf16_cu_to_char(absolute_utf16_idx)
+        }
     }
 
     #[test]
@@ -1645,7 +1724,7 @@ mod tests {
             "{} {}",
             text_document_position.position.line, text_document_position.position.character
         );
-        let items = completion(test_state.snapshot, Some('2'), text_document_position)
+        let items = completion(&test_state.snapshot, Some('2'), text_document_position)
             .unwrap()
             .unwrap_or_default();
         let today = chrono::offset::Local::now().naive_local().date();
@@ -1693,7 +1772,7 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, None, cursor)
+        let items = completion(&test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
         // Check that transaction types are included (new system also provides dates)
@@ -1725,7 +1804,7 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some('"'), cursor)
+        let items = completion(&test_state.snapshot, Some('"'), cursor)
             .unwrap()
             .unwrap_or_default();
         assert_eq!(
@@ -1756,7 +1835,7 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some('"'), cursor)
+        let items = completion(&test_state.snapshot, Some('"'), cursor)
             .unwrap()
             .unwrap_or_default();
         // New intelligent system provides narration completions after payee
@@ -1781,7 +1860,7 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some('"'), cursor)
+        let items = completion(&test_state.snapshot, Some('"'), cursor)
             .unwrap()
             .unwrap_or_default();
         // Should have completions with insert_text without quotes since closing quote exists
@@ -1821,7 +1900,7 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some('"'), cursor)
+        let items = completion(&test_state.snapshot, Some('"'), cursor)
             .unwrap()
             .unwrap_or_default();
         assert_eq!(
@@ -1850,7 +1929,7 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, None, cursor)
+        let items = completion(&test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
         // Should now show both accounts when typing lowercase 'a'
@@ -1881,15 +1960,29 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some(':'), cursor)
+        let items = completion(&test_state.snapshot, Some(':'), cursor)
             .unwrap()
             .unwrap_or_default();
         assert_eq!(items.len(), 2);
 
+        // Apply the first completion item to the document text and verify the result
+        let applied = test_state.apply_completion_text_edit(items.first().unwrap());
+        assert_eq!(
+            applied,
+            [
+                "2023-10-01 open Assets:Test USD",
+                "2023-10-01 open Assets:Checking USD",
+                "2023-10-01 open Expenses:Test USD",
+                "2023-10-01 txn  \"Test Co\" \"Foo Bar\"",
+                "    Assets:Checking",
+            ]
+            .join("\n")
+        );
+
         // Should have both Assets accounts parts after the colon
         let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-        assert!(labels.contains(&&"Test".to_string()));
-        assert!(labels.contains(&&"Checking".to_string()));
+        assert!(labels.contains(&&"Assets:Test".to_string()));
+        assert!(labels.contains(&&"Assets:Checking".to_string()));
 
         // Check properties of all items
         for item in &items {
@@ -1913,7 +2006,7 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, None, cursor)
+        let items = completion(&test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
         // Should return all accounts, with "Assets:Test" ranked highest due to prefix match
@@ -1943,7 +2036,7 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some('#'), cursor)
+        let items = completion(&test_state.snapshot, Some('#'), cursor)
             .unwrap()
             .unwrap_or_default();
         assert_eq!(
@@ -1973,7 +2066,7 @@ mod tests {
         let test_state = TestState::new(fixure).unwrap();
         let cursor = test_state.cursor().unwrap();
         println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some('^'), cursor)
+        let items = completion(&test_state.snapshot, Some('^'), cursor)
             .unwrap()
             .unwrap_or_default();
         assert_eq!(
@@ -2112,11 +2205,11 @@ mod tests {
         let data = HashMap::new();
 
         // Test tag completion - with empty data should return empty list
-        let tag_items = complete_tag(data.clone()).unwrap().unwrap();
+        let tag_items = complete_tag(&data).unwrap().unwrap();
         assert_eq!(tag_items.len(), 0); // No tags in empty data
 
         // Test link completion - with empty data should return empty list
-        let link_items = complete_link(data).unwrap().unwrap();
+        let link_items = complete_link(&data).unwrap().unwrap();
         assert_eq!(link_items.len(), 0); // No links in empty data
 
         // Test date completion - this doesn't depend on data
@@ -2265,7 +2358,7 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, Some(':'), cursor)
+        let items = completion(&test_state.snapshot, Some(':'), cursor)
             .unwrap()
             .unwrap_or_default();
 
@@ -2274,21 +2367,21 @@ include "accounts1.bean"
 
         // Account parts after "Expenses:" from main file
         assert!(
-            labels.contains(&&"Food".to_string()),
+            labels.contains(&&"Expenses:Food".to_string()),
             "Should include Food from main file"
         );
         assert!(
-            labels.contains(&&"Transport".to_string()),
+            labels.contains(&&"Expenses:Transport".to_string()),
             "Should include Transport from main file"
         );
 
         // Account parts after "Expenses:" from included file - this is what was missing!
         assert!(
-            labels.contains(&&"Included1".to_string()),
+            labels.contains(&&"Expenses:Included1".to_string()),
             "Should include Included1 from included file"
         );
         assert!(
-            labels.contains(&&"Included2".to_string()),
+            labels.contains(&&"Expenses:Included2".to_string()),
             "Should include Included2 from included file"
         );
 
@@ -2330,7 +2423,7 @@ include "accounts1.bean"
         beancount_data.insert(PathBuf::from("/accounts1.bean"), included_data);
 
         // Test completion with prefix "Expenses:"
-        let items = complete_account_with_prefix(beancount_data, "Expenses:")
+        let items = complete_account_with_prefix(&beancount_data, "Expenses:", None)
             .unwrap()
             .unwrap_or_default();
 
@@ -2338,19 +2431,19 @@ include "accounts1.bean"
 
         // Should include account parts after "Expenses:" from both files
         assert!(
-            labels.contains(&"Food".to_string()),
+            labels.contains(&"Expenses:Food".to_string()),
             "Should include Food from main file"
         );
         assert!(
-            labels.contains(&"Transport".to_string()),
+            labels.contains(&"Expenses:Transport".to_string()),
             "Should include Transport from main file"
         );
         assert!(
-            labels.contains(&"Included1".to_string()),
+            labels.contains(&"Expenses:Included1".to_string()),
             "Should include Included1 from included file"
         );
         assert!(
-            labels.contains(&"Included2".to_string()),
+            labels.contains(&"Expenses:Included2".to_string()),
             "Should include Included2 from included file"
         );
 
@@ -2379,20 +2472,15 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, Some(':'), cursor)
+        let items = completion(&test_state.snapshot, Some(':'), cursor)
             .unwrap()
             .unwrap_or_default();
 
         let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
 
-        // Should return only the parts after "Assets:Checking:"
         assert_eq!(items.len(), 2);
-        assert!(labels.contains(&&"Personal".to_string()));
-        assert!(labels.contains(&&"Business".to_string()));
-
-        // Should NOT contain full account paths
-        assert!(!labels.contains(&&"Assets:Checking:Personal".to_string()));
-        assert!(!labels.contains(&&"Assets:Checking:Business".to_string()));
+        assert!(labels.contains(&&"Assets:Checking:Personal".to_string()));
+        assert!(labels.contains(&&"Assets:Checking:Business".to_string()));
     }
 
     #[test]
@@ -2410,20 +2498,42 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, Some(':'), cursor)
+        let items = completion(&test_state.snapshot, Some(':'), cursor)
             .unwrap()
             .unwrap_or_default();
 
         let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
 
-        // Should return only the parts after "Assets:"
         assert_eq!(items.len(), 2);
-        assert!(labels.contains(&&"Checking".to_string()));
-        assert!(labels.contains(&&"Savings".to_string()));
+        assert!(labels.contains(&&"Assets:Checking".to_string()));
+        assert!(labels.contains(&&"Assets:Savings".to_string()));
 
-        // Should NOT contain full account paths or accounts from other hierarchies
-        assert!(!labels.contains(&&"Assets:Checking".to_string()));
-        assert!(!labels.contains(&&"Food".to_string()));
+        // Text edits should replace the existing "Assets:" prefix
+        let applied: Vec<String> = items
+            .iter()
+            .map(|item| test_state.apply_completion_text_edit(item))
+            .collect();
+
+        let expected_checking = [
+            "2023-10-01 open Assets:Checking USD",
+            "2023-10-01 open Assets:Savings USD",
+            "2023-10-01 open Expenses:Food USD",
+            "2023-10-01 txn \"Test transaction\"",
+            "  Assets:Checking",
+        ]
+        .join("\n");
+
+        let expected_savings = [
+            "2023-10-01 open Assets:Checking USD",
+            "2023-10-01 open Assets:Savings USD",
+            "2023-10-01 open Expenses:Food USD",
+            "2023-10-01 txn \"Test transaction\"",
+            "  Assets:Savings",
+        ]
+        .join("\n");
+
+        assert!(applied.contains(&expected_checking));
+        assert!(applied.contains(&expected_savings));
     }
 
     #[test]
@@ -2610,7 +2720,7 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
+        let items = completion(&test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
 
@@ -2646,7 +2756,7 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
+        let items = completion(&test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
 
@@ -2682,7 +2792,7 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
+        let items = completion(&test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
 
@@ -2717,7 +2827,7 @@ include "accounts1.bean"
 "#;
         let test_state_e = TestState::new(fixture_e).unwrap();
         let cursor_e = test_state_e.cursor().unwrap();
-        let items_e = completion(test_state_e.snapshot, None, cursor_e)
+        let items_e = completion(&test_state_e.snapshot, None, cursor_e)
             .unwrap()
             .unwrap_or_default();
 
@@ -2798,7 +2908,7 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor) // None = not colon-triggered
+        let items = completion(&test_state.snapshot, None, cursor) // None = not colon-triggered
             .unwrap()
             .unwrap_or_default();
 
@@ -2835,7 +2945,7 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
+        let items = completion(&test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
 
@@ -2884,7 +2994,7 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
+        let items = completion(&test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
 
@@ -2948,7 +3058,7 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
+        let items = completion(&test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
 
@@ -3097,7 +3207,7 @@ include "accounts1.bean"
                 character: 26,
             },
         };
-        let items = completion(test_state.snapshot, Some('x'), cursor).unwrap();
+        let items = completion(&test_state.snapshot, Some('x'), cursor).unwrap();
 
         // Should return None for unsupported trigger characters
         assert!(items.is_none());
@@ -3116,7 +3226,7 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
+        let items = completion(&test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
 
@@ -3139,7 +3249,7 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
+        let items = completion(&test_state.snapshot, None, cursor)
             .unwrap()
             .unwrap_or_default();
 
@@ -3162,7 +3272,7 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, Some('"'), cursor);
+        let items = completion(&test_state.snapshot, Some('"'), cursor);
 
         // Should provide completion suggestions for payee/narration
         assert!(
@@ -3183,7 +3293,7 @@ include "accounts1.bean"
 "#;
         let test_state = TestState::new(fixture).unwrap();
         let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor);
+        let items = completion(&test_state.snapshot, None, cursor);
 
         // Should handle cursor at txn position
         assert!(items.is_ok(), "Should handle cursor at txn position");
