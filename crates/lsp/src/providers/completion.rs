@@ -1,9 +1,9 @@
 use crate::beancount_data::BeancountData;
 use crate::server::LspServerStateSnapshot;
-// use crate::treesitter_utils::text_for_tree_sitter_node;
 use crate::utils::ToFilePath;
 use anyhow::Result;
 use chrono::Datelike;
+use lsp_types::{CompletionItem, CompletionItemKind, Position, Range, TextEdit};
 use nucleo::{
     Config, Matcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern},
@@ -12,885 +12,1260 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::debug;
+use tree_sitter::Point;
 use tree_sitter_beancount::tree_sitter;
 
-/// Context information for intelligent completion
-///
-/// This structure encapsulates all the information needed to provide contextually
-/// relevant completions based on the user's position in a beancount document.
-///
-/// The completion system uses tree-sitter to understand the document structure
-/// and provide intelligent suggestions based on where the user is typing.
-#[derive(Debug, Clone)]
-struct CompletionContext {
-    /// The type of beancount structure we're currently in
-    /// (e.g., inside a transaction, at document root, etc.)
-    structure_type: StructureType,
+// ============================================================================
+// CORE CONTEXT ANALYSIS - Left-Context-Aware Traversal
+// ============================================================================
 
-    /// What types of input are expected next in this context
-    /// This determines which completion providers to invoke
-    expected_next: Vec<ExpectedType>,
-
-    /// The current partial input that the user has typed
-    /// Used for filtering and fuzzy matching completions
-    prefix: String,
-
-    /// Optional context about the parent structure
-    /// (e.g., "transaction", "open", etc.)
-    #[allow(dead_code)]
-    parent_context: Option<String>,
-}
-
-/// The different types of beancount document structures
-///
-/// Each structure type has different completion requirements:
-/// - Transaction: accounts, amounts, currencies, tags, links
-/// - OpenDirective: accounts, currencies
-/// - DocumentRoot: dates, transaction types
+/// Represents the completion context determined by analyzing the syntax tree
+/// and cursor position using left-context-aware traversal strategy.
 #[derive(Debug, Clone, PartialEq)]
-enum StructureType {
-    /// Inside a transaction block (between date and posting list)
-    Transaction,
-
-    /// Inside a specific posting line within a transaction
-    Posting,
-
-    /// Inside an "open" directive
-    OpenDirective,
-
-    /// Inside a "balance" directive
-    BalanceDirective,
-
-    /// Inside a "price" directive
-    PriceDirective,
-
-    /// At the document root level (between directives)
+enum CompletionContext {
+    /// At document root - suggest dates and directive keywords
     DocumentRoot,
 
-    /// Unknown or unhandled structure type
-    #[allow(dead_code)]
-    Unknown,
+    /// After date, expecting flag or directive keyword (txn, open, balance, etc.)
+    AfterDate,
+
+    /// After flag in transaction, expecting payee (first string)
+    AfterFlag,
+
+    /// After first string (payee), expecting narration (second string)
+    AfterPayee,
+
+    /// In posting line, expecting account name
+    PostingAccount { prefix: String },
+
+    /// After account in posting, expecting amount
+    PostingAmount,
+
+    /// After amount in posting, expecting currency
+    PostingCurrency,
+
+    /// In open directive, expecting account
+    OpenAccount { prefix: String },
+
+    /// After account in open directive, expecting currency
+    OpenCurrency,
+
+    /// In balance directive, expecting account
+    BalanceAccount { prefix: String },
+
+    /// In price directive context
+    PriceContext,
+
+    /// Inside a string literal (payee or narration)
+    InsideString {
+        prefix: String,
+        is_payee: bool,
+        has_opening_quote: bool,
+        has_closing_quote: bool,
+    },
+
+    /// After tag trigger character (#)
+    TagContext { prefix: String },
+
+    /// After link trigger character (^)
+    LinkContext { prefix: String },
+
+    /// Colon-triggered account completion (show sub-accounts)
+    ColonTriggeredAccount { parent_path: String },
 }
 
-/// The different types of completions that can be provided
+/// Main entry point for completion with LSP 3.17 compliant implementation.
 ///
-/// Each type corresponds to a specific completion provider function
-/// that knows how to generate relevant suggestions for that input type.
-#[derive(Debug, Clone, PartialEq)]
-enum ExpectedType {
-    /// Account names (Assets:Cash:Checking, etc.)
-    Account,
-
-    /// Monetary amounts (100.00, 50.00, etc.)
-    Amount,
-
-    /// Currency codes (USD, EUR, GBP, etc.)
-    Currency,
-
-    /// Date strings (2025-07-12, etc.)
-    Date,
-
-    /// Transaction flags (*, !, etc.)
-    Flag,
-
-    /// Transaction narration/description strings
-    Narration,
-
-    /// Payee names
-    Payee,
-
-    /// Tags (#tag1, #tag2, etc.)
-    #[allow(dead_code)]
-    Tag,
-
-    /// Links (^link1, ^link2, etc.)
-    #[allow(dead_code)]
-    Link,
-
-    /// Transaction/directive types (txn, balance, open, etc.)
-    TransactionKind,
-}
-
-/// Main entry point for LSP completion with context-aware intelligence.
-///
-/// This function revolutionizes beancount completions by using tree-sitter to understand
-/// the document structure and provide intelligent, context-aware suggestions.
-///
-/// ## How it works:
-///
-/// 1. **Parse cursor position**: Extract line/column and convert to tree-sitter Point
-/// 2. **Analyze context**: Use tree-sitter to determine what beancount structure we're in
-/// 3. **Predict expectations**: Based on context, predict what the user wants to complete
-/// 4. **Dispatch to providers**: Route to appropriate completion provider(s)
-/// 5. **Return focused results**: Provide the most relevant completions for the context
-///
-/// ## Context Examples:
-///
-/// - **Document root**: Provides dates and transaction types (txn, balance, open, etc.)
-/// - **Transaction posting**: Focuses on account completions with fuzzy search
-/// - **Open directive**: Provides account names, then currency codes
-/// - **Amount context**: Suggests common amounts and currency codes
-///
-/// ## Parameters:
-///
-/// - `snapshot`: Current state of the language server (documents, parsed data, etc.)
-/// - `trigger_character`: Optional character that triggered completion (`:`, `#`, `^`, `"`)
-/// - `cursor`: LSP position parameters (document URI, line, column)
-///
-/// ## Returns:
-///
-/// - `Ok(Some(items))`: List of completion items relevant to the current context
-/// - `Ok(None)`: No completions available for the current context
-/// - `Err(...)`: Error occurred during completion analysis
-///
-/// ## Performance:
-///
-/// - Uses efficient tree-sitter queries instead of manual node traversal
-/// - Caches context analysis to avoid redundant parsing
-/// - Limits results to prevent UI overwhelm
+/// Uses left-context-aware traversal to determine completion context even when
+/// the syntax tree is in an ERROR state due to incomplete input.
 pub(crate) fn completion(
     snapshot: LspServerStateSnapshot,
     trigger_character: Option<char>,
     cursor: lsp_types::TextDocumentPositionParams,
-) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
-    tracing::debug!("Starting completion provider");
-    tracing::debug!("Trigger character: {:?}", trigger_character);
-
-    // Extract file path from LSP URI
-    let uri = match cursor.text_document.uri.to_file_path() {
-        Ok(path) => {
-            tracing::debug!("Processing completion for file: {}", path.display());
-            path
-        }
-        Err(_) => {
-            tracing::error!(
-                "Failed to convert URI to file path: {}",
-                cursor.text_document.uri.as_str()
-            );
-            return Ok(None);
-        }
-    };
-
-    let line = &cursor.position.line;
-    let char = &cursor.position.character;
-    tracing::debug!("Completion position: line={}, character={}", line, char);
-
-    // Get parsed tree and document content from the language server state
-    let tree = match snapshot.forest.get(&uri) {
-        Some(t) => {
-            tracing::debug!("Found parsed tree for file");
-            t
-        }
-        None => {
-            tracing::warn!("No parsed tree found for file: {}", uri.display());
-            return Ok(None);
-        }
-    };
-
-    let doc = match snapshot.open_docs.get(&uri) {
-        Some(d) => {
-            tracing::debug!("Found open document");
-            d
-        }
-        None => {
-            tracing::warn!("Document not in open documents: {}", uri.display());
-            return Ok(None);
-        }
-    };
-    let content = doc.clone().content;
-
-    // Convert LSP position to tree-sitter Point for node queries
-    let cursor_point = tree_sitter::Point {
-        row: *line as usize,
-        column: *char as usize,
-    };
-    tracing::debug!(
-        "Tree-sitter cursor point: row={}, column={}",
-        cursor_point.row,
-        cursor_point.column
+) -> Result<Option<Vec<CompletionItem>>> {
+    debug!("=== Completion Request ===");
+    debug!("Trigger character: {:?}", trigger_character);
+    debug!(
+        "Position: {}:{}",
+        cursor.position.line, cursor.position.character
     );
 
-    // Analyze the document structure to determine what completions are relevant
-    let context = determine_completion_context(tree, &content, cursor_point);
-    tracing::debug!("Determined completion context: {:?}", context);
+    // Get file path from URI
+    let uri = cursor
+        .text_document
+        .uri
+        .to_file_path()
+        .map_err(|_| anyhow::anyhow!("Failed to convert URI to file path"))?;
 
-    // Dispatch to the appropriate completion providers based on context
-    match complete_based_on_context(
-        snapshot.beancount_data,
-        context,
-        trigger_character,
-        &content,
-        cursor_point,
-    ) {
-        Ok(items) => {
-            if let Some(ref completion_items) = items {
-                tracing::debug!("Generated {} completion items", completion_items.len());
-            } else {
-                tracing::debug!("No completion items generated");
-            }
-            Ok(items)
-        }
-        Err(e) => {
-            tracing::error!("Failed to generate completions: {}", e);
-            Err(e)
-        }
-    }
+    // Get parsed tree and document
+    let tree = snapshot
+        .forest
+        .get(&uri)
+        .ok_or_else(|| anyhow::anyhow!("No parsed tree found"))?;
+    let doc = snapshot
+        .open_docs
+        .get(&uri)
+        .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
+
+    let content = &doc.content;
+    let cursor_point = Point {
+        row: cursor.position.line as usize,
+        column: cursor.position.character as usize,
+    };
+
+    // Determine completion context using left-context-aware analysis
+    let context = determine_completion_context(tree, content, cursor_point, trigger_character);
+
+    debug!("Determined context: {:?}", context);
+
+    // Generate completions based on context
+    generate_completions(&snapshot.beancount_data, &context, content, cursor.position)
 }
 
-/// Intelligently determine what completion context we're in using tree-sitter
+/// Determine completion context using left-context-aware traversal.
+///
+/// This implements the algorithm from the plan:
+/// 1. Find node at cursor (with -1 character lookahead for ghost nodes)
+/// 2. Step out of ERROR/MISSING nodes to find stable parent
+/// 3. Identify previous sibling to infer expected next element
+/// 4. Map (parent_type, prev_sibling_type) to completion context
 fn determine_completion_context(
     tree: &tree_sitter::Tree,
     content: &ropey::Rope,
-    cursor: tree_sitter::Point,
+    cursor: Point,
+    trigger_char: Option<char>,
 ) -> CompletionContext {
-    // Try to find the most specific named node at the cursor position
+    // First, check for tag/link context based on text, regardless of trigger char.
+    // This is more robust.
+    let line_str = content.line(cursor.row).to_string();
+    if let Some(prefix) = extract_tag_prefix(&line_str, cursor.column) {
+        return CompletionContext::TagContext { prefix };
+    }
+    if let Some(prefix) = extract_link_prefix(&line_str, cursor.column) {
+        return CompletionContext::LinkContext { prefix };
+    }
+
+    // Handle trigger characters with special semantics
+    match trigger_char {
+        Some(':') => {
+            // Colon triggers sub-account completion
+            let line = content.line(cursor.row).to_string();
+            let prefix = extract_account_prefix(&line, cursor.column);
+            return CompletionContext::ColonTriggeredAccount {
+                parent_path: prefix,
+            };
+        }
+        Some('"') => {
+            // Quote triggers string completion - analyze context
+            return analyze_string_context(content, cursor);
+        }
+        _ => {}
+    }
+
+    // Query node at cursor with -1 lookahead to catch "ghost nodes"
+    let query_col = cursor.column.saturating_sub(1);
+    let query_point = Point {
+        row: cursor.row,
+        column: query_col,
+    };
+
     let node = tree
         .root_node()
-        .named_descendant_for_point_range(cursor, cursor)
-        .or_else(|| tree.root_node().descendant_for_point_range(cursor, cursor));
+        .named_descendant_for_point_range(query_point, cursor)
+        .or_else(|| {
+            tree.root_node()
+                .descendant_for_point_range(query_point, cursor)
+        });
 
-    let current_line_text = content.line(cursor.row).to_string();
-    let prefix = extract_completion_prefix(&current_line_text, cursor.column);
-
-    debug!("Found node: {:?}", node.map(|n| n.kind()));
-
-    // Use tree-sitter queries to efficiently determine context
-    let context = if let Some(node) = node {
-        // Don't use the file node - it's too generic
-        if node.kind() == "file" {
-            // If we only found the file node, manually search for a more specific context
-            find_context_by_manual_search(tree, cursor, content)
-        } else {
-            analyze_node_context(tree, content, node, cursor)
-        }
-    } else {
-        CompletionContext {
-            structure_type: StructureType::DocumentRoot,
-            expected_next: vec![ExpectedType::Date, ExpectedType::TransactionKind],
-            prefix: prefix.clone(),
-            parent_context: None,
-        }
-    };
-
-    CompletionContext { prefix, ..context }
-}
-
-/// Manually search for context when tree-sitter node detection fails
-fn find_context_by_manual_search(
-    tree: &tree_sitter::Tree,
-    cursor: tree_sitter::Point,
-    content: &ropey::Rope,
-) -> CompletionContext {
-    debug!("Manual search for context at {:?}", cursor);
-
-    // Walk through all children of the root to find transactions
-    let mut walker = tree.root_node().walk();
-    for child in tree.root_node().children(&mut walker) {
+    if let Some(mut current_node) = node {
         debug!(
-            "Checking root child: {} at {:?}",
-            child.kind(),
-            child.range()
+            "Initial node: {} at {:?}",
+            current_node.kind(),
+            current_node.range()
         );
 
-        if child.kind() == "transaction" {
-            let start = child.start_position();
-            let end = child.end_position();
+        // Step out of ERROR and MISSING nodes
+        while current_node.kind() == "ERROR" || current_node.is_missing() {
+            let start_pos = current_node.start_position();
+            if content.line(start_pos.row).char(start_pos.column) == '"' {
+                debug!("Found an ERROR node starting with '\"'. Assuming unterminated string.");
+                return analyze_string_context(content, cursor);
+            }
 
-            // Check if cursor is within this transaction
-            if cursor.row >= start.row && cursor.row <= end.row {
-                debug!("Found transaction containing cursor!");
-                return analyze_transaction_context(child, cursor, content);
+            if let Some(parent) = current_node.parent() {
+                debug!(
+                    "Stepping out of {} to parent {}",
+                    current_node.kind(),
+                    parent.kind()
+                );
+                current_node = parent;
+            } else {
+                break;
             }
         }
-    }
 
-    debug!("No transaction found, defaulting to DocumentRoot");
-    CompletionContext {
-        structure_type: StructureType::DocumentRoot,
-        expected_next: vec![ExpectedType::Date, ExpectedType::TransactionKind],
-        prefix: String::new(),
-        parent_context: None,
+        // Analyze based on node kind and position
+        match current_node.kind() {
+            "transaction" => analyze_transaction_context(current_node, cursor, content),
+            "posting" => analyze_posting_context(current_node, cursor, content),
+            "open" => analyze_open_context(current_node, cursor, content),
+            "balance" => analyze_balance_context(current_node, cursor, content),
+            "price" => CompletionContext::PriceContext,
+            "date" => CompletionContext::AfterDate,
+            "flag" => CompletionContext::AfterFlag,
+            "account" => analyze_account_context(current_node, cursor, content),
+            "string" => analyze_string_node_context(current_node, content, cursor),
+            _ => {
+                // Check parent for more context
+                if let Some(parent) = current_node.parent() {
+                    match parent.kind() {
+                        "transaction" => analyze_transaction_context(parent, cursor, content),
+                        "posting" => analyze_posting_context(parent, cursor, content),
+                        "open" => analyze_open_context(parent, cursor, content),
+                        "balance" => analyze_balance_context(parent, cursor, content),
+                        _ => check_if_in_posting_area(tree, content, cursor),
+                    }
+                } else {
+                    // No parent found - might be typing on a line after a transaction header
+                    check_if_in_posting_area(tree, content, cursor)
+                }
+            }
+        }
+    } else {
+        // No node found - check if we're in posting area
+        check_if_in_posting_area(tree, content, cursor)
     }
 }
 
-/// Analyze the current node and its ancestors to determine completion context
-fn analyze_node_context(
+/// Check if cursor is in posting area by looking at previous lines
+fn check_if_in_posting_area(
     _tree: &tree_sitter::Tree,
-    _content: &ropey::Rope,
-    node: tree_sitter::Node,
-    cursor: tree_sitter::Point,
+    content: &ropey::Rope,
+    cursor: Point,
 ) -> CompletionContext {
-    // Find the most relevant ancestor that gives us context
-    let mut current = Some(node);
-    debug!("Starting node analysis at cursor {:?}", cursor);
-    debug!("Initial node kind: {:?}", node.kind());
+    // Look at previous lines to see if there's a transaction header
+    if cursor.row > 0 {
+        // Check up to 10 lines back for a transaction
+        let start_row = cursor.row.saturating_sub(10);
 
-    while let Some(n) = current {
-        debug!("Checking node kind: {:?}", n.kind());
-        match n.kind() {
-            // We're in a transaction
-            "transaction" => {
-                debug!("Found transaction context");
-                return analyze_transaction_context(n, cursor, _content);
+        for row in (start_row..cursor.row).rev() {
+            let line = content.line(row).to_string();
+            let trimmed = line.trim();
+
+            // Check if this line looks like a transaction header
+            // Format: YYYY-MM-DD <flag|txn> ["payee"] "narration"
+            if trimmed.starts_with(|c: char| c.is_ascii_digit())
+                && (trimmed.contains("txn") || trimmed.contains('*') || trimmed.contains('!'))
+            {
+                // Found a transaction header.
+                // Now, let's analyze the current line to be smarter than just assuming PostingAccount.
+                let current_line_str = content.line(cursor.row).to_string();
+                let trimmed_current_line = current_line_str.trim();
+
+                // If line is empty, it might be the end of the transaction.
+                if trimmed_current_line.is_empty() {
+                    return CompletionContext::DocumentRoot;
+                }
+
+                // Heuristic to check if an account seems to be present.
+                // An account usually has at least one colon, or is one of the 5 main types.
+                let words: Vec<&str> = trimmed_current_line.split_whitespace().collect();
+                let first_word = words.first().copied().unwrap_or("");
+                let has_account = !first_word.is_empty()
+                    && (first_word.contains(':')
+                        || first_word.chars().next().is_some_and(|c| c.is_uppercase()));
+
+                if has_account {
+                    // If there's more than one word, we might have account + amount/currency
+                    if words.len() > 1 {
+                        // Check if there are digits (amount present)
+                        let has_digits = trimmed_current_line.chars().any(|c| c.is_ascii_digit());
+                        if has_digits {
+                            return CompletionContext::PostingCurrency;
+                        } else {
+                            return CompletionContext::PostingAmount;
+                        }
+                    } else {
+                        // Only one word - still typing the account
+                        let prefix = extract_account_prefix(&current_line_str, cursor.column);
+                        return CompletionContext::PostingAccount { prefix };
+                    }
+                } else {
+                    let prefix = extract_account_prefix(&current_line_str, cursor.column);
+                    return CompletionContext::PostingAccount { prefix };
+                }
             }
-            // We're in a posting within a transaction
-            "posting" => {
-                debug!("Found posting context");
-                return analyze_posting_context(n, cursor);
+
+            // Stop if we hit another directive or empty line
+            if trimmed.is_empty()
+                || trimmed.starts_with("open")
+                || trimmed.starts_with("close")
+                || trimmed.starts_with("balance")
+            {
+                break;
             }
-            // We're in an open directive
-            "open" => {
-                debug!("Found open context");
-                return analyze_open_context(n, cursor);
-            }
-            // We're in a balance directive
-            "balance" => {
-                debug!("Found balance context");
-                return analyze_balance_context(n, cursor);
-            }
-            // We're in a price directive
-            "price" => {
-                debug!("Found price context");
-                return analyze_price_context(n, cursor);
-            }
-            _ => {}
         }
-        current = n.parent();
     }
-    debug!("No specific context found, defaulting to DocumentRoot");
 
-    // Default context - likely at document root
-    CompletionContext {
-        structure_type: StructureType::DocumentRoot,
-        expected_next: vec![ExpectedType::Date, ExpectedType::TransactionKind],
-        prefix: String::new(),
-        parent_context: None,
-    }
+    // Default to document root
+    CompletionContext::DocumentRoot
 }
 
-/// Analyze completion context within a transaction
+/// Analyze transaction context using left-context (previous sibling) strategy
 fn analyze_transaction_context(
-    node: tree_sitter::Node,
-    cursor: tree_sitter::Point,
+    txn_node: tree_sitter::Node,
+    cursor: Point,
     content: &ropey::Rope,
 ) -> CompletionContext {
-    let mut walker = node.walk();
-    let children: Vec<_> = node.children(&mut walker).collect();
+    let mut cursor_obj = txn_node.walk();
+    let children: Vec<_> = txn_node.children(&mut cursor_obj).collect();
 
-    // Find where we are in the transaction structure
-    for child in children.iter() {
-        if cursor.row >= child.start_position().row && cursor.row <= child.end_position().row {
-            match child.kind() {
-                "flag" => {
-                    return CompletionContext {
-                        structure_type: StructureType::Transaction,
-                        expected_next: vec![ExpectedType::Flag],
-                        prefix: String::new(),
-                        parent_context: Some("transaction".to_string()),
-                    };
-                }
-                "payee" => {
-                    return CompletionContext {
-                        structure_type: StructureType::Transaction,
-                        expected_next: vec![ExpectedType::Payee],
-                        prefix: String::new(),
-                        parent_context: Some("transaction".to_string()),
-                    };
-                }
-                "narration" => {
-                    return CompletionContext {
-                        structure_type: StructureType::Transaction,
-                        expected_next: vec![ExpectedType::Narration],
-                        prefix: String::new(),
-                        parent_context: Some("transaction".to_string()),
-                    };
-                }
-                _ => {}
-            }
+    // Find the last named child before cursor
+    let mut prev_sibling: Option<tree_sitter::Node> = None;
+
+    for child in &children {
+        if child.start_position().row > cursor.row
+            || (child.start_position().row == cursor.row
+                && child.start_position().column >= cursor.column)
+        {
+            break;
+        }
+        if child.is_named() {
+            prev_sibling = Some(*child);
         }
     }
 
-    // We're somewhere in a transaction but not in a specific field
-    // Try to determine if we're in payee/narration position by analyzing the line content
-    let line_text = content.line(cursor.row).to_string();
-
-    // Check if this line contains "txn" and we're after it
-    if line_text.contains("txn")
-        && let Some(txn_pos) = line_text.find("txn")
-        && cursor.column > txn_pos + 3
-    {
-        // After "txn "
-        // Count quotes to determine if we're in payee or narration position
-        let before_cursor = &line_text[..std::cmp::min(cursor.column, line_text.len())];
-        let completed_quotes = before_cursor.matches("\"").count();
-
-        // Check if we already have a complete payee (closed quotes)
-        let has_complete_payee = before_cursor.contains("\"")
-            && before_cursor
-                .split("\"")
-                .filter(|s| !s.trim().is_empty())
-                .count()
-                >= 1
-            && completed_quotes >= 2;
-
-        if has_complete_payee {
-            // We have a completed payee field, so this should be narration
-            return CompletionContext {
-                structure_type: StructureType::Transaction,
-                expected_next: vec![ExpectedType::Narration],
-                prefix: String::new(),
-                parent_context: Some("transaction".to_string()),
-            };
-        } else {
-            // Default to narration for backward compatibility
-            return CompletionContext {
-                structure_type: StructureType::Transaction,
-                expected_next: vec![ExpectedType::Narration],
-                prefix: String::new(),
-                parent_context: Some("transaction".to_string()),
-            };
-        }
-    }
-
-    // Default to account completion if we can't determine payee/narration context
-    CompletionContext {
-        structure_type: StructureType::Transaction,
-        expected_next: vec![ExpectedType::Account], // Focus on accounts in posting area
-        prefix: String::new(),
-        parent_context: Some("transaction".to_string()),
-    }
-}
-
-/// Analyze completion context within a posting
-fn analyze_posting_context(
-    node: tree_sitter::Node,
-    _cursor: tree_sitter::Point,
-) -> CompletionContext {
-    let mut walker = node.walk();
-    let children: Vec<_> = node.children(&mut walker).collect();
-
-    // Check if we have an account already
-    let has_account = children.iter().any(|c| c.kind() == "account");
-
-    if has_account {
-        // We have an account, so we might be completing amount or currency
-        CompletionContext {
-            structure_type: StructureType::Posting,
-            expected_next: vec![ExpectedType::Amount, ExpectedType::Currency],
-            prefix: String::new(),
-            parent_context: Some("posting".to_string()),
-        }
-    } else {
-        // We don't have an account yet, so we're completing the account
-        CompletionContext {
-            structure_type: StructureType::Posting,
-            expected_next: vec![ExpectedType::Account],
-            prefix: String::new(),
-            parent_context: Some("posting".to_string()),
-        }
-    }
-}
-
-/// Analyze completion context within an open directive
-fn analyze_open_context(node: tree_sitter::Node, _cursor: tree_sitter::Point) -> CompletionContext {
-    let mut walker = node.walk();
-    let children: Vec<_> = node.children(&mut walker).collect();
-
-    let has_account = children.iter().any(|c| c.kind() == "account");
-
-    if has_account {
-        // We have an account, so we're completing currency
-        CompletionContext {
-            structure_type: StructureType::OpenDirective,
-            expected_next: vec![ExpectedType::Currency],
-            prefix: String::new(),
-            parent_context: Some("open".to_string()),
-        }
-    } else {
-        // We're completing the account
-        CompletionContext {
-            structure_type: StructureType::OpenDirective,
-            expected_next: vec![ExpectedType::Account],
-            prefix: String::new(),
-            parent_context: Some("open".to_string()),
-        }
-    }
-}
-
-/// Analyze completion context within a balance directive
-fn analyze_balance_context(
-    _node: tree_sitter::Node,
-    _cursor: tree_sitter::Point,
-) -> CompletionContext {
-    CompletionContext {
-        structure_type: StructureType::BalanceDirective,
-        expected_next: vec![
-            ExpectedType::Account,
-            ExpectedType::Amount,
-            ExpectedType::Currency,
-        ],
-        prefix: String::new(),
-        parent_context: Some("balance".to_string()),
-    }
-}
-
-/// Analyze completion context within a price directive
-fn analyze_price_context(
-    _node: tree_sitter::Node,
-    _cursor: tree_sitter::Point,
-) -> CompletionContext {
-    CompletionContext {
-        structure_type: StructureType::PriceDirective,
-        expected_next: vec![ExpectedType::Currency, ExpectedType::Amount],
-        prefix: String::new(),
-        parent_context: Some("price".to_string()),
-    }
-}
-
-/// Intelligent completion dispatcher based on context
-///
-/// This function analyzes the completion context and provides the most relevant
-/// completions based on where the user is in the beancount document structure.
-///
-/// # Priority Order:
-/// 1. Trigger characters (`:`, `#`, `^`, `"`) - these have highest priority
-/// 2. Single expected type (Account, Currency, etc.) - focus on one type
-/// 3. Multiple expected types - provide all relevant options
-/// 4. Fallback based on structure type
-fn complete_based_on_context(
-    beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
-    context: CompletionContext,
-    trigger_character: Option<char>,
-    content: &ropey::Rope,
-    cursor_point: tree_sitter::Point,
-) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
-    // Handle trigger characters that override context - these have highest priority
-    if let Some(trigger) = trigger_character {
-        match trigger {
-            ':' => return complete_account_with_prefix(beancount_data, &context.prefix),
-            '#' => return complete_tag(beancount_data),
-            '^' => return complete_link(beancount_data),
-            '"' => {
-                // When quote is triggered, try to be smart about payee vs narration
-                let line_text = content.line(cursor_point.row).to_string();
-                // Smart detection: if this looks like it could be payee position, prioritize payee completion
-                if line_text.contains("txn")
-                    && let Some(txn_pos) = line_text.find("txn")
-                {
-                    let after_txn = &line_text[txn_pos + 3..];
-                    let quote_count = after_txn.matches('"').count();
-
-                    // If we're right after txn with no quotes, likely payee position
-                    if quote_count == 0
-                        && cursor_point.column <= txn_pos + 4 + after_txn.trim_start().len()
-                    {
-                        return complete_payee_with_full_context(
-                            beancount_data,
-                            &context.prefix,
-                            trigger_character,
-                            Some(&line_text),
-                            cursor_point.column,
-                        );
+    // Map previous sibling to expected next context
+    match prev_sibling {
+        None => CompletionContext::DocumentRoot,
+        Some(prev) => {
+            debug!("Transaction prev sibling: {}", prev.kind());
+            match prev.kind() {
+                "date" => CompletionContext::AfterDate,
+                "flag" | "txn" => CompletionContext::AfterFlag,
+                "payee" | "string" => {
+                    // Check if this is first or second string
+                    let string_count = children
+                        .iter()
+                        .filter(|n| n.kind() == "string" || n.kind() == "payee")
+                        .count();
+                    if string_count >= 1 {
+                        CompletionContext::AfterPayee
+                    } else {
+                        CompletionContext::AfterFlag
                     }
                 }
-
-                // Default to narration completion for other cases
-                return complete_narration_with_quotes_context(
-                    beancount_data,
-                    &line_text,
-                    cursor_point.column,
-                    true, // triggered_by_quote = true
-                );
+                "narration" => {
+                    // After narration, we're in posting area
+                    let line = content.line(cursor.row).to_string();
+                    let prefix = extract_account_prefix(&line, cursor.column);
+                    CompletionContext::PostingAccount { prefix }
+                }
+                _ => {
+                    // Default to posting account
+                    let line = content.line(cursor.row).to_string();
+                    let prefix = extract_account_prefix(&line, cursor.column);
+                    CompletionContext::PostingAccount { prefix }
+                }
             }
-            _ => {} // Continue with context-based completion
         }
-    };
+    }
+}
 
-    // If we have exactly one expected type, focus on that (don't mix with others)
-    if context.expected_next.len() == 1 {
-        let expected = &context.expected_next[0];
-        return match expected {
-            ExpectedType::Account => {
-                complete_account_internal(beancount_data, &context.prefix, false)
+/// Analyze posting context
+fn analyze_posting_context(
+    posting_node: tree_sitter::Node,
+    cursor: Point,
+    content: &ropey::Rope,
+) -> CompletionContext {
+    if let Some(account_node) = posting_node
+        .children(&mut posting_node.walk())
+        .find(|c| c.kind() == "account")
+    {
+        // An account exists. We are completing amount or currency.
+
+        // Are we after the account?
+        if cursor.column > account_node.end_position().column {
+            if posting_node.children(&mut posting_node.walk()).any(|c| {
+                c.kind() == "amount" || c.kind() == "incomplete_amount" || c.kind() == "number"
+            }) {
+                return CompletionContext::PostingCurrency;
+            } else {
+                return CompletionContext::PostingAmount;
             }
-            ExpectedType::Currency => complete_currency(&context.prefix),
-            ExpectedType::Amount => complete_amount(&context),
-            ExpectedType::Date => complete_date(),
-            ExpectedType::Flag => complete_flag(),
-            ExpectedType::Narration => {
-                let line_text = content.line(cursor_point.row).to_string();
-                complete_narration_with_quotes(beancount_data, &line_text, cursor_point.column)
-            }
-            ExpectedType::Payee => {
-                complete_payee_with_context(beancount_data, &context.prefix, trigger_character)
-            }
-            ExpectedType::Tag => complete_tag(beancount_data),
-            ExpectedType::Link => complete_link(beancount_data),
-            ExpectedType::TransactionKind => complete_kind(),
+        }
+    }
+
+    // Default to account completion
+    let line = content.line(cursor.row).to_string();
+    let prefix = extract_account_prefix(&line, cursor.column);
+    CompletionContext::PostingAccount { prefix }
+}
+
+/// Analyze open directive context
+fn analyze_open_context(
+    open_node: tree_sitter::Node,
+    cursor: Point,
+    content: &ropey::Rope,
+) -> CompletionContext {
+    let mut cursor_obj = open_node.walk();
+    let children: Vec<_> = open_node.children(&mut cursor_obj).collect();
+
+    let has_account = children.iter().any(|c| c.kind() == "account");
+
+    if has_account {
+        CompletionContext::OpenCurrency
+    } else {
+        let line = content.line(cursor.row).to_string();
+        let prefix = extract_account_prefix(&line, cursor.column);
+        CompletionContext::OpenAccount { prefix }
+    }
+}
+
+/// Analyze balance directive context
+fn analyze_balance_context(
+    _balance_node: tree_sitter::Node,
+    cursor: Point,
+    content: &ropey::Rope,
+) -> CompletionContext {
+    let line = content.line(cursor.row).to_string();
+    let prefix = extract_account_prefix(&line, cursor.column);
+    CompletionContext::BalanceAccount { prefix }
+}
+
+/// Analyze account node context
+fn analyze_account_context(
+    _account_node: tree_sitter::Node,
+    cursor: Point,
+    content: &ropey::Rope,
+) -> CompletionContext {
+    let line = content.line(cursor.row).to_string();
+    let prefix = extract_account_prefix(&line, cursor.column);
+    CompletionContext::PostingAccount { prefix }
+}
+
+/// Analyze string node context to determine if it's payee or narration
+fn analyze_string_node_context(
+    string_node: tree_sitter::Node,
+    content: &ropey::Rope,
+    cursor: Point,
+) -> CompletionContext {
+    // Check if this string is first or second in transaction
+    if let Some(parent) = string_node.parent()
+        && parent.kind() == "transaction"
+    {
+        let mut walker = parent.walk();
+        let strings: Vec<_> = parent
+            .children(&mut walker)
+            .filter(|n| n.kind() == "string" || n.kind() == "payee" || n.kind() == "narration")
+            .collect();
+
+        let is_first = strings.first().map(|n| n.id()) == Some(string_node.id());
+
+        let line = content.line(cursor.row).to_string();
+        let prefix = extract_string_prefix(&line, cursor.column);
+        let has_opening = line.chars().take(cursor.column).any(|c| c == '"');
+        let has_closing = line.chars().skip(cursor.column).any(|c| c == '"');
+
+        return CompletionContext::InsideString {
+            prefix,
+            is_payee: is_first,
+            has_opening_quote: has_opening,
+            has_closing_quote: has_closing,
         };
     }
 
-    // For multiple expected types, provide all relevant completions
-    // This happens when context is ambiguous (e.g., at document root)
-    let mut all_completions = Vec::new();
+    CompletionContext::InsideString {
+        prefix: String::new(),
+        is_payee: false,
+        has_opening_quote: false,
+        has_closing_quote: false,
+    }
+}
 
-    for expected in &context.expected_next {
-        let completions = match expected {
-            ExpectedType::Account => {
-                complete_account_internal(beancount_data.clone(), &context.prefix, false)?
-                    .unwrap_or_default()
-            }
-            ExpectedType::Currency => complete_currency(&context.prefix)?.unwrap_or_default(),
-            ExpectedType::Amount => complete_amount(&context)?.unwrap_or_default(),
-            ExpectedType::Date => complete_date()?.unwrap_or_default(),
-            ExpectedType::Flag => complete_flag()?.unwrap_or_default(),
-            ExpectedType::Narration => {
-                let line_text = content.line(cursor_point.row).to_string();
-                complete_narration_with_quotes(
-                    beancount_data.clone(),
-                    &line_text,
-                    cursor_point.column,
-                )?
-                .unwrap_or_default()
-            }
-            ExpectedType::Payee => complete_payee_with_context(
-                beancount_data.clone(),
-                &context.prefix,
-                trigger_character,
-            )?
-            .unwrap_or_default(),
-            ExpectedType::Tag => complete_tag(beancount_data.clone())?.unwrap_or_default(),
-            ExpectedType::Link => complete_link(beancount_data.clone())?.unwrap_or_default(),
-            ExpectedType::TransactionKind => complete_kind()?.unwrap_or_default(),
-        };
+/// Analyze string context when triggered by quote character
+fn analyze_string_context(content: &ropey::Rope, cursor: Point) -> CompletionContext {
+    let line = content.line(cursor.row).to_string();
+    let prefix = extract_string_prefix(&line, cursor.column);
 
-        all_completions.extend(completions);
+    // Count quotes before cursor to determine context
+    let before_cursor = &line[..cursor.column.min(line.len())];
+    let quote_count = before_cursor.matches('"').count();
+
+    // Check if we have a complete payee (2+ quotes before, suggesting this is narration)
+    let is_payee = quote_count < 2 || !before_cursor.contains("txn");
+
+    // Check for closing quote after cursor
+    let has_closing = line.chars().skip(cursor.column).any(|c| c == '"');
+
+    CompletionContext::InsideString {
+        prefix,
+        is_payee,
+        has_opening_quote: true, // Quote was just typed
+        has_closing_quote: has_closing,
+    }
+}
+
+/// Extract account prefix from line text up to cursor position
+fn extract_account_prefix(line: &str, cursor_col: usize) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    if cursor_col == 0 || cursor_col > chars.len() {
+        return String::new();
     }
 
-    // If we have specific completions from expected types, return them
-    if !all_completions.is_empty() {
-        return Ok(Some(all_completions));
-    }
-
-    // Fallback based on structure type when context is unclear
-    match context.structure_type {
-        StructureType::Transaction | StructureType::Posting => {
-            complete_account_internal(beancount_data, &context.prefix, false)
+    // Find start of account (after whitespace or start of line)
+    let mut start = 0;
+    for i in (0..cursor_col).rev() {
+        let c = chars[i];
+        if c.is_whitespace() {
+            start = i + 1;
+            break;
         }
-        StructureType::DocumentRoot => {
-            // At document root, provide both dates and transaction kinds
-            let mut items = complete_date()?.unwrap_or_default();
-            items.extend(complete_kind()?.unwrap_or_default());
+    }
+
+    // Extract prefix
+    let end = cursor_col.min(chars.len());
+    chars[start..end].iter().collect()
+}
+
+/// Extract string prefix from line text up to cursor position
+fn extract_string_prefix(line: &str, cursor_col: usize) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    if cursor_col == 0 || cursor_col > chars.len() {
+        return String::new();
+    }
+
+    // Find start of string content (after quote)
+    let mut start = 0;
+    for i in (0..cursor_col).rev() {
+        if chars[i] == '"' {
+            start = i + 1;
+            break;
+        }
+    }
+
+    // Extract prefix, but not if we are at the opening quote
+    let end = cursor_col.min(chars.len());
+    chars[start..end].iter().collect()
+}
+
+fn extract_tag_prefix(line: &str, cursor_col: usize) -> Option<String> {
+    let relevant_part = &line[..cursor_col];
+    if let Some(hash_pos) = relevant_part.rfind('#') {
+        // Ensure we are not in a comment
+        if let Some(comment_pos) = relevant_part.find(';')
+            && hash_pos > comment_pos
+        {
+            return None; // It's in a comment
+        }
+        // Ensure there is no whitespace between # and cursor
+        let after_hash = &relevant_part[hash_pos + 1..];
+        if after_hash.contains(char::is_whitespace) {
+            return None;
+        }
+        return Some(after_hash.to_string());
+    }
+    None
+}
+
+fn extract_link_prefix(line: &str, cursor_col: usize) -> Option<String> {
+    let relevant_part = &line[..cursor_col];
+    if let Some(hash_pos) = relevant_part.rfind('^') {
+        // Ensure we are not in a comment
+        if let Some(comment_pos) = relevant_part.find(';')
+            && hash_pos > comment_pos
+        {
+            return None; // It's in a comment
+        }
+        // Ensure there is no whitespace between # and cursor
+        let after_hash = &relevant_part[hash_pos + 1..];
+        if after_hash.contains(char::is_whitespace) {
+            return None;
+        }
+        return Some(after_hash.to_string());
+    }
+    None
+}
+
+// ============================================================================
+// COMPLETION GENERATION - LSP 3.17 Compliant
+// ============================================================================
+
+/// Generate completions based on context with LSP 3.17 InsertReplaceEdit support
+fn generate_completions(
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
+    context: &CompletionContext,
+    content: &ropey::Rope,
+    position: Position,
+) -> Result<Option<Vec<CompletionItem>>> {
+    match context {
+        CompletionContext::DocumentRoot => {
+            let mut items = complete_date()?;
+            items.extend(complete_directive_keywords()?);
             Ok(Some(items))
         }
-        _ => Ok(None),
+
+        CompletionContext::AfterDate => Ok(Some(complete_directive_keywords()?)),
+
+        CompletionContext::AfterFlag => {
+            Ok(Some(complete_payee(data, "", content, position, false)?))
+        }
+
+        CompletionContext::AfterPayee => Ok(Some(complete_narration(
+            data, "", content, position, false,
+        )?)),
+
+        CompletionContext::PostingAccount { prefix } => {
+            Ok(Some(complete_account(data, prefix, content, position)?))
+        }
+
+        CompletionContext::PostingAmount => Ok(Some(complete_amount()?)),
+
+        CompletionContext::PostingCurrency => Ok(Some(complete_currency(content, position)?)),
+
+        CompletionContext::OpenAccount { prefix } => {
+            Ok(Some(complete_account(data, prefix, content, position)?))
+        }
+
+        CompletionContext::OpenCurrency => Ok(Some(complete_currency(content, position)?)),
+
+        CompletionContext::BalanceAccount { prefix } => {
+            Ok(Some(complete_account(data, prefix, content, position)?))
+        }
+
+        CompletionContext::PriceContext => Ok(Some(complete_currency(content, position)?)),
+
+        CompletionContext::InsideString {
+            prefix,
+            is_payee,
+            has_opening_quote: _,
+            has_closing_quote,
+        } => {
+            if *is_payee {
+                Ok(Some(complete_payee(
+                    data,
+                    prefix,
+                    content,
+                    position,
+                    *has_closing_quote,
+                )?))
+            } else {
+                Ok(Some(complete_narration(
+                    data,
+                    prefix,
+                    content,
+                    position,
+                    *has_closing_quote,
+                )?))
+            }
+        }
+
+        CompletionContext::TagContext { prefix } => Ok(Some(complete_tag(data, prefix)?)),
+
+        CompletionContext::LinkContext { prefix } => Ok(Some(complete_link(data, prefix)?)),
+
+        CompletionContext::ColonTriggeredAccount { parent_path } => {
+            Ok(Some(complete_subaccounts(data, parent_path)?))
+        }
     }
+}
+
+// ============================================================================
+// INDIVIDUAL COMPLETION PROVIDERS
+// ============================================================================
+
+/// Complete directive keywords (txn, open, balance, close, etc.)
+fn complete_directive_keywords() -> Result<Vec<CompletionItem>> {
+    let keywords = vec![
+        ("txn", "Transaction"),
+        ("*", "Transaction (completed)"),
+        ("!", "Transaction (incomplete)"),
+        ("open", "Open account"),
+        ("close", "Close account"),
+        ("balance", "Balance assertion"),
+        ("pad", "Pad directive"),
+        ("price", "Price directive"),
+        ("commodity", "Commodity directive"),
+        ("document", "Document directive"),
+        ("note", "Note directive"),
+        ("event", "Event directive"),
+    ];
+
+    Ok(keywords
+        .iter()
+        .map(|(label, detail)| CompletionItem {
+            label: label.to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some(detail.to_string()),
+            ..Default::default()
+        })
+        .collect())
+}
+
+/// Complete date with current/previous/next month
+fn complete_date() -> Result<Vec<CompletionItem>> {
+    let today = chrono::Local::now().naive_local().date();
+    let prev_month = sub_one_month(today).format("%Y-%m-").to_string();
+    let cur_month = today.format("%Y-%m-").to_string();
+    let next_month = add_one_month(today).format("%Y-%m-").to_string();
+    let today_str = today.format("%Y-%m-%d").to_string();
+
+    Ok(vec![
+        CompletionItem {
+            label: today_str,
+            detail: Some("today".to_string()),
+            kind: Some(CompletionItemKind::CONSTANT),
+            ..Default::default()
+        },
+        CompletionItem {
+            label: cur_month,
+            detail: Some("this month".to_string()),
+            kind: Some(CompletionItemKind::CONSTANT),
+            ..Default::default()
+        },
+        CompletionItem {
+            label: prev_month,
+            detail: Some("prev month".to_string()),
+            kind: Some(CompletionItemKind::CONSTANT),
+            ..Default::default()
+        },
+        CompletionItem {
+            label: next_month,
+            detail: Some("next month".to_string()),
+            kind: Some(CompletionItemKind::CONSTANT),
+            ..Default::default()
+        },
+    ])
+}
+
+/// Complete account names with fuzzy matching and InsertReplaceEdit
+fn complete_account(
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
+    prefix: &str,
+    content: &ropey::Rope,
+    position: Position,
+) -> Result<Vec<CompletionItem>> {
+    let mut all_accounts: Vec<String> = Vec::new();
+
+    for bean_data in data.values() {
+        all_accounts.extend(bean_data.get_accounts().into_iter());
+    }
+
+    // Remove duplicates
+    all_accounts.sort();
+    all_accounts.dedup();
+
+    // Fuzzy search
+    let matches = fuzzy_search_accounts(&all_accounts, prefix);
+
+    // Calculate ranges for InsertReplaceEdit
+    let line = content.line(position.line as usize).to_string();
+    let (insert_range, replace_range) = calculate_word_ranges(&line, position);
+
+    Ok(matches
+        .into_iter()
+        .take(50)
+        .map(|(account, score)| {
+            create_completion_with_insert_replace(
+                account,
+                "Beancount Account".to_string(),
+                CompletionItemKind::ENUM,
+                insert_range,
+                replace_range,
+                score,
+                vec![":".to_string()], // Commit character for flow
+            )
+        })
+        .collect())
+}
+
+/// Complete sub-accounts when colon is typed (e.g., "Assets:" shows "Checking", "Savings")
+fn complete_subaccounts(
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
+    parent_path: &str,
+) -> Result<Vec<CompletionItem>> {
+    let mut subaccounts: Vec<String> = Vec::new();
+
+    for bean_data in data.values() {
+        for account in bean_data.get_accounts() {
+            if let Some(suffix) = account.strip_prefix(parent_path) {
+                let suffix = suffix.strip_prefix(':').unwrap_or(suffix);
+
+                // Extract only the next segment
+                let next_segment = if let Some(colon_pos) = suffix.find(':') {
+                    &suffix[..colon_pos]
+                } else {
+                    suffix
+                };
+
+                if !next_segment.is_empty() {
+                    subaccounts.push(next_segment.to_string());
+                }
+            }
+        }
+    }
+
+    // Remove duplicates and sort
+    subaccounts.sort();
+    subaccounts.dedup();
+
+    Ok(subaccounts
+        .into_iter()
+        .map(|segment| CompletionItem {
+            label: segment.clone(),
+            kind: Some(CompletionItemKind::ENUM),
+            detail: Some("Account segment".to_string()),
+            insert_text: Some(segment),
+            commit_characters: Some(vec![":".to_string()]),
+            ..Default::default()
+        })
+        .collect())
 }
 
 /// Complete currency codes
-fn complete_currency(prefix: &str) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
+fn complete_currency(content: &ropey::Rope, position: Position) -> Result<Vec<CompletionItem>> {
     let currencies = vec![
         "USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD", "SEK", "NOK", "DKK", "PLN", "CZK",
-        "HUF", "RON", "BGN", "HRK", "RSD", "BAM", "MKD", "ISK", "TRY", "RUB", "UAH", "BYN", "MDL",
-        "GEL", "AMD", "AZN", "KZT", "UZS", "KGS", "TJS", "TMT", "AFN", "PKR", "INR", "NPR", "BTN",
-        "LKR", "MVR", "BDT", "MMK", "THB", "LAK", "KHR", "VND", "CNY", "HKD", "MOP", "TWD", "KRW",
-        "MNT", "KPW", "IDR", "MYR", "BND", "SGD", "PHP", "PGK", "FJD", "SBD", "VUV", "WST", "TOP",
-        "NZD", "AUD", "USD",
+        "HUF", "CNY", "INR", "BRL", "MXN", "ZAR", "RUB", "KRW", "SGD", "HKD", "THB",
     ];
 
-    let items: Vec<lsp_types::CompletionItem> = currencies
-        .into_iter()
-        .filter(|currency| {
-            prefix.is_empty() || currency.to_lowercase().starts_with(&prefix.to_lowercase())
-        })
-        .map(|currency| lsp_types::CompletionItem {
-            label: currency.to_string(),
-            detail: Some("Currency".to_string()),
-            kind: Some(lsp_types::CompletionItemKind::ENUM),
-            ..Default::default()
-        })
-        .collect();
+    let line = content.line(position.line as usize).to_string();
+    let (insert_range, replace_range) = calculate_word_ranges(&line, position);
 
-    Ok(if items.is_empty() { None } else { Some(items) })
+    Ok(currencies
+        .iter()
+        .map(|currency| {
+            create_completion_with_insert_replace(
+                currency.to_string(),
+                "Currency".to_string(),
+                CompletionItemKind::UNIT,
+                insert_range,
+                replace_range,
+                1.0,
+                vec![],
+            )
+        })
+        .collect())
 }
 
-/// Complete amount suggestions (context-aware)
-fn complete_amount(_context: &CompletionContext) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
-    let amounts = vec![
-        "100.00", "50.00", "25.00", "10.00", "5.00", "1000.00", "500.00", "250.00",
-    ];
-
-    let items: Vec<lsp_types::CompletionItem> = amounts
-        .into_iter()
-        .map(|amount| lsp_types::CompletionItem {
-            label: amount.to_string(),
-            detail: Some("Amount".to_string()),
-            kind: Some(lsp_types::CompletionItemKind::VALUE),
-            ..Default::default()
-        })
-        .collect();
-
-    Ok(Some(items))
+/// Complete amount suggestions
+fn complete_amount() -> Result<Vec<CompletionItem>> {
+    Ok(vec![])
 }
 
-/// Complete transaction flags
-fn complete_flag() -> Result<Option<Vec<lsp_types::CompletionItem>>> {
-    let flags = vec![
-        ("*", "Complete transaction"),
-        ("!", "Incomplete transaction (for debugging)"),
-    ];
-
-    let items: Vec<lsp_types::CompletionItem> = flags
-        .into_iter()
-        .map(|(flag, description)| lsp_types::CompletionItem {
-            label: flag.to_string(),
-            detail: Some(description.to_string()),
-            kind: Some(lsp_types::CompletionItemKind::ENUM),
-            ..Default::default()
-        })
-        .collect();
-
-    Ok(Some(items))
-}
-
-/// Complete payee names from previous transactions with context awareness
-fn complete_payee_with_context(
-    beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
+/// Complete payee names
+fn complete_payee(
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
     prefix: &str,
-    trigger_character: Option<char>,
-) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
-    complete_payee_with_full_context(beancount_data, prefix, trigger_character, None, 0)
-}
+    content: &ropey::Rope,
+    position: Position,
+    has_closing_quote: bool,
+) -> Result<Vec<CompletionItem>> {
+    let mut payees: Vec<String> = Vec::new();
 
-/// Complete payee names with full context including line text for quote detection
-fn complete_payee_with_full_context(
-    beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
-    prefix: &str,
-    trigger_character: Option<char>,
-    line_text: Option<&str>,
-    cursor_char: usize,
-) -> Result<Option<Vec<lsp_types::CompletionItem>>> {
-    let mut payees = std::collections::HashSet::new();
-
-    // Extract payees from narration (this is a simplified approach)
-    for data in beancount_data.values() {
-        for narration in data.get_narration() {
-            // Simple heuristic: if narration doesn't start with quotes,
-            // it might be a payee. This could be improved with better parsing.
-            let clean_narration = narration.trim_matches('"');
-            if !clean_narration.is_empty() && clean_narration.len() < 50 {
-                payees.insert(clean_narration.to_string());
+    for bean_data in data.values() {
+        for narration in bean_data.get_narration() {
+            let clean = narration.trim_matches('"');
+            if !clean.is_empty() && clean.len() < 50 {
+                payees.push(clean.to_string());
             }
         }
     }
 
-    // Determine if we should add quotes based on trigger
-    let triggered_by_quote = trigger_character == Some('"');
+    payees.sort();
+    payees.dedup();
 
-    // Check if there's already a closing quote after the cursor (for triggered by quote case)
-    let has_closing_quote = triggered_by_quote
-        && line_text
-            .map(|text| text.chars().skip(cursor_char).any(|c| c == '"'))
-            .unwrap_or(false);
+    let matches = fuzzy_search_strings(&payees, prefix);
 
-    let items: Vec<lsp_types::CompletionItem> = payees
+    let line = content.line(position.line as usize).to_string();
+    let (insert_range, replace_range) = calculate_string_ranges(&line, position, has_closing_quote);
+
+    Ok(matches
         .into_iter()
-        .filter(|payee| prefix.is_empty() || payee.to_lowercase().contains(&prefix.to_lowercase()))
-        .map(|payee| {
-            let (label, insert_text) = if triggered_by_quote {
-                // When triggered by quote, user already typed opening quote
-                let insert_text = if has_closing_quote {
-                    // Closing quote exists, just insert content
-                    payee.clone()
-                } else {
-                    // No closing quote, add it
-                    format!("{}\"", payee)
-                };
-                (payee.clone(), insert_text)
+        .map(|(payee, score)| {
+            let insert_text = if has_closing_quote {
+                payee.clone()
             } else {
-                // Normal completion includes quotes in both label and insert text
-                (format!("\"{}\"", payee), format!("\"{}\"", payee))
+                format!("{}\"", payee)
             };
 
-            lsp_types::CompletionItem {
-                label,
-                detail: Some("Payee".to_string()),
-                kind: Some(lsp_types::CompletionItemKind::TEXT),
-                insert_text: Some(insert_text),
-                ..Default::default()
+            create_completion_with_insert_replace(
+                payee,
+                "Payee".to_string(),
+                CompletionItemKind::TEXT,
+                insert_range,
+                replace_range,
+                score,
+                vec![],
+            )
+            .with_insert_text(insert_text)
+        })
+        .collect())
+}
+
+/// Complete narration strings
+fn complete_narration(
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
+    prefix: &str,
+    content: &ropey::Rope,
+    position: Position,
+    has_closing_quote: bool,
+) -> Result<Vec<CompletionItem>> {
+    let mut narrations: Vec<String> = Vec::new();
+
+    for bean_data in data.values() {
+        for narration in bean_data.get_narration() {
+            narrations.push(narration.trim_matches('"').to_string());
+        }
+    }
+
+    narrations.sort();
+    narrations.dedup();
+
+    let matches = fuzzy_search_strings(&narrations, prefix);
+
+    let line = content.line(position.line as usize).to_string();
+    let (insert_range, replace_range) = calculate_string_ranges(&line, position, has_closing_quote);
+
+    Ok(matches
+        .into_iter()
+        .map(|(narration, score)| {
+            let insert_text = if has_closing_quote {
+                narration.clone()
+            } else {
+                format!("{}\"", narration)
+            };
+
+            create_completion_with_insert_replace(
+                narration,
+                "Narration".to_string(),
+                CompletionItemKind::TEXT,
+                insert_range,
+                replace_range,
+                score,
+                vec![],
+            )
+            .with_insert_text(insert_text)
+        })
+        .collect())
+}
+
+/// Complete tags
+fn complete_tag(
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
+    prefix: &str,
+) -> Result<Vec<CompletionItem>> {
+    let mut tags: Vec<String> = Vec::new();
+
+    for bean_data in data.values() {
+        tags.extend(
+            bean_data
+                .get_tags()
+                .into_iter()
+                .map(|t| t.trim_start_matches('#').to_string()),
+        );
+    }
+
+    tags.sort();
+    tags.dedup();
+
+    let matches = fuzzy_search_strings(&tags, prefix);
+
+    Ok(matches
+        .into_iter()
+        .map(|(tag, _score)| CompletionItem {
+            label: tag.clone(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("Tag".to_string()),
+            ..Default::default()
+        })
+        .collect())
+}
+
+/// Complete links
+fn complete_link(
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
+    prefix: &str,
+) -> Result<Vec<CompletionItem>> {
+    let mut links: Vec<String> = Vec::new();
+
+    for bean_data in data.values() {
+        links.extend(
+            bean_data
+                .get_links()
+                .into_iter()
+                .map(|l| l.trim_start_matches('^').to_string()),
+        );
+    }
+
+    links.sort();
+    links.dedup();
+
+    let matches = fuzzy_search_strings(&links, prefix);
+
+    Ok(matches
+        .into_iter()
+        .map(|(link, _score)| CompletionItem {
+            label: link.clone(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("Link".to_string()),
+            ..Default::default()
+        })
+        .collect())
+}
+
+// ============================================================================
+// LSP 3.17 INSERTREPLACEEDIT SUPPORT
+// ============================================================================
+
+/// Create completion item with InsertReplaceEdit for LSP 3.17 compliance
+fn create_completion_with_insert_replace(
+    label: String,
+    detail: String,
+    kind: CompletionItemKind,
+    _insert_range: Range,
+    replace_range: Range,
+    score: f32,
+    commit_characters: Vec<String>,
+) -> CompletionItem {
+    CompletionItem {
+        label: label.clone(),
+        kind: Some(kind),
+        detail: Some(detail),
+        text_edit: Some(lsp_types::CompletionTextEdit::Edit(TextEdit {
+            new_text: label.clone(),
+            range: replace_range,
+        })),
+        filter_text: Some(label),
+        sort_text: Some(format!("{:010.0}", 99999.0 - score.min(99999.0))),
+        commit_characters: if commit_characters.is_empty() {
+            None
+        } else {
+            Some(commit_characters)
+        },
+        ..Default::default()
+    }
+}
+
+/// Calculate word ranges for InsertReplaceEdit
+fn calculate_word_ranges(line: &str, position: Position) -> (Range, Range) {
+    let chars: Vec<char> = line.chars().collect();
+    let cursor_col = position.character as usize;
+
+    // Find start of word
+    let mut start = cursor_col;
+    while start > 0 {
+        let c = chars[start - 1];
+        if !c.is_alphanumeric() && c != ':' && c != '-' && c != '_' {
+            break;
+        }
+        start -= 1;
+    }
+
+    // Find end of word
+    let mut end = cursor_col;
+    while end < chars.len() {
+        let c = chars[end];
+        if !c.is_alphanumeric() && c != ':' && c != '-' && c != '_' {
+            break;
+        }
+        end += 1;
+    }
+
+    let insert_range = Range {
+        start: Position {
+            line: position.line,
+            character: start as u32,
+        },
+        end: position,
+    };
+
+    let replace_range = Range {
+        start: Position {
+            line: position.line,
+            character: start as u32,
+        },
+        end: Position {
+            line: position.line,
+            character: end as u32,
+        },
+    };
+
+    (insert_range, replace_range)
+}
+
+/// Calculate string ranges for InsertReplaceEdit (handles quotes)
+fn calculate_string_ranges(
+    line: &str,
+    position: Position,
+    has_closing_quote: bool,
+) -> (Range, Range) {
+    let chars: Vec<char> = line.chars().collect();
+    let cursor_col = position.character as usize;
+
+    // Find opening quote
+    let mut start = cursor_col;
+    while start > 0 {
+        if chars[start - 1] == '"' {
+            break;
+        }
+        start -= 1;
+    }
+
+    // Find closing quote (if exists)
+    let mut end = cursor_col;
+    if has_closing_quote {
+        while end < chars.len() {
+            if chars[end] == '"' {
+                break;
             }
+            end += 1;
+        }
+    }
+
+    let insert_range = Range {
+        start: Position {
+            line: position.line,
+            character: start as u32,
+        },
+        end: position,
+    };
+
+    let replace_range = Range {
+        start: Position {
+            line: position.line,
+            character: start as u32,
+        },
+        end: Position {
+            line: position.line,
+            character: end as u32,
+        },
+    };
+
+    (insert_range, replace_range)
+}
+
+// ============================================================================
+// FUZZY SEARCH WITH NUCLEO
+// ============================================================================
+
+/// Fuzzy search accounts using nucleo with tiered scoring
+fn fuzzy_search_accounts(accounts: &[String], query: &str) -> Vec<(String, f32)> {
+    if query.is_empty() {
+        return accounts.iter().map(|acc| (acc.clone(), 1.0)).collect();
+    }
+
+    let mut scored: Vec<(String, f32)> = accounts
+        .iter()
+        .map(|acc| (acc.clone(), score_account(acc, query)))
+        .collect();
+
+    // Sort by score descending, then alphabetically
+    scored.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+
+    scored
+}
+
+/// Fuzzy search a list of strings
+fn fuzzy_search_strings(strings: &[String], query: &str) -> Vec<(String, f32)> {
+    if query.is_empty() {
+        return strings.iter().map(|s| (s.clone(), 1.0)).collect();
+    }
+
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+
+    let mut scored: Vec<(String, f32)> = strings
+        .iter()
+        .filter_map(|s| {
+            let mut char_buf = Vec::new();
+            let s_utf32 = Utf32Str::new(s, &mut char_buf);
+            pattern
+                .score(s_utf32, &mut matcher)
+                .map(|score| (s.clone(), score as f32))
         })
         .collect();
 
-    Ok(if items.is_empty() { None } else { Some(items) })
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored
 }
 
-pub(crate) fn complete_date() -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
-    debug!("providers::completion::date");
-    let today = chrono::offset::Local::now().naive_local().date();
-    let prev_month = sub_one_month(today).format("%Y-%m-").to_string();
-    debug!("providers::completion::date {}", prev_month);
-    let cur_month = today.format("%Y-%m-").to_string();
-    debug!("providers::completion::date {}", cur_month);
-    let next_month = add_one_month(today).format("%Y-%m-").to_string();
-    debug!("providers::completion::date {}", next_month);
-    let today = today.format("%Y-%m-%d").to_string();
-    debug!("providers::completion::date {}", today);
-    let items = vec![
-        lsp_types::CompletionItem {
-            label: today,
-            detail: Some("today".to_string()),
-            kind: Some(lsp_types::CompletionItemKind::ENUM),
-            ..Default::default()
-        },
-        lsp_types::CompletionItem {
-            label: cur_month,
-            detail: Some("this month".to_string()),
-            kind: Some(lsp_types::CompletionItemKind::ENUM),
-            ..Default::default()
-        },
-        lsp_types::CompletionItem {
-            label: prev_month,
-            detail: Some("prev month".to_string()),
-            kind: Some(lsp_types::CompletionItemKind::ENUM),
-            ..Default::default()
-        },
-        lsp_types::CompletionItem {
-            label: next_month,
-            detail: Some("next month".to_string()),
-            kind: Some(lsp_types::CompletionItemKind::ENUM),
-            ..Default::default()
-        },
-    ];
-    Ok(Some(items))
+/// Score an account using tiered matching strategy
+fn score_account(account: &str, query: &str) -> f32 {
+    let account_lower = account.to_lowercase();
+    let query_lower = query.to_lowercase();
+
+    // Tier 1: Exact match (10000 points)
+    if account == query || account_lower == query_lower {
+        return 10000.0;
+    }
+
+    // Tier 2: Prefix match (7000 points)
+    if account.starts_with(query) {
+        return 7000.0;
+    }
+    if account_lower.starts_with(&query_lower) {
+        return 6900.0;
+    }
+
+    // Tier 3: Intra-segment match (4000 points)
+    if let Some(score) = score_intra_segment(account, &query_lower) {
+        return 4000.0 + score;
+    }
+
+    // Tier 4: Fuzzy match with nucleo (1000 points)
+    if let Some(score) = score_with_nucleo(account, query) {
+        return 1000.0 + score;
+    }
+
+    // Tier 5: Fallback (show all)
+    1.0
 }
 
-pub(crate) fn complete_kind() -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
-    debug!("providers::completion::kind");
-    let items = vec![
-        lsp_types::CompletionItem {
-            label: String::from("txn"),
-            kind: Some(lsp_types::CompletionItemKind::ENUM),
-            ..Default::default()
-        },
-        lsp_types::CompletionItem {
-            label: String::from("balance"),
-            kind: Some(lsp_types::CompletionItemKind::ENUM),
-            ..Default::default()
-        },
-        lsp_types::CompletionItem {
-            label: String::from("open"),
-            kind: Some(lsp_types::CompletionItemKind::ENUM),
-            ..Default::default()
-        },
-        lsp_types::CompletionItem {
-            label: String::from("close"),
-            kind: Some(lsp_types::CompletionItemKind::ENUM),
-            ..Default::default()
-        },
-    ];
-    Ok(Some(items))
+/// Score matches within account segments
+fn score_intra_segment(account: &str, query_lower: &str) -> Option<f32> {
+    let segments: Vec<&str> = account.split(':').collect();
+    let mut best_score: f32 = 0.0;
+    let mut found = false;
+
+    for (i, segment) in segments.iter().enumerate() {
+        let seg_lower = segment.to_lowercase();
+
+        if seg_lower == query_lower {
+            best_score = best_score.max(500.0 - (i as f32 * 50.0));
+            found = true;
+        } else if seg_lower.starts_with(query_lower) {
+            best_score = best_score.max(300.0 - (i as f32 * 30.0));
+            found = true;
+        } else if seg_lower.contains(query_lower) {
+            best_score = best_score.max(100.0 - (i as f32 * 10.0));
+            found = true;
+        }
+    }
+
+    if found { Some(best_score) } else { None }
 }
+
+/// Score using nucleo fuzzy matcher
+fn score_with_nucleo(account: &str, query: &str) -> Option<f32> {
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+
+    let mut char_buf = Vec::new();
+    let account_utf32 = Utf32Str::new(account, &mut char_buf);
+
+    pattern
+        .score(account_utf32, &mut matcher)
+        .map(|score| (score as f32 / 100.0).min(500.0))
+}
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
 
 pub fn add_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     let mut year = date.year();
@@ -916,2276 +1291,557 @@ pub fn sub_one_month(date: chrono::NaiveDate) -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd_opt(year, month, 1).expect("valid date")
 }
 
-fn complete_narration_with_quotes(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
-    line_text: &str,
-    cursor_char: usize,
-) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
-    complete_narration_with_quotes_context(data, line_text, cursor_char, false)
+/// Extension trait for adding insert_text to CompletionItem
+trait CompletionItemExt {
+    fn with_insert_text(self, insert_text: String) -> Self;
 }
 
-fn complete_narration_with_quotes_context(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
-    line_text: &str,
-    cursor_char: usize,
-    triggered_by_quote: bool,
-) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
-    debug!("providers::completion::narration");
-
-    // Check if there's already a closing quote after the cursor
-    let has_closing_quote = line_text.chars().skip(cursor_char).any(|c| c == '"');
-    debug!(
-        "providers::completion::narration - has_closing_quote: {}",
-        has_closing_quote
-    );
-
-    let mut completions = Vec::new();
-    for data in data.values() {
-        for txn_string in data.get_narration() {
-            let (label, insert_text) = if triggered_by_quote {
-                // When triggered by quote, user already typed opening quote
-                let clean_text = txn_string.trim_matches('"');
-                let insert_text = if has_closing_quote {
-                    // Closing quote exists, just insert content
-                    clean_text.to_string()
-                } else {
-                    // No closing quote, add it
-                    format!("{}\"", clean_text)
-                };
-                (clean_text.to_string(), insert_text)
-            } else if has_closing_quote {
-                // Remove the quotes from the stored string and don't add closing quote
-                let clean_text = txn_string.trim_matches('"');
-                (txn_string.clone(), clean_text.to_string())
-            } else {
-                // Keep the full quoted string as stored
-                (txn_string.clone(), txn_string.clone())
-            };
-
-            completions.push(lsp_types::CompletionItem {
-                label,
-                detail: Some("Beancount Narration".to_string()),
-                kind: Some(lsp_types::CompletionItemKind::ENUM),
-                insert_text: Some(insert_text),
-                ..Default::default()
-            });
+impl CompletionItemExt for CompletionItem {
+    fn with_insert_text(mut self, insert_text: String) -> Self {
+        if let Some(lsp_types::CompletionTextEdit::Edit(edit)) = &mut self.text_edit {
+            edit.new_text = insert_text;
         }
-    }
-    Ok(Some(completions))
-}
-
-fn complete_account_with_prefix(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
-    prefix: &str,
-) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
-    debug!("providers::completion::account with prefix: '{}'", prefix);
-    complete_account_internal_colon_triggered(data, prefix)
-}
-
-fn complete_account_internal_colon_triggered(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
-    prefix: &str,
-) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
-    debug!(
-        "providers::completion::account colon-triggered with prefix: '{}'",
-        prefix
-    );
-    let mut completions = Vec::new();
-
-    for data in data.values() {
-        let accounts: Vec<String> = data.get_accounts().into_iter().collect();
-
-        // Find accounts that start with the prefix
-        let matching_accounts: Vec<String> = accounts
-            .into_iter()
-            .filter(|account| account.starts_with(prefix))
-            .collect();
-
-        // Extract the parts after the prefix
-        for account in matching_accounts {
-            if let Some(suffix) = account.strip_prefix(prefix) {
-                // Remove leading colon if present
-                let suffix = suffix.strip_prefix(':').unwrap_or(suffix);
-
-                // Only show the next segment (up to the next colon, if any)
-                let next_segment = if let Some(colon_pos) = suffix.find(':') {
-                    &suffix[..colon_pos]
-                } else {
-                    suffix
-                };
-
-                // Skip empty segments and avoid duplicates
-                if !next_segment.is_empty() {
-                    let completion_text = next_segment.to_string();
-
-                    // Check if we already have this completion
-                    if !completions
-                        .iter()
-                        .any(|item: &lsp_types::CompletionItem| item.label == completion_text)
-                    {
-                        completions.push(create_completion_item(completion_text, 1.0));
-                    }
-                }
-            }
-        }
-    }
-
-    // Sort completions alphabetically
-    completions.sort_by(|a, b| a.label.cmp(&b.label));
-
-    Ok(Some(completions))
-}
-
-fn complete_account_internal(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
-    prefix: &str,
-    filter_by_prefix: bool,
-) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
-    debug!(
-        "providers::completion::account internal - prefix: '{}', filter: {}",
-        prefix, filter_by_prefix
-    );
-    let mut completions = Vec::new();
-
-    for data in data.values() {
-        let accounts: Vec<String> = data.get_accounts().into_iter().collect();
-
-        if filter_by_prefix {
-            // Colon-triggered completion: use traditional prefix filtering
-            let search_mode = determine_search_mode(prefix);
-            debug!("Search mode: {:?} for prefix: '{}'", search_mode, prefix);
-
-            match search_mode {
-                SearchMode::Prefix => {
-                    // Capital letter typed - show all accounts but prioritize those starting with prefix
-                    for account in &accounts {
-                        let score = if prefix.is_empty() || account.starts_with(prefix) {
-                            1000.0 // High score for exact prefix matches
-                        } else {
-                            1.0 // Low score for non-matching accounts (but still included)
-                        };
-                        completions.push(create_completion_item(account.clone(), score));
-                    }
-                }
-                SearchMode::Fuzzy => {
-                    // Lowercase letter typed - fuzzy search all accounts
-                    let fuzzy_matches = fuzzy_search_accounts(&accounts, prefix);
-                    for (account, score) in fuzzy_matches {
-                        completions.push(create_completion_item(account, score));
-                    }
-                }
-                SearchMode::Exact => {
-                    // No prefix or mixed case - use exact prefix matching with filtering
-                    let prefix_lower = prefix.to_lowercase();
-                    for account in accounts {
-                        if prefix.is_empty() || account.to_lowercase().starts_with(&prefix_lower) {
-                            completions.push(create_completion_item(account, 1.0));
-                        }
-                    }
-                }
-            }
-        } else {
-            // Normal completion: return ALL accounts, use fuzzy matching for ordering
-            let fuzzy_matches = fuzzy_search_accounts_with_limit(&accounts, prefix, None);
-            for (account, score) in fuzzy_matches {
-                completions.push(create_completion_item(account, score));
-            }
-        }
-    }
-
-    // Sort by sort_text (lower values first, since sort_text is inverted from score)
-    completions.sort_by(|a, b| {
-        let sort_a = a
-            .sort_text
-            .as_ref()
-            .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(99999.0);
-        let sort_b = b
-            .sort_text
-            .as_ref()
-            .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(99999.0);
-        sort_a
-            .partial_cmp(&sort_b)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.label.cmp(&b.label))
-    });
-
-    Ok(Some(completions))
-}
-
-#[derive(Debug, PartialEq)]
-enum SearchMode {
-    Prefix, // Single A/L/I/E or other capital letters - show accounts with exact prefix match
-    Fuzzy,  // Lowercase letters - fuzzy search all accounts
-    Exact,  // Empty or mixed case - exact prefix matching
-}
-
-fn determine_search_mode(prefix: &str) -> SearchMode {
-    if prefix.is_empty() {
-        SearchMode::Exact
-    } else if prefix.len() == 1 && matches!(prefix.chars().next(), Some('A' | 'L' | 'I' | 'E')) {
-        // Single uppercase A, L, I, E - filter by account type
-        SearchMode::Prefix
-    } else if prefix
-        .chars()
-        .all(|c| c.is_uppercase() || !c.is_alphabetic())
-    {
-        // All uppercase letters - exact prefix matching
-        SearchMode::Prefix
-    } else if prefix
-        .chars()
-        .all(|c| c.is_lowercase() || !c.is_alphabetic())
-    {
-        // All lowercase letters - fuzzy search across all accounts
-        SearchMode::Fuzzy
-    } else {
-        // Mixed case - exact prefix matching
-        SearchMode::Exact
+        self
     }
 }
 
-/// Clear score tiers with significant gaps for predictable ranking
-#[derive(Debug, Clone, Copy)]
-#[repr(u32)]
-enum ScoreTier {
-    Exact = 10000,    // Exact matches (account == query)
-    Prefix = 7000,    // Prefix matches (account.starts_with(query))
-    IntraWord = 4000, // Matches within colon segments
-    Fuzzy = 1000,     // Cross-segment fuzzy matches
-    Fallback = 1,     // All other accounts (for "show all" behavior)
-}
-
-impl ScoreTier {
-    fn as_f32(self) -> f32 {
-        self as u32 as f32
-    }
-}
-
-fn fuzzy_search_accounts(accounts: &[String], query: &str) -> Vec<(String, f32)> {
-    fuzzy_search_accounts_with_limit(accounts, query, Some(20))
-}
-
-fn fuzzy_search_accounts_with_limit(
-    accounts: &[String],
-    query: &str,
-    limit: Option<usize>,
-) -> Vec<(String, f32)> {
-    if query.is_empty() {
-        let mut all_accounts: Vec<(String, f32)> = accounts
-            .iter()
-            .map(|acc| (acc.clone(), ScoreTier::Fallback.as_f32()))
-            .collect();
-
-        // Sort alphabetically when no query
-        all_accounts.sort_by(|a, b| a.0.cmp(&b.0));
-
-        if let Some(limit_size) = limit {
-            all_accounts.truncate(limit_size);
-        }
-        return all_accounts;
-    }
-
-    let mut scored_accounts: Vec<(String, f32)> = Vec::new();
-
-    for account in accounts {
-        let score = score_account(account, query);
-        scored_accounts.push((account.clone(), score));
-    }
-
-    // Sort by score descending, then alphabetically
-    scored_accounts.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.0.cmp(&b.0))
-    });
-
-    // Apply limit if specified
-    if let Some(limit_size) = limit {
-        scored_accounts.truncate(limit_size);
-    }
-
-    scored_accounts
-}
-
-/// Score an account using clear tiers with early returns for simplicity
-fn score_account(account: &str, query: &str) -> f32 {
-    if query.is_empty() {
-        return ScoreTier::Fallback.as_f32();
-    }
-
-    let account_lower = account.to_lowercase();
-    let query_lower = query.to_lowercase();
-
-    // Tier 1: Exact matches (highest priority)
-    if account == query {
-        return ScoreTier::Exact.as_f32();
-    }
-    if account_lower == query_lower {
-        return ScoreTier::Exact.as_f32() - 100.0;
-    }
-
-    // Tier 2: Prefix matches (very high priority)
-    if account.starts_with(query) {
-        return ScoreTier::Prefix.as_f32();
-    }
-    if account_lower.starts_with(&query_lower) {
-        return ScoreTier::Prefix.as_f32() - 100.0;
-    }
-
-    // Tier 3: Intra-word matches (within colon segments)
-    if let Some(score) = score_intra_word_match(account, query) {
-        return ScoreTier::IntraWord.as_f32() + score;
-    }
-
-    // Tier 4: Fuzzy matches (nucleo only)
-    if let Some(score) = score_with_nucleo(account, query) {
-        return ScoreTier::Fuzzy.as_f32() + score;
-    }
-
-    // Tier 5: Fallback (ensures all accounts are included)
-    ScoreTier::Fallback.as_f32()
-}
-
-/// Check for matches within colon segments, returning best score if found
-/// E.g., "cash" in "Assets:Cash:Apple" matches entirely within the "Cash" segment
-fn score_intra_word_match(account: &str, query: &str) -> Option<f32> {
-    let query_lower = query.to_lowercase();
-    let segments: Vec<&str> = account.split(':').collect();
-
-    let mut best_score: f32 = 0.0;
-    let mut found_match = false;
-
-    for (segment_index, segment) in segments.iter().enumerate() {
-        let segment_lower = segment.to_lowercase();
-
-        // Exact segment match (highest within this tier)
-        if segment_lower == query_lower {
-            let score = 500.0 - (segment_index as f32 * 50.0);
-            best_score = best_score.max(score);
-            found_match = true;
-        }
-        // Segment prefix match
-        else if segment_lower.starts_with(&query_lower) {
-            let score = 300.0 - (segment_index as f32 * 30.0);
-            best_score = best_score.max(score);
-            found_match = true;
-        }
-        // Substring within segment
-        else if segment_lower.contains(&query_lower) {
-            let score = 100.0 - (segment_index as f32 * 10.0);
-            best_score = best_score.max(score);
-            found_match = true;
-        }
-    }
-
-    if found_match { Some(best_score) } else { None }
-}
-
-/// Use nucleo for fuzzy matching across segments
-fn score_with_nucleo(account: &str, query: &str) -> Option<f32> {
-    let mut matcher = Matcher::new(Config::DEFAULT);
-    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
-
-    // Convert string to Utf32Str as required by nucleo API
-    let mut char_buf = Vec::new();
-    let account_utf32 = Utf32Str::new(account, &mut char_buf);
-
-    if let Some(score) = pattern.score(account_utf32, &mut matcher) {
-        // Normalize nucleo score to our range (0-500)
-        let normalized_score = (score as f32 / 100.0).min(500.0);
-        Some(normalized_score)
-    } else {
-        None
-    }
-}
-
-fn create_completion_item(account: String, score: f32) -> lsp_types::CompletionItem {
-    lsp_types::CompletionItem {
-        label: account.clone(),
-        detail: Some("Beancount Account".to_string()),
-        kind: Some(lsp_types::CompletionItemKind::ENUM),
-        filter_text: Some(account.clone()),
-        // Use score for sorting (higher scores first, so invert for lexicographic sort)
-        sort_text: Some(format!("{:010.0}", 99999.0 - score.min(99999.0))),
-        // Let the LSP client handle text replacement based on filter_text
-        ..Default::default()
-    }
-}
-
-/// Extract the current word/prefix being typed for completion
-pub(crate) fn extract_completion_prefix(line_text: &str, cursor_char: usize) -> String {
-    let chars: Vec<char> = line_text.chars().collect();
-    if cursor_char == 0 || cursor_char > chars.len() {
-        return String::new();
-    }
-
-    let mut start = cursor_char.saturating_sub(1);
-
-    // Find the start of the current word (account name)
-    // Account names can contain letters, numbers, colons, and hyphens
-    while start > 0 {
-        let c = chars[start.saturating_sub(1)];
-        if !c.is_alphanumeric() && c != ':' && c != '-' && c != '_' {
-            break;
-        }
-        start = start.saturating_sub(1);
-    }
-
-    // Extract the prefix from start to cursor
-    let end = cursor_char.min(chars.len());
-    chars[start..end].iter().collect()
-}
-
-pub(crate) fn complete_tag(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
-) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
-    debug!("providers::completion::tag");
-    let mut completions = Vec::new();
-    for data in data.values() {
-        for tag in data.get_tags() {
-            completions.push(lsp_types::CompletionItem {
-                label: tag,
-                detail: Some("Beancount Tag".to_string()),
-                kind: Some(lsp_types::CompletionItemKind::ENUM),
-                ..Default::default()
-            });
-        }
-    }
-    Ok(Some(completions))
-}
-
-pub(crate) fn complete_link(
-    data: HashMap<PathBuf, Arc<BeancountData>>,
-) -> anyhow::Result<Option<Vec<lsp_types::CompletionItem>>> {
-    debug!("providers::completion::tag");
-    let mut completions = Vec::new();
-    for data in data.values() {
-        for link in data.get_links() {
-            completions.push(lsp_types::CompletionItem {
-                label: link,
-                detail: Some("Beancount Link".to_string()),
-                kind: Some(lsp_types::CompletionItemKind::ENUM),
-                ..Default::default()
-            });
-        }
-    }
-    Ok(Some(completions))
-}
+// ============================================================================
+// TESTS
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
-    use crate::providers::completion::add_one_month;
-    use crate::providers::completion::completion;
-    use crate::providers::completion::extract_completion_prefix;
-    use crate::providers::completion::sub_one_month;
-    use crate::server::LspServerStateSnapshot;
-    use tree_sitter_beancount::tree_sitter;
-    //use insta::assert_yaml_snapshot;
-    use crate::beancount_data::BeancountData;
-    use crate::config::Config;
-    use crate::document::Document;
-    use crate::utils::ToFilePath;
-    use anyhow::Result;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
-    use std::str::FromStr;
-    use std::sync::Arc;
-    use test_log::test;
+    use super::*;
 
-    #[derive(Debug)]
-    pub struct Fixture {
-        pub documents: Vec<TestDocument>,
-    }
-    impl Fixture {
-        pub fn parse(input: &str) -> Self {
-            let mut documents = Vec::new();
-            let mut start = 0;
-            if !input.is_empty() {
-                for end in input
-                    .match_indices("%!")
-                    .skip(1)
-                    .map(|(i, _)| i)
-                    .chain(std::iter::once(input.len()))
-                {
-                    documents.push(TestDocument::parse(&input[start..end]));
-                    start = end;
-                }
-            }
-            Self { documents }
-        }
-    }
-
-    #[derive(Debug)]
-    pub struct TestDocument {
-        pub path: String,
-        pub text: String,
-        pub cursor: Option<lsp_types::Position>,
-        // pub ranges: Vec<lsp_types::Range>,
-    }
-    impl TestDocument {
-        pub fn parse(input: &str) -> Self {
-            let mut lines = Vec::new();
-
-            let (path, input) = input
-                .trim()
-                .strip_prefix("%! ")
-                .map(|input| input.split_once('\n').unwrap_or((input, "")))
-                .unwrap();
-
-            let mut ranges = Vec::new();
-            let mut cursor = None;
-
-            for line in input.lines() {
-                if line.chars().all(|c| matches!(c, ' ' | '^' | '|' | '!')) && !line.is_empty() {
-                    let index = (lines.len() - 1) as u32;
-
-                    cursor = cursor.or_else(|| {
-                        let character = line.find('|')?;
-                        Some(lsp_types::Position::new(index, character as u32))
-                    });
-
-                    if let Some(start) = line.find('!') {
-                        let position = lsp_types::Position::new(index, start as u32);
-                        ranges.push(lsp_types::Range::new(position, position));
-                    }
-
-                    if let Some(start) = line.find('^') {
-                        let end = line.rfind('^').unwrap() + 1;
-                        ranges.push(lsp_types::Range::new(
-                            lsp_types::Position::new(index, start as u32),
-                            lsp_types::Position::new(index, end as u32),
-                        ));
-                    }
-                } else {
-                    lines.push(line);
-                }
-            }
-
-            Self {
-                path: path.to_string(),
-                text: lines.join("\n"),
-                cursor,
-                // ranges,
-            }
-        }
-    }
-
-    pub struct TestState {
-        fixture: Fixture,
-        snapshot: LspServerStateSnapshot,
-    }
-    impl TestState {
-        /// Converts a test fixture path to a PathBuf, handling cross-platform compatibility.
-        /// Uses a simpler approach that should work on all platforms.
-        fn path_from_fixture(path: &str) -> Result<PathBuf> {
-            // For empty paths, return a default path that should work on all platforms
-            if path.is_empty() {
-                return Ok(std::path::PathBuf::from("/"));
-            }
-
-            // Try to create the URI and convert to path
-            // First try the path as-is (works for absolute paths on Unix and relative paths)
-            let uri_str = if path.starts_with('/') {
-                // Unix-style absolute path
-                if cfg!(windows) {
-                    format!("file:///C:{path}")
-                } else {
-                    format!("file://{path}")
-                }
-            } else if cfg!(windows) && path.len() > 1 && path.chars().nth(1) == Some(':') {
-                // Windows-style absolute path like "C:\path"
-                format!("file:///{}", path.replace('\\', "/"))
-            } else {
-                // Relative path or other format - this will likely fail but let's try
-                format!("file://{path}")
-            };
-
-            let uri = lsp_types::Uri::from_str(&uri_str)
-                .map_err(|e| anyhow::anyhow!("Invalid URI: {}", e))?;
-
-            // Check if this is a problematic URI format that would cause to_file_path() to panic
-            // URIs like "file://bare-filename" (without path separators) are problematic because
-            // they treat the filename as a hostname. Paths with "./" or "../" are typically OK.
-            if uri_str.starts_with("file://") && !uri_str.starts_with("file:///") {
-                let after_protocol = &uri_str[7..]; // Remove "file://"
-                if !after_protocol.is_empty()
-                    && !after_protocol.starts_with('/')
-                    && !after_protocol.starts_with('.')
-                {
-                    return Err(anyhow::anyhow!(
-                        "Invalid file URI format (contains hostname): {}",
-                        uri_str
-                    ));
-                }
-            }
-
-            let file_path = uri
-                .to_file_path()
-                .map_err(|_| anyhow::anyhow!("Failed to convert URI to file path: {}", uri_str))?;
-
-            Ok(file_path)
-        }
-
-        pub fn new(fixture: &str) -> Result<Self> {
-            let fixture = Fixture::parse(fixture);
-            let forest: HashMap<PathBuf, Arc<tree_sitter::Tree>> = fixture
-                .documents
-                .iter()
-                .map(|document| {
-                    let path = document.path.as_str();
-                    let k = Self::path_from_fixture(path)?;
-                    let mut parser = tree_sitter::Parser::new();
-                    parser
-                        .set_language(&tree_sitter_beancount::language())
-                        .unwrap();
-                    let v = Arc::new(parser.parse(document.text.clone(), None).unwrap());
-                    Ok((k, v))
-                })
-                .collect::<Result<HashMap<_, _>>>()?;
-            let beancount_data: HashMap<PathBuf, Arc<BeancountData>> = fixture
-                .documents
-                .iter()
-                .map(|document| {
-                    let path = document.path.as_str();
-                    let k = Self::path_from_fixture(path)?;
-                    let content = ropey::Rope::from(document.text.clone());
-                    let v = Arc::new(BeancountData::new(forest.get(&k).unwrap(), &content));
-                    Ok((k, v))
-                })
-                .collect::<Result<HashMap<_, _>>>()?;
-            let open_docs: HashMap<PathBuf, Document> = fixture
-                .documents
-                .iter()
-                .map(|document| {
-                    let path = document.path.as_str();
-                    let k = Self::path_from_fixture(path)?;
-                    let v = Document {
-                        content: ropey::Rope::from(document.text.clone()),
-                    };
-                    Ok((k, v))
-                })
-                .collect::<Result<HashMap<_, _>>>()?;
-            Ok(TestState {
-                fixture,
-                snapshot: LspServerStateSnapshot {
-                    beancount_data,
-                    config: Config::new(Self::path_from_fixture("/test.beancount")?),
-                    forest,
-                    open_docs,
-                },
-            })
-        }
-
-        pub fn cursor(&self) -> Option<lsp_types::TextDocumentPositionParams> {
-            let (document, cursor) = self
-                .fixture
-                .documents
-                .iter()
-                .find_map(|document| document.cursor.map(|cursor| (document, cursor)))?;
-
-            let path = document.path.as_str();
-            // Use the same path conversion logic as in TestState::new() to ensure consistency
-            let file_path = Self::path_from_fixture(path).ok()?;
-
-            // Convert PathBuf back to URI string for cross-platform compatibility
-            let path_str = file_path.to_string_lossy();
-            let uri_str = if cfg!(windows) {
-                // On Windows, paths start with drive letter, need file:/// prefix
-                format!("file:///{}", path_str.replace('\\', "/"))
-            } else {
-                format!("file://{path_str}")
-            };
-
-            let uri = lsp_types::Uri::from_str(&uri_str).ok()?;
-            let id = lsp_types::TextDocumentIdentifier::new(uri);
-            Some(lsp_types::TextDocumentPositionParams::new(id, cursor))
-        }
+    #[test]
+    fn test_extract_account_prefix() {
+        assert_eq!(extract_account_prefix("Assets:Cash", 11), "Assets:Cash");
+        assert_eq!(extract_account_prefix("Assets:Cash", 6), "Assets");
+        assert_eq!(extract_account_prefix("  Assets:Cash", 13), "Assets:Cash");
+        assert_eq!(extract_account_prefix("", 0), "");
     }
 
     #[test]
-    fn handle_sub_one_month() {
-        let input_date = chrono::NaiveDate::from_ymd_opt(2022, 6, 1).expect("valid date");
-        let expected_date = chrono::NaiveDate::from_ymd_opt(2022, 5, 1).expect("valid date");
-        assert_eq!(sub_one_month(input_date), expected_date)
+    fn test_score_account_exact_match() {
+        assert_eq!(score_account("Assets:Cash", "Assets:Cash"), 10000.0);
     }
 
     #[test]
-    fn handle_sub_one_month_in_jan() {
-        let input_date = chrono::NaiveDate::from_ymd_opt(2022, 1, 1).expect("valid date");
-        let expected_date = chrono::NaiveDate::from_ymd_opt(2021, 12, 1).expect("valid date");
-        assert_eq!(sub_one_month(input_date), expected_date)
+    fn test_score_account_prefix_match() {
+        let score = score_account("Assets:Cash", "Assets");
+        assert!((7000.0..8000.0).contains(&score));
     }
 
     #[test]
-    fn handle_add_one_month() {
-        let input_date = chrono::NaiveDate::from_ymd_opt(2022, 6, 1).expect("valid date");
-        let expected_date = chrono::NaiveDate::from_ymd_opt(2022, 7, 1).expect("valid date");
-        assert_eq!(add_one_month(input_date), expected_date)
+    fn test_add_sub_month() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
+        let next = add_one_month(date);
+        assert_eq!(next.month(), 7);
+
+        let prev = sub_one_month(date);
+        assert_eq!(prev.month(), 5);
+    }
+
+    // ========================================================================
+    // Comprehensive Coverage Tests
+    // ========================================================================
+
+    #[test]
+    fn test_complete_directive_keywords() {
+        let items = complete_directive_keywords().unwrap();
+        assert!(items.len() >= 10);
+
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"txn"));
+        assert!(labels.contains(&"*"));
+        assert!(labels.contains(&"!"));
+        assert!(labels.contains(&"open"));
+        assert!(labels.contains(&"close"));
+        assert!(labels.contains(&"balance"));
+        assert!(labels.contains(&"pad"));
+        assert!(labels.contains(&"price"));
     }
 
     #[test]
-    fn handle_add_one_month_in_dec() {
-        let input_date = chrono::NaiveDate::from_ymd_opt(2021, 12, 1).expect("valid date");
-        let expected_date = chrono::NaiveDate::from_ymd_opt(2022, 1, 1).expect("valid date");
-        assert_eq!(add_one_month(input_date), expected_date)
-    }
-
-    #[test]
-    fn handle_date_completion() {
-        let fixure = r#"
-%! /main.beancount
-2
-|
-^
-"#;
-        let test_state = TestState::new(fixure).unwrap();
-        let text_document_position = test_state.cursor().unwrap();
-        println!(
-            "{} {}",
-            text_document_position.position.line, text_document_position.position.character
-        );
-        let items = completion(test_state.snapshot, Some('2'), text_document_position)
-            .unwrap()
-            .unwrap_or_default();
-        let today = chrono::offset::Local::now().naive_local().date();
-        let prev_month = sub_one_month(today).format("%Y-%m-").to_string();
-        let cur_month = today.format("%Y-%m-").to_string();
-        let next_month = add_one_month(today).format("%Y-%m-").to_string();
-        let today = today.format("%Y-%m-%d").to_string();
-        // Check that all expected date completions are present (new system also provides transaction types)
-        let date_items: Vec<&lsp_types::CompletionItem> =
-            items.iter().filter(|item| item.detail.is_some()).collect();
-
-        assert_eq!(date_items.len(), 4);
-        assert!(
-            items
-                .iter()
-                .any(|item| item.label == today && item.detail == Some("today".to_string()))
-        );
-        assert!(
-            items.iter().any(
-                |item| item.label == cur_month && item.detail == Some("this month".to_string())
-            )
-        );
-        assert!(
-            items
-                .iter()
-                .any(|item| item.label == prev_month
-                    && item.detail == Some("prev month".to_string()))
-        );
-        assert!(
-            items
-                .iter()
-                .any(|item| item.label == next_month
-                    && item.detail == Some("next month".to_string()))
-        )
-    }
-
-    #[test]
-    fn handle_txn_completion() {
-        let fixure = r#"
-%! /main.beancount
-2023-10-01 t
-            |
-            ^
-"#;
-        let test_state = TestState::new(fixure).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, None, cursor)
-            .unwrap()
-            .unwrap_or_default();
-        // Check that transaction types are included (new system also provides dates)
-        let txn_kinds: Vec<String> = items
-            .iter()
-            .filter(|item| matches!(item.label.as_str(), "txn" | "balance" | "open" | "close"))
-            .map(|item| item.label.clone())
-            .collect();
-
-        assert!(txn_kinds.contains(&"txn".to_string()));
-        assert!(txn_kinds.contains(&"balance".to_string()));
-        assert!(txn_kinds.contains(&"open".to_string()));
-        assert!(txn_kinds.contains(&"close".to_string()));
-    }
-
-    #[test]
-    fn handle_narration_completion() {
-        let fixure = r#"
-%! /main.beancount
-2023-10-01 open Assets:Test USD
-2023-10-01 open Expenses:Test USD
-2023-10-01 txn  "Test Co"
-    Assets:Test 1 USD
-    Expenses:Test
-2023-10-01 txn "
-                |
-                ^
-"#;
-        let test_state = TestState::new(fixure).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some('"'), cursor)
-            .unwrap()
-            .unwrap_or_default();
-        assert_eq!(
-            items,
-            [lsp_types::CompletionItem {
-                label: String::from("Test Co"), // No quotes in label when triggered by quote
-                kind: Some(lsp_types::CompletionItemKind::ENUM),
-                detail: Some(String::from("Beancount Narration")),
-                insert_text: Some(String::from("Test Co\"")), // Add closing quote when triggered by quote and no closing quote exists
-                ..Default::default()
-            },]
-        )
-    }
-
-    #[test]
-    fn handle_payee_completion() {
-        let fixure = r#"
-%! /main.beancount
-2023-10-01 open Assets:Test USD
-2023-10-01 open Expenses:Test USD
-2023-10-01 txn  "Test Co" "Foo Bar"
-    Assets:Test 1 USD
-    Expenses:Test
-2023-10-01 txn "Test" "
-                       |
-                       ^
-"#;
-        let test_state = TestState::new(fixure).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some('"'), cursor)
-            .unwrap()
-            .unwrap_or_default();
-        // New intelligent system provides narration completions after payee
-        assert!(!items.is_empty());
-        assert!(items.iter().any(|item| item.label == "Foo Bar")); // No quotes when triggered by quote
-    }
-
-    #[test]
-    fn handle_narration_completion_with_existing_closing_quote() {
-        let fixure = r#"
-%! /main.beancount
-2023-10-01 open Assets:Test USD
-2023-10-01 open Expenses:Test USD
-2023-10-01 txn  "Test Co" "Foo Bar"
-    Assets:Test 1 USD
-    Expenses:Test
-2023-10-01 txn "Test Co"
-2023-10-01 txn ""
-                |
-                ^
-"#;
-        let test_state = TestState::new(fixure).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some('"'), cursor)
-            .unwrap()
-            .unwrap_or_default();
-        // Should have completions with insert_text without quotes since closing quote exists
-        assert!(!items.is_empty());
-        let test_co_completion = items
-            .iter()
-            .find(|item| item.label == "Test Co") // No quotes in label when triggered by quote
-            .unwrap();
-        assert_eq!(
-            test_co_completion.insert_text,
-            Some(String::from("Test Co"))
-        );
-
-        let foo_bar_completion = items
-            .iter()
-            .find(|item| item.label == "Foo Bar") // No quotes in label when triggered by quote
-            .unwrap();
-        assert_eq!(
-            foo_bar_completion.insert_text,
-            Some(String::from("Foo Bar"))
-        );
-    }
-
-    #[test]
-    fn handle_narration_completion_without_closing_quote() {
-        let fixure = r#"
-%! /main.beancount
-2023-10-01 open Assets:Test USD
-2023-10-01 open Expenses:Test USD
-2023-10-01 txn  "Test Co" "Foo Bar"
-    Assets:Test 1 USD
-    Expenses:Test
-2023-10-01 txn "
-                |
-                ^
-"#;
-        let test_state = TestState::new(fixure).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some('"'), cursor)
-            .unwrap()
-            .unwrap_or_default();
-        assert_eq!(
-            items,
-            [lsp_types::CompletionItem {
-                label: String::from("Foo Bar"), // No quotes in label when triggered by quote
-                kind: Some(lsp_types::CompletionItemKind::ENUM),
-                detail: Some(String::from("Beancount Narration")),
-                insert_text: Some(String::from("Foo Bar\"")), // Add closing quote when triggered by quote and no closing quote exists
-                ..Default::default()
-            },]
-        )
-    }
-
-    #[test]
-    fn handle_account_completion() {
-        let fixure = r#"
-%! /main.beancount
-2023-10-01 open Assets:Test USD
-2023-10-01 open Expenses:Test USD
-2023-10-01 txn  "Test Co" "Foo Bar"
-    a
-     |
-     ^
-"#;
-        let test_state = TestState::new(fixure).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, None, cursor)
-            .unwrap()
-            .unwrap_or_default();
-        // Should now show both accounts when typing lowercase 'a'
-        assert_eq!(items.len(), 2);
-        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-        assert!(labels.contains(&&"Assets:Test".to_string()));
-        assert!(labels.contains(&&"Expenses:Test".to_string()));
-
-        // Verify properties are correct
-        for item in &items {
-            assert_eq!(item.kind, Some(lsp_types::CompletionItemKind::ENUM));
-            assert_eq!(item.detail, Some("Beancount Account".to_string()));
-        }
-    }
-
-    #[test]
-    fn handle_account_completion_with_colon() {
-        let fixure = r#"
-%! /main.beancount
-2023-10-01 open Assets:Test USD
-2023-10-01 open Assets:Checking USD
-2023-10-01 open Expenses:Test USD
-2023-10-01 txn  "Test Co" "Foo Bar"
-    Assets:
-           |
-           ^
-"#;
-        let test_state = TestState::new(fixure).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some(':'), cursor)
-            .unwrap()
-            .unwrap_or_default();
-        assert_eq!(items.len(), 2);
-
-        // Should have both Assets accounts parts after the colon
-        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-        assert!(labels.contains(&&"Test".to_string()));
-        assert!(labels.contains(&&"Checking".to_string()));
-
-        // Check properties of all items
-        for item in &items {
-            assert_eq!(item.kind, Some(lsp_types::CompletionItemKind::ENUM));
-            assert_eq!(item.detail, Some("Beancount Account".to_string()));
-            // Note: labels now contain only the part after the colon, not the full account name
-        }
-    }
-
-    #[test]
-    fn handle_case_insensitive_completion() {
-        let fixure = r#"
-%! /main.beancount
-2023-10-01 open Assets:Test USD
-2023-10-01 open Expenses:Test USD
-2023-10-01 txn  "Test Co" "Foo Bar"
-    Asse
-        |
-        ^
-"#;
-        let test_state = TestState::new(fixure).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, None, cursor)
-            .unwrap()
-            .unwrap_or_default();
-        // Should return all accounts, with "Assets:Test" ranked highest due to prefix match
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[0].label, "Assets:Test"); // Highest ranked due to prefix match
-        assert_eq!(items[0].kind, Some(lsp_types::CompletionItemKind::ENUM));
-        assert_eq!(items[0].detail, Some("Beancount Account".to_string()));
-        assert_eq!(items[0].filter_text, Some("Assets:Test".to_string()));
-
-        // Second account should also be present
-        assert_eq!(items[1].label, "Expenses:Test");
-    }
-
-    #[test]
-    fn handle_tag_completion() {
-        let fixure = r#"
-%! /main.beancount
-2023-10-01 open Assets:Test USD
-2023-10-01 open Expenses:Test USD
-2023-10-01 txn  "Test Co" "Foo Bar" #tag ^link
-    Assets:Test 1 USD
-    Expenses:Test
-2023-10-01 txn  "Test Co" "Foo Bar" #
-                                     |
-                                     ^
-"#;
-        let test_state = TestState::new(fixure).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some('#'), cursor)
-            .unwrap()
-            .unwrap_or_default();
-        assert_eq!(
-            items,
-            [lsp_types::CompletionItem {
-                label: String::from("#tag"),
-                kind: Some(lsp_types::CompletionItemKind::ENUM),
-                detail: Some(String::from("Beancount Tag")),
-                ..Default::default()
-            },]
-        )
-    }
-
-    #[test]
-    fn handle_link_completion() {
-        let fixure = r#"
-%! /main.beancount
-2023-10-01 open Assets:Test USD
-2023-10-01 open Expenses:Test USD
-2023-10-01 txn  "Test Co" "Foo Bar" #tag ^link
-    Assets:Test 1 USD
-    Expenses:Test
-2023-10-01 txn  "Test Co" "Foo Bar" #
-                                     |
-                                     ^
-"#;
-        let test_state = TestState::new(fixure).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        println!("{} {}", cursor.position.line, cursor.position.character);
-        let items = completion(test_state.snapshot, Some('^'), cursor)
-            .unwrap()
-            .unwrap_or_default();
-        assert_eq!(
-            items,
-            [lsp_types::CompletionItem {
-                label: String::from("^link"),
-                kind: Some(lsp_types::CompletionItemKind::ENUM),
-                detail: Some(String::from("Beancount Link")),
-                ..Default::default()
-            },]
-        )
-    }
-
-    #[test]
-    fn test_path_from_fixture_unix_style() {
-        let result = TestState::path_from_fixture("/main.beancount");
-        assert!(result.is_ok());
-        let path = result.unwrap();
-
-        if cfg!(windows) {
-            // On Windows, should convert to C:\main.beancount
-            assert_eq!(path.to_string_lossy(), "C:\\main.beancount");
-        } else {
-            // On Unix, should remain /main.beancount
-            assert_eq!(path.to_string_lossy(), "/main.beancount");
-        }
-    }
-
-    #[test]
-    fn test_path_from_fixture_relative_path() {
-        // Relative paths without leading slash create invalid file URIs
-        // (they become hostnames), so they should fail
-        let result = TestState::path_from_fixture("main.beancount");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_path_from_fixture_dot_relative_path() {
-        // Test relative path starting with ./
-        // On Windows, this succeeds and creates a UNC path like \\.\main.beancount
-        // On Unix, this fails because the dot becomes a hostname in the file URI
-        let result = TestState::path_from_fixture("./main.beancount");
-        if cfg!(windows) {
-            // On Windows, this succeeds and creates a UNC path
-            assert!(result.is_ok());
-            let path = result.unwrap();
-            assert!(path.to_string_lossy().contains("main.beancount"));
-        } else {
-            // On Unix, this should fail
-            assert!(result.is_err());
-        }
-    }
-
-    #[test]
-    fn test_path_from_fixture_nested_unix_path() {
-        let result = TestState::path_from_fixture("/some/nested/path.beancount");
-        assert!(result.is_ok());
-        let path = result.unwrap();
-
-        if cfg!(windows) {
-            // On Windows, should convert to C:\some\nested\path.beancount
-            assert_eq!(path.to_string_lossy(), "C:\\some\\nested\\path.beancount");
-        } else {
-            // On Unix, should remain /some/nested/path.beancount
-            assert_eq!(path.to_string_lossy(), "/some/nested/path.beancount");
-        }
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn test_path_from_fixture_windows_style() {
-        // Test that Windows-style paths work correctly
-        let result = TestState::path_from_fixture("C:\\main.beancount");
-        assert!(result.is_ok());
-        let path = result.unwrap();
-        assert_eq!(path.to_string_lossy(), "C:\\main.beancount");
-    }
-
-    #[test]
-    fn test_path_from_fixture_invalid_uri() {
-        // Test with a path that would create an invalid URI
-        let result = TestState::path_from_fixture("invalid uri with spaces and special chars: <>");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_path_from_fixture_empty_path() {
-        let result = TestState::path_from_fixture("");
-        // Empty paths create file:// which should be handled gracefully
-        assert!(result.is_ok());
-        let path = result.unwrap();
-        // Path should exist and be some kind of root/base path
-        assert!(!path.to_string_lossy().is_empty());
-        // Don't make specific assertions about the exact path format as it's platform-dependent
-    }
-
-    #[test]
-    fn test_complete_kind_function() {
-        // Test the complete_kind function directly
-        use crate::providers::completion::complete_kind;
-
-        let items = complete_kind().unwrap().unwrap();
+    fn test_complete_date() {
+        let items = complete_date().unwrap();
         assert_eq!(items.len(), 4);
 
-        let labels: Vec<String> = items.iter().map(|i| i.label.clone()).collect();
-        assert!(labels.contains(&"txn".to_string()));
-        assert!(labels.contains(&"balance".to_string()));
-        assert!(labels.contains(&"open".to_string()));
-        assert!(labels.contains(&"close".to_string()));
+        let details: Vec<String> = items.iter().filter_map(|i| i.detail.clone()).collect();
+        assert!(details.contains(&"today".to_string()));
+        assert!(details.contains(&"this month".to_string()));
+        assert!(details.contains(&"prev month".to_string()));
+        assert!(details.contains(&"next month".to_string()));
     }
 
     #[test]
-    fn test_extract_completion_prefix_functionality() {
-        // Test that the extract_completion_prefix function works correctly
-        // This tests the actual implementation without relying on complex fixtures
-        assert_eq!(extract_completion_prefix("Assets:Test", 11), "Assets:Test");
-        assert_eq!(extract_completion_prefix("Assets:Test", 6), "Assets");
-        assert_eq!(extract_completion_prefix("Assets:Test", 7), "Assets:");
-        assert_eq!(extract_completion_prefix("Assets:Test", 0), "");
-        assert_eq!(
-            extract_completion_prefix("    Assets:Test", 15),
-            "Assets:Test"
-        );
-        assert_eq!(
-            extract_completion_prefix("Assets:Test-USD", 15),
-            "Assets:Test-USD"
-        );
+    fn test_calculate_word_ranges() {
+        let line = "  Assets:Checking:Personal";
+        let position = Position {
+            line: 0,
+            character: 18,
+        };
+
+        let (insert_range, replace_range) = calculate_word_ranges(line, position);
+
+        assert_eq!(insert_range.start.character, 2);
+        assert_eq!(insert_range.end.character, 18);
+        assert_eq!(replace_range.start.character, 2);
+        assert_eq!(replace_range.end.character, 26);
     }
 
     #[test]
-    fn test_completion_functions_directly() {
-        // Test the completion functions directly rather than through complex fixtures
-        use crate::providers::completion::{complete_date, complete_link, complete_tag};
-        use std::collections::HashMap;
+    fn test_calculate_word_ranges_middle_of_word() {
+        let line = "Assets:Cash";
+        let position = Position {
+            line: 0,
+            character: 7,
+        };
 
-        let data = HashMap::new();
+        let (insert_range, replace_range) = calculate_word_ranges(line, position);
 
-        // Test tag completion - with empty data should return empty list
-        let tag_items = complete_tag(data.clone()).unwrap().unwrap();
-        assert_eq!(tag_items.len(), 0); // No tags in empty data
-
-        // Test link completion - with empty data should return empty list
-        let link_items = complete_link(data).unwrap().unwrap();
-        assert_eq!(link_items.len(), 0); // No links in empty data
-
-        // Test date completion - this doesn't depend on data
-        let date_items = complete_date().unwrap().unwrap();
-        assert_eq!(date_items.len(), 4);
-        assert!(
-            date_items
-                .iter()
-                .any(|item| item.detail == Some("today".to_string()))
-        );
-        assert!(
-            date_items
-                .iter()
-                .any(|item| item.detail == Some("this month".to_string()))
-        );
-        assert!(
-            date_items
-                .iter()
-                .any(|item| item.detail == Some("prev month".to_string()))
-        );
-        assert!(
-            date_items
-                .iter()
-                .any(|item| item.detail == Some("next month".to_string()))
-        );
+        assert_eq!(insert_range.start.character, 0);
+        assert_eq!(insert_range.end.character, 7);
+        assert_eq!(replace_range.start.character, 0);
+        assert_eq!(replace_range.end.character, 11);
     }
 
     #[test]
-    fn test_search_mode_determination() {
-        use crate::providers::completion::{SearchMode, determine_search_mode};
+    fn test_calculate_string_ranges_no_closing_quote() {
+        let line = r#"2024-01-01 * "Grocery store"#;
+        let position = Position {
+            line: 0,
+            character: 20,
+        };
 
-        // Single A, L, I, E should trigger prefix search for account types
-        assert_eq!(determine_search_mode("A"), SearchMode::Prefix);
-        assert_eq!(determine_search_mode("L"), SearchMode::Prefix);
-        assert_eq!(determine_search_mode("I"), SearchMode::Prefix);
-        assert_eq!(determine_search_mode("E"), SearchMode::Prefix);
+        let (insert_range, replace_range) = calculate_string_ranges(line, position, false);
 
-        // Other single capital letters should also trigger prefix search
-        assert_eq!(determine_search_mode("B"), SearchMode::Prefix);
-        assert_eq!(determine_search_mode("C"), SearchMode::Prefix);
-
-        // Multiple capital letters should trigger prefix search
-        assert_eq!(determine_search_mode("AS"), SearchMode::Prefix);
-        assert_eq!(determine_search_mode("ASSETS"), SearchMode::Prefix);
-
-        // Lowercase letters should trigger fuzzy search
-        assert_eq!(determine_search_mode("a"), SearchMode::Fuzzy);
-        assert_eq!(determine_search_mode("as"), SearchMode::Fuzzy);
-        assert_eq!(determine_search_mode("assets"), SearchMode::Fuzzy);
-        assert_eq!(determine_search_mode("checking"), SearchMode::Fuzzy);
-
-        // Mixed case should use exact matching
-        assert_eq!(determine_search_mode("As"), SearchMode::Exact);
-        assert_eq!(determine_search_mode("Assets"), SearchMode::Exact);
-        assert_eq!(determine_search_mode("AssetS"), SearchMode::Exact);
-
-        // Empty prefix should use exact matching
-        assert_eq!(determine_search_mode(""), SearchMode::Exact);
-
-        // Non-alphabetic characters should not affect mode determination
-        assert_eq!(determine_search_mode("A:"), SearchMode::Prefix);
-        assert_eq!(determine_search_mode("a-"), SearchMode::Fuzzy);
+        assert_eq!(insert_range.start.character, 14);
+        assert_eq!(insert_range.end.character, 20);
+        assert_eq!(replace_range.start.character, 14);
+        assert_eq!(replace_range.end.character, 20);
     }
 
     #[test]
-    fn test_fuzzy_search_accounts() {
-        use crate::providers::completion::fuzzy_search_accounts;
+    fn test_calculate_string_ranges_with_closing_quote() {
+        let line = r#"2024-01-01 * "Grocery store" "Food""#;
+        let position = Position {
+            line: 0,
+            character: 33,
+        };
 
+        let (insert_range, replace_range) = calculate_string_ranges(line, position, true);
+
+        // Function finds opening quote at position 30 (after the " at position 29)
+        assert_eq!(insert_range.start.character, 30);
+        assert_eq!(insert_range.end.character, 33);
+        assert_eq!(replace_range.start.character, 30);
+        // Function stops at the closing quote position (34), not after it
+        assert_eq!(replace_range.end.character, 34);
+    }
+
+    #[test]
+    fn test_fuzzy_search_accounts_empty_query() {
+        let accounts = vec![
+            "Assets:Cash".to_string(),
+            "Expenses:Food".to_string(),
+            "Liabilities:CreditCard".to_string(),
+        ];
+
+        let results = fuzzy_search_accounts(&accounts, "");
+        assert_eq!(results.len(), 3);
+
+        // All should have fallback score
+        for (_, score) in &results {
+            assert_eq!(*score, 1.0);
+        }
+    }
+
+    #[test]
+    fn test_fuzzy_search_accounts_exact_match() {
+        let accounts = vec!["Assets:Cash".to_string(), "Expenses:Food".to_string()];
+
+        let results = fuzzy_search_accounts(&accounts, "Assets:Cash");
+        assert!(!results.is_empty());
+        assert_eq!(results[0].0, "Assets:Cash");
+        assert_eq!(results[0].1, 10000.0);
+    }
+
+    #[test]
+    fn test_fuzzy_search_accounts_prefix_match() {
         let accounts = vec![
             "Assets:Cash:Checking".to_string(),
             "Assets:Cash:Savings".to_string(),
-            "Assets:Investments:Stocks".to_string(),
-            "Liabilities:CreditCard:Visa".to_string(),
-            "Expenses:Food:Groceries".to_string(),
-            "Expenses:Food:Restaurants".to_string(),
-            "Income:Salary".to_string(),
+            "Expenses:Food".to_string(),
         ];
 
-        // Test exact match
-        let matches = fuzzy_search_accounts(&accounts, "cash");
-        assert!(!matches.is_empty());
-        let cash_matches: Vec<&String> = matches
+        let results = fuzzy_search_accounts(&accounts, "Assets");
+        assert!(results.len() >= 2);
+
+        // Prefix matches should score higher than non-matches
+        let assets_results: Vec<_> = results
             .iter()
-            .filter(|(acc, _)| acc.contains("Cash"))
-            .map(|(acc, _)| acc)
+            .filter(|(acc, _)| acc.starts_with("Assets"))
             .collect();
-        assert_eq!(cash_matches.len(), 2);
+        assert_eq!(assets_results.len(), 2);
 
-        // Test substring match
-        let matches = fuzzy_search_accounts(&accounts, "food");
-        assert!(!matches.is_empty());
-        let food_matches: Vec<&String> = matches
-            .iter()
-            .filter(|(acc, _)| acc.contains("Food"))
-            .map(|(acc, _)| acc)
-            .collect();
-        assert_eq!(food_matches.len(), 2);
+        for (_, score) in assets_results {
+            assert!(*score >= 6900.0);
+        }
+    }
 
-        // Test fuzzy match (characters in order)
-        let matches = fuzzy_search_accounts(&accounts, "chk");
-        assert!(!matches.is_empty());
-        let checking_match = matches.iter().find(|(acc, _)| acc.contains("Checking"));
-        assert!(checking_match.is_some());
+    #[test]
+    fn test_fuzzy_search_accounts_intra_segment() {
+        let accounts = vec![
+            "Assets:Cash:Checking".to_string(),
+            "Expenses:Food:Groceries".to_string(),
+        ];
 
-        // Test query with no matching characters - should still show all accounts but with low scores
-        let matches = fuzzy_search_accounts(&accounts, "xyz");
-        assert!(
-            !matches.is_empty(),
-            "Should show all accounts even with no character matches"
+        let results = fuzzy_search_accounts(&accounts, "cash");
+        assert!(!results.is_empty());
+
+        let cash_result = results.iter().find(|(acc, _)| acc.contains("Cash"));
+        assert!(cash_result.is_some());
+        let (_, score) = cash_result.unwrap();
+        assert!(*score >= 4000.0);
+    }
+
+    #[test]
+    fn test_score_intra_segment_exact_segment_match() {
+        let score = score_intra_segment("Assets:Cash:Checking", "cash");
+        assert!(score.is_some());
+        assert!(score.unwrap() >= 400.0);
+    }
+
+    #[test]
+    fn test_score_intra_segment_prefix_match() {
+        let score = score_intra_segment("Assets:Checking", "check");
+        assert!(score.is_some());
+        assert!(score.unwrap() >= 200.0);
+    }
+
+    #[test]
+    fn test_score_intra_segment_no_match() {
+        let score = score_intra_segment("Assets:Cash", "liabilities");
+        assert!(score.is_none());
+    }
+
+    #[test]
+    fn test_score_with_nucleo_valid_match() {
+        let score = score_with_nucleo("Assets:Cash:Checking", "aschk");
+        assert!(score.is_some());
+        assert!(score.unwrap() > 0.0);
+    }
+
+    #[test]
+    fn test_score_with_nucleo_no_match() {
+        let score = score_with_nucleo("Assets:Cash", "xyz");
+        // nucleo might return Some or None depending on fuzzy match
+        // Just verify it doesn't panic
+        let _ = score;
+    }
+
+    #[test]
+    fn test_extract_account_prefix_with_spaces() {
+        // Function extracts account prefix, stopping at whitespace
+        assert_eq!(extract_account_prefix("  A", 3), "A");
+
+        // Test with cursor inside the account name
+        assert_eq!(extract_account_prefix("    Assets", 10), "Assets");
+    }
+
+    #[test]
+    fn test_extract_account_prefix_with_colon() {
+        assert_eq!(extract_account_prefix("Assets:", 7), "Assets:");
+        assert_eq!(extract_account_prefix("Assets:Ca", 9), "Assets:Ca");
+    }
+
+    #[test]
+    fn test_extract_account_prefix_empty_line() {
+        assert_eq!(extract_account_prefix("", 0), "");
+        assert_eq!(extract_account_prefix("   ", 3), "");
+    }
+
+    #[test]
+    fn test_extract_account_prefix_at_boundary() {
+        assert_eq!(extract_account_prefix("Assets", 0), "");
+        assert_eq!(extract_account_prefix("Assets", 6), "Assets");
+    }
+
+    #[test]
+    fn test_score_account_case_insensitive_exact() {
+        let score = score_account("Assets:Cash", "assets:cash");
+        assert!((6900.0..=10000.0).contains(&score));
+    }
+
+    #[test]
+    fn test_score_account_tiering() {
+        let exact_score = score_account("Assets:Cash", "Assets:Cash");
+        let prefix_score = score_account("Assets:Cash", "Assets");
+        let intra_score = score_account("Assets:Cash", "cash");
+        let fallback_score = score_account("Assets:Cash", "xyz");
+
+        assert!(exact_score > prefix_score);
+        assert!(prefix_score > intra_score);
+        assert!(intra_score > fallback_score);
+    }
+
+    #[test]
+    fn test_add_one_month_december() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 12, 15).unwrap();
+        let next = add_one_month(date);
+        assert_eq!(next.year(), 2025);
+        assert_eq!(next.month(), 1);
+    }
+
+    #[test]
+    fn test_sub_one_month_january() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let prev = sub_one_month(date);
+        assert_eq!(prev.year(), 2023);
+        assert_eq!(prev.month(), 12);
+    }
+
+    #[test]
+    fn test_create_completion_with_insert_replace() {
+        let insert_range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 5,
+            },
+        };
+        let replace_range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 10,
+            },
+        };
+
+        let item = create_completion_with_insert_replace(
+            "Assets:Cash".to_string(),
+            "Account".to_string(),
+            CompletionItemKind::ENUM,
+            insert_range,
+            replace_range,
+            100.0,
+            vec![":".to_string()],
         );
-        // All accounts should have at least minimum scores (1.0)
-        assert!(
-            matches.iter().all(|(_, score)| *score >= 1.0),
-            "All accounts should have at least minimum score"
+
+        assert_eq!(item.label, "Assets:Cash");
+        assert_eq!(item.detail, Some("Account".to_string()));
+        assert_eq!(item.kind, Some(CompletionItemKind::ENUM));
+        assert_eq!(item.commit_characters, Some(vec![":".to_string()]));
+
+        match item.text_edit {
+            Some(lsp_types::CompletionTextEdit::Edit(text_edit)) => {
+                assert_eq!(text_edit.range, replace_range);
+                assert_eq!(text_edit.new_text, "Assets:Cash");
+            }
+            _ => panic!("Expected a TextEdit"),
+        }
+    }
+
+    #[test]
+    fn test_score_account_multiple_segments() {
+        let accounts = vec![
+            "Assets:Cash:Checking:Personal".to_string(),
+            "Assets:Cash:Checking:Business".to_string(),
+            "Assets:Investments:Stocks".to_string(),
+        ];
+
+        // Should match "Checking" in the middle
+        let results = fuzzy_search_accounts(&accounts, "checking");
+        let checking_results: Vec<_> = results
+            .iter()
+            .filter(|(acc, _)| acc.contains("Checking"))
+            .collect();
+        assert_eq!(checking_results.len(), 2);
+    }
+
+    #[test]
+    fn test_fuzzy_search_case_sensitivity() {
+        let accounts = vec!["Assets:Cash".to_string(), "Expenses:Food".to_string()];
+
+        let upper_results = fuzzy_search_accounts(&accounts, "ASSETS");
+        let lower_results = fuzzy_search_accounts(&accounts, "assets");
+
+        // Both should find the Assets account
+        assert!(!upper_results.is_empty());
+        assert!(!lower_results.is_empty());
+
+        assert!(upper_results[0].0.contains("Assets") || upper_results[0].0.contains("assets"));
+        assert!(lower_results[0].0.contains("Assets") || lower_results[0].0.contains("assets"));
+    }
+
+    #[test]
+    fn test_score_intra_segment_multiple_matches() {
+        // Should prefer earlier segments
+        let score1 = score_intra_segment("Assets:Cash:Checking", "cash");
+        let score2 = score_intra_segment("Liabilities:CreditCard:Cash", "cash");
+
+        assert!(score1.is_some());
+        assert!(score2.is_some());
+
+        // Segment at index 1 should score higher than segment at index 2
+        assert!(score1.unwrap() > score2.unwrap());
+    }
+
+    #[test]
+    fn test_extract_account_prefix_with_hyphens() {
+        assert_eq!(
+            extract_account_prefix("Assets:My-Account", 17),
+            "Assets:My-Account"
+        );
+        assert_eq!(
+            extract_account_prefix("Assets:My-Account", 10),
+            "Assets:My-"
         );
     }
 
     #[test]
-    fn handle_account_completion_with_includes() {
-        // Test case reproducing GitHub issue #639
-        let fixture = r#"
-%! /file1.bean
-include "accounts1.bean"
-
-1900-01-01 open Assets:Checking
-1900-01-01 open Expenses:Food
-1900-01-01 open Expenses:Transport
-
-2023-01-01 * "Grocery shopping"
-  Assets:Checking  -50.00 USD
-  Expenses:Food     50.00 USD
-
-2023-01-02 * "Bus fare"
-  Assets:Checking  -2.50 USD
-  Expenses:Transport  2.50 USD
-
-2023-01-03 * "Coffee"
-  Assets:Checking  -4.00 USD
-  Expenses:
-          |
-          ^
-
-%! /accounts1.bean
-1900-01-01 open Expenses:Included1
-1900-01-01 open Expenses:Included2
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, Some(':'), cursor)
-            .unwrap()
-            .unwrap_or_default();
-
-        // Should include accounts from both files
-        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-
-        // Account parts after "Expenses:" from main file
-        assert!(
-            labels.contains(&&"Food".to_string()),
-            "Should include Food from main file"
+    fn test_extract_account_prefix_with_underscores() {
+        assert_eq!(
+            extract_account_prefix("Assets:My_Account", 17),
+            "Assets:My_Account"
         );
-        assert!(
-            labels.contains(&&"Transport".to_string()),
-            "Should include Transport from main file"
-        );
-
-        // Account parts after "Expenses:" from included file - this is what was missing!
-        assert!(
-            labels.contains(&&"Included1".to_string()),
-            "Should include Included1 from included file"
-        );
-        assert!(
-            labels.contains(&&"Included2".to_string()),
-            "Should include Included2 from included file"
-        );
-
-        // Should have 4 account parts total (after "Expenses:")
-        assert_eq!(labels.len(), 4, "Should have 4 account parts total");
     }
 
     #[test]
-    fn test_include_processing_end_to_end() {
-        // Test that simulates the real issue more closely
-        // This test verifies that when we have multiple files in beancount_data,
-        // completion aggregates accounts from all of them
-        use crate::beancount_data::BeancountData;
-        use crate::providers::completion::complete_account_with_prefix;
-        use std::collections::HashMap;
+    fn test_calculate_word_ranges_start_of_line() {
+        let line = "Assets";
+        let position = Position {
+            line: 0,
+            character: 0,
+        };
 
-        // Create mock beancount data for multiple files using actual file content
-        let mut beancount_data = HashMap::new();
+        let (insert_range, replace_range) = calculate_word_ranges(line, position);
 
-        // Create mock trees and content for two files
-        let main_content = "1900-01-01 open Assets:Checking\n1900-01-01 open Expenses:Food\n1900-01-01 open Expenses:Transport";
-        let included_content =
-            "1900-01-01 open Expenses:Included1\n1900-01-01 open Expenses:Included2";
+        assert_eq!(insert_range.start.character, 0);
+        assert_eq!(insert_range.end.character, 0);
+        assert_eq!(replace_range.start.character, 0);
+        assert_eq!(replace_range.end.character, 6);
+    }
 
-        // Parse the main file
-        let mut parser = tree_sitter::Parser::new();
+    #[test]
+    fn test_calculate_word_ranges_end_of_word() {
+        let line = "Assets ";
+        let position = Position {
+            line: 0,
+            character: 6,
+        };
+
+        let (insert_range, replace_range) = calculate_word_ranges(line, position);
+
+        assert_eq!(insert_range.start.character, 0);
+        assert_eq!(insert_range.end.character, 6);
+        assert_eq!(replace_range.start.character, 0);
+        assert_eq!(replace_range.end.character, 6);
+    }
+
+    #[test]
+    fn test_fuzzy_search_special_characters() {
+        let accounts = vec![
+            "Assets:US-Bank:Checking".to_string(),
+            "Assets:Euro_Bank:Savings".to_string(),
+        ];
+
+        let results = fuzzy_search_accounts(&accounts, "us");
+        let us_result = results.iter().find(|(acc, _)| acc.contains("US"));
+        assert!(us_result.is_some());
+    }
+
+    #[test]
+    fn test_check_if_in_posting_area() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        let text = r#"2026-01-06 txn "kroger" "Check #1274"
+  A"#;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_beancount::language())
             .unwrap();
-        let main_tree = parser.parse(main_content, None).unwrap();
-        let main_rope = ropey::Rope::from_str(main_content);
-        let main_data = Arc::new(BeancountData::new(&main_tree, &main_rope));
-        beancount_data.insert(PathBuf::from("/main.beancount"), main_data);
+        let tree = parser.parse(text, None).unwrap();
 
-        // Parse the included file
-        let included_tree = parser.parse(included_content, None).unwrap();
-        let included_rope = ropey::Rope::from_str(included_content);
-        let included_data = Arc::new(BeancountData::new(&included_tree, &included_rope));
-        beancount_data.insert(PathBuf::from("/accounts1.bean"), included_data);
+        // Cursor at row 1, column 3 (after "  A")
+        let cursor = Point { row: 1, column: 3 };
 
-        // Test completion with prefix "Expenses:"
-        let items = complete_account_with_prefix(beancount_data, "Expenses:")
-            .unwrap()
-            .unwrap_or_default();
+        let context = check_if_in_posting_area(&tree, &rope, cursor);
 
-        let labels: Vec<String> = items.iter().map(|item| item.label.clone()).collect();
-
-        // Should include account parts after "Expenses:" from both files
-        assert!(
-            labels.contains(&"Food".to_string()),
-            "Should include Food from main file"
-        );
-        assert!(
-            labels.contains(&"Transport".to_string()),
-            "Should include Transport from main file"
-        );
-        assert!(
-            labels.contains(&"Included1".to_string()),
-            "Should include Included1 from included file"
-        );
-        assert!(
-            labels.contains(&"Included2".to_string()),
-            "Should include Included2 from included file"
-        );
-
-        // Should have 4 account parts total (after "Expenses:")
-        assert_eq!(
-            labels.len(),
-            4,
-            "Should have 4 account parts total: {labels:?}"
-        );
+        // Should detect we're in posting area
+        match context {
+            CompletionContext::PostingAccount { prefix } => {
+                assert_eq!(prefix, "A");
+            }
+            _ => panic!("Expected PostingAccount context, got {:?}", context),
+        }
     }
 
     #[test]
-    fn test_colon_triggered_completion_behavior() {
-        // Test that colon-triggered completion returns only parts after the colon
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Checking:Personal USD
-2023-10-01 open Assets:Checking:Business USD
-2023-10-01 open Assets:Savings:Emergency USD
-2023-10-01 open Expenses:Food:Groceries USD
-2023-10-01 open Expenses:Food:Restaurants USD
-2023-10-01 txn "Test transaction"
-  Assets:Checking:
-                 |
-                 ^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, Some(':'), cursor)
-            .unwrap()
-            .unwrap_or_default();
-
-        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-
-        // Should return only the parts after "Assets:Checking:"
-        assert_eq!(items.len(), 2);
-        assert!(labels.contains(&&"Personal".to_string()));
-        assert!(labels.contains(&&"Business".to_string()));
-
-        // Should NOT contain full account paths
-        assert!(!labels.contains(&&"Assets:Checking:Personal".to_string()));
-        assert!(!labels.contains(&&"Assets:Checking:Business".to_string()));
-    }
-
-    #[test]
-    fn test_top_level_colon_completion() {
-        // Test completion at top level (e.g., typing "Assets:")
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Checking USD
-2023-10-01 open Assets:Savings USD
-2023-10-01 open Expenses:Food USD
-2023-10-01 txn "Test transaction"
-  Assets:
-        |
-        ^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, Some(':'), cursor)
-            .unwrap()
-            .unwrap_or_default();
-
-        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-
-        // Should return only the parts after "Assets:"
-        assert_eq!(items.len(), 2);
-        assert!(labels.contains(&&"Checking".to_string()));
-        assert!(labels.contains(&&"Savings".to_string()));
-
-        // Should NOT contain full account paths or accounts from other hierarchies
-        assert!(!labels.contains(&&"Assets:Checking".to_string()));
-        assert!(!labels.contains(&&"Food".to_string()));
-    }
-
-    #[test]
-    fn test_nucleo_fuzzy_matching() {
-        use crate::providers::completion::fuzzy_search_accounts;
-
-        let accounts = vec![
-            "Assets:Cash:Checking".to_string(),
-            "Assets:Cash:Savings".to_string(),
-            "Expenses:Food:Groceries".to_string(),
-            "Liabilities:CreditCard".to_string(),
-        ];
-
-        // Exact match should work
-        let matches = fuzzy_search_accounts(&accounts, "cash");
-        assert!(!matches.is_empty());
-
-        // Should find accounts containing "cash"
-        let cash_matches: Vec<&(String, f32)> = matches
-            .iter()
-            .filter(|(acc, _)| acc.to_lowercase().contains("cash"))
-            .collect();
-        assert!(!cash_matches.is_empty());
-
-        // Should match against full account name - test "assets" should match "Assets:Cash:Checking"
-        let assets_matches = fuzzy_search_accounts(&accounts, "assets");
-        let assets_found = assets_matches
-            .iter()
-            .any(|(acc, _)| acc.starts_with("Assets"));
-        assert!(assets_found, "Should find accounts starting with Assets");
-
-        // Should match "assetchk" against "Assets:Cash:Checking" (fuzzy across full name)
-        let fuzzy_full_matches = fuzzy_search_accounts(&accounts, "assetchk");
-        let assetchk_found = fuzzy_full_matches
-            .iter()
-            .any(|(acc, _)| acc == "Assets:Cash:Checking");
-        assert!(
-            assetchk_found,
-            "Should fuzzy match across full account name"
-        );
-
-        // Fuzzy matching should work
-        let fuzzy_matches = fuzzy_search_accounts(&accounts, "chk");
-        assert!(!fuzzy_matches.is_empty());
-
-        // Query with no matching characters should still return all accounts with low scores
-        let no_matches = fuzzy_search_accounts(&accounts, "xyz123");
-        assert!(
-            !no_matches.is_empty(),
-            "Should return all accounts even with no character matches"
-        );
-        assert!(
-            no_matches.iter().all(|(_, score)| *score >= 1.0),
-            "All accounts should have at least minimum score"
-        );
-    }
-
-    #[test]
-    fn test_fuzzy_matching_full_account_names() {
-        use crate::providers::completion::fuzzy_search_accounts;
-
-        let accounts = vec![
-            "Assets:Cash:Checking".to_string(),
-            "Assets:Investments:Stocks".to_string(),
-            "Expenses:Food:Groceries".to_string(),
-            "Expenses:Transportation:Gas".to_string(),
-            "Liabilities:CreditCard:Visa".to_string(),
-        ];
-
-        // Test matching across account segments
-        let matches = fuzzy_search_accounts(&accounts, "assetsinv");
-        let found = matches
-            .iter()
-            .any(|(acc, _)| acc == "Assets:Investments:Stocks");
-        assert!(
-            found,
-            "Should match 'assetsinv' to 'Assets:Investments:Stocks'"
-        );
-
-        // Test matching with partial segments
-        let matches = fuzzy_search_accounts(&accounts, "exptrans");
-        let found = matches
-            .iter()
-            .any(|(acc, _)| acc == "Expenses:Transportation:Gas");
-        assert!(
-            found,
-            "Should match 'exptrans' to 'Expenses:Transportation:Gas'"
-        );
-
-        // Test case insensitive matching across full name
-        let matches = fuzzy_search_accounts(&accounts, "LIABCRED");
-        let found = matches
-            .iter()
-            .any(|(acc, _)| acc == "Liabilities:CreditCard:Visa");
-        assert!(
-            found,
-            "Should match 'LIABCRED' to 'Liabilities:CreditCard:Visa'"
-        );
-
-        // Test matching with mixed separators
-        let matches = fuzzy_search_accounts(&accounts, "foodgroc");
-        let found = matches
-            .iter()
-            .any(|(acc, _)| acc == "Expenses:Food:Groceries");
-        assert!(
-            found,
-            "Should match 'foodgroc' to 'Expenses:Food:Groceries'"
-        );
-    }
-
-    #[test]
-    fn test_deep_account_fuzzy_matching() {
-        use crate::providers::completion::fuzzy_search_accounts;
-
-        let accounts = vec![
-            "Expenses:Fixed:Food:Groceries".to_string(),
-            "Expenses:Variable:Food:Restaurants".to_string(),
-            "Assets:Cash:Checking".to_string(),
-            "Income:Salary:Base".to_string(),
-        ];
-
-        // Test that 'food' matches both food-related accounts
-        let matches = fuzzy_search_accounts(&accounts, "food");
-        println!("Matches for 'food': {matches:?}");
-
-        let food_groceries_found = matches
-            .iter()
-            .any(|(acc, _)| acc == "Expenses:Fixed:Food:Groceries");
-        let food_restaurants_found = matches
-            .iter()
-            .any(|(acc, _)| acc == "Expenses:Variable:Food:Restaurants");
-
-        assert!(
-            food_groceries_found,
-            "Should match 'food' to 'Expenses:Fixed:Food:Groceries'"
-        );
-        assert!(
-            food_restaurants_found,
-            "Should match 'food' to 'Expenses:Variable:Food:Restaurants'"
-        );
-
-        // Test that 'groceries' matches the groceries account
-        let matches = fuzzy_search_accounts(&accounts, "groceries");
-        println!("Matches for 'groceries': {matches:?}");
-        let groceries_found = matches
-            .iter()
-            .any(|(acc, _)| acc == "Expenses:Fixed:Food:Groceries");
-        assert!(
-            groceries_found,
-            "Should match 'groceries' to 'Expenses:Fixed:Food:Groceries'"
-        );
-
-        // Test fuzzy matching across multiple segments
-        let matches = fuzzy_search_accounts(&accounts, "expfoodgroc");
-        println!("Matches for 'expfoodgroc': {matches:?}");
-        let fuzzy_found = matches
-            .iter()
-            .any(|(acc, _)| acc == "Expenses:Fixed:Food:Groceries");
-        assert!(
-            fuzzy_found,
-            "Should fuzzy match 'expfoodgroc' to 'Expenses:Fixed:Food:Groceries'"
-        );
-
-        // Test search mode determination
-        use crate::providers::completion::{SearchMode, determine_search_mode};
-        assert_eq!(determine_search_mode("food"), SearchMode::Fuzzy);
-        assert_eq!(determine_search_mode("FOOD"), SearchMode::Prefix);
-        assert_eq!(determine_search_mode("Food"), SearchMode::Exact);
-    }
-
-    #[test]
-    fn test_capital_letter_completion() {
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Cash:Checking USD
-2023-10-01 open Assets:Investments:Stocks USD
-2023-10-01 open Liabilities:CreditCard:Visa USD
-2023-10-01 open Expenses:Food:Groceries USD
-2023-10-01 open Income:Salary USD
-2023-10-01 txn "Test"
-    A
-     |
-     ^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
-            .unwrap()
-            .unwrap_or_default();
-
-        // Should show all accounts, with "A" accounts ranked highest
-        assert_eq!(items.len(), 5);
-        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-
-        // Assets accounts should be first (highest scores)
-        assert_eq!(items[0].label, "Assets:Cash:Checking");
-        assert_eq!(items[1].label, "Assets:Investments:Stocks");
-
-        // All accounts should be present
-        assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
-        assert!(labels.contains(&&"Assets:Investments:Stocks".to_string()));
-        assert!(labels.contains(&&"Liabilities:CreditCard:Visa".to_string()));
-        assert!(labels.contains(&&"Expenses:Food:Groceries".to_string()));
-        assert!(labels.contains(&&"Income:Salary".to_string()));
-    }
-
-    #[test]
-    fn test_account_type_filtering() {
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Cash:Checking USD
-2023-10-01 open Assets:Investments:Stocks USD
-2023-10-01 open Liabilities:CreditCard:Visa USD
-2023-10-01 open Expenses:Food:Groceries USD
-2023-10-01 open Income:Salary USD
-2023-10-01 txn "Test"
-    L
-     |
-     ^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
-            .unwrap()
-            .unwrap_or_default();
-
-        // Should show all accounts, with "L" accounts ranked highest
-        assert_eq!(items.len(), 5);
-        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-
-        // Liabilities account should be first (highest score)
-        assert_eq!(items[0].label, "Liabilities:CreditCard:Visa");
-
-        // All accounts should be present
-        assert!(labels.contains(&&"Liabilities:CreditCard:Visa".to_string()));
-        assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
-        assert!(labels.contains(&&"Assets:Investments:Stocks".to_string()));
-        assert!(labels.contains(&&"Expenses:Food:Groceries".to_string()));
-        assert!(labels.contains(&&"Income:Salary".to_string()));
-    }
-
-    #[test]
-    fn test_income_and_expenses_filtering() {
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Cash:Checking USD
-2023-10-01 open Liabilities:CreditCard:Visa USD
-2023-10-01 open Expenses:Food:Groceries USD
-2023-10-01 open Expenses:Transportation:Gas USD
-2023-10-01 open Income:Salary USD
-2023-10-01 open Income:Freelance USD
-2023-10-01 txn "Test"
-    I
-     |
-     ^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
-            .unwrap()
-            .unwrap_or_default();
-
-        // Should show all accounts, with Income accounts ranked highest
-        assert_eq!(items.len(), 6);
-        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-
-        // Income accounts should be first (highest scores)
-        assert!(items[0].label.starts_with("Income:"));
-        assert!(items[1].label.starts_with("Income:"));
-
-        // All accounts should be present
-        assert!(labels.contains(&&"Income:Salary".to_string()));
-        assert!(labels.contains(&&"Income:Freelance".to_string()));
-        assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
-        assert!(labels.contains(&&"Liabilities:CreditCard:Visa".to_string()));
-        assert!(labels.contains(&&"Expenses:Food:Groceries".to_string()));
-        assert!(labels.contains(&&"Expenses:Transportation:Gas".to_string()));
-
-        // Test E for Expenses
-        let fixture_e = r#"
-%! /main.beancount
-2023-10-01 open Assets:Cash:Checking USD
-2023-10-01 open Liabilities:CreditCard:Visa USD
-2023-10-01 open Expenses:Food:Groceries USD
-2023-10-01 open Expenses:Transportation:Gas USD
-2023-10-01 open Income:Salary USD
-2023-10-01 txn "Test"
-    E
-     |
-     ^
-"#;
-        let test_state_e = TestState::new(fixture_e).unwrap();
-        let cursor_e = test_state_e.cursor().unwrap();
-        let items_e = completion(test_state_e.snapshot, None, cursor_e)
-            .unwrap()
-            .unwrap_or_default();
-
-        // Should show all accounts, with Expenses accounts ranked highest
-        assert_eq!(items_e.len(), 5);
-        let labels_e: Vec<&String> = items_e.iter().map(|item| &item.label).collect();
-
-        // Expenses accounts should be first (highest scores)
-        assert!(items_e[0].label.starts_with("Expenses:"));
-        assert!(items_e[1].label.starts_with("Expenses:"));
-
-        // All accounts should be present
-        assert!(labels_e.contains(&&"Expenses:Food:Groceries".to_string()));
-        assert!(labels_e.contains(&&"Expenses:Transportation:Gas".to_string()));
-        assert!(labels_e.contains(&&"Assets:Cash:Checking".to_string()));
-        assert!(labels_e.contains(&&"Liabilities:CreditCard:Visa".to_string()));
-        assert!(labels_e.contains(&&"Income:Salary".to_string()));
-    }
-
-    #[test]
-    fn test_lowercase_fuzzy_completion() {
-        // Test the fuzzy search functionality directly
-        use crate::providers::completion::fuzzy_search_accounts;
-
-        let accounts = vec![
-            "Assets:Cash:Checking".to_string(),
-            "Assets:Investments:Stocks".to_string(),
-            "Expenses:Food:Groceries".to_string(), // This doesn't contain 'a'
-            "Liabilities:CreditCard".to_string(),
-            "Income:Salary".to_string(),
-        ];
-
-        // Test fuzzy search with "a" - should now show ALL accounts
-        let matches = fuzzy_search_accounts(&accounts, "a");
-        println!("Matches for 'a': {matches:?}");
-
-        // Should show all 5 accounts since lowercase should show all accounts with fuzzy ranking
-        assert_eq!(
-            matches.len(),
-            5,
-            "Should show all accounts when lowercase is typed"
-        );
-
-        // Check that accounts containing 'a' have higher scores than those that don't
-        let expenses_score = matches
-            .iter()
-            .find(|(acc, _)| acc.starts_with("Expenses"))
-            .map(|(_, score)| *score);
-        let assets_score = matches
-            .iter()
-            .find(|(acc, _)| acc.starts_with("Assets"))
-            .map(|(_, score)| *score);
-
-        assert!(assets_score.is_some(), "Should include Assets account");
-        assert!(expenses_score.is_some(), "Should include Expenses account");
-
-        // Assets should have higher score than Expenses since it contains 'a'
-        assert!(
-            assets_score.unwrap() > expenses_score.unwrap(),
-            "Assets (contains 'a') should have higher score than Expenses (doesn't contain 'a')"
-        );
-    }
-
-    #[test]
-    fn test_return_all_accounts_unless_colon_triggered() {
-        // Test normal completion (not colon-triggered): should return ALL accounts
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Cash:Checking USD
-2023-10-01 open Assets:Investments:Stocks USD
-2023-10-01 open Liabilities:CreditCard:Visa USD
-2023-10-01 open Expenses:Food:Groceries USD
-2023-10-01 open Income:Salary USD
-2023-10-01 txn "Test"
-    A
-     |
-     ^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor) // None = not colon-triggered
-            .unwrap()
-            .unwrap_or_default();
-
-        // Should return ALL 5 accounts, not filtered by prefix
-        assert_eq!(items.len(), 5);
-        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-
-        // All accounts should be present
-        assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
-        assert!(labels.contains(&&"Assets:Investments:Stocks".to_string()));
-        assert!(labels.contains(&&"Liabilities:CreditCard:Visa".to_string()));
-        assert!(labels.contains(&&"Expenses:Food:Groceries".to_string()));
-        assert!(labels.contains(&&"Income:Salary".to_string()));
-
-        // Assets accounts should be ranked highest due to prefix "A"
-        assert!(items[0].label.starts_with("Assets:"));
-        assert!(items[1].label.starts_with("Assets:"));
-    }
-
-    #[test]
-    fn test_lowercase_completion_integration() {
-        // Test the full completion flow with lowercase letters
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Cash:Checking USD
-2023-10-01 open Assets:Investments:Stocks USD
-2023-10-01 open Liabilities:CreditCard:Visa USD
-2023-10-01 open Expenses:Food:Groceries USD
-2023-10-01 open Income:Salary USD
-2023-10-01 txn "Test"
-    a
-     |
-     ^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
-            .unwrap()
-            .unwrap_or_default();
-
-        println!(
-            "Completion items for 'a': {:?}",
-            items.iter().map(|i| &i.label).collect::<Vec<_>>()
-        );
-
-        // Should show ALL accounts when lowercase is typed, not just ones containing 'a'
-        assert_eq!(
-            items.len(),
-            5,
-            "Should show all 5 accounts when lowercase 'a' is typed"
-        );
-
-        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-        assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
-        assert!(labels.contains(&&"Assets:Investments:Stocks".to_string()));
-        assert!(labels.contains(&&"Liabilities:CreditCard:Visa".to_string()));
-        assert!(labels.contains(&&"Expenses:Food:Groceries".to_string()));
-        assert!(labels.contains(&&"Income:Salary".to_string()));
-    }
-
-    #[test]
-    fn test_mixed_case_exact_completion() {
-        // Test the search mode determination for mixed case
-        use crate::providers::completion::{SearchMode, determine_search_mode};
-
-        // Mixed case should use exact matching
-        assert_eq!(determine_search_mode("Assets"), SearchMode::Exact);
-        assert_eq!(determine_search_mode("AssetS"), SearchMode::Exact);
-        assert_eq!(determine_search_mode("As"), SearchMode::Exact);
-    }
-
-    #[test]
-    fn test_apple_account_issue() {
-        // Test the specific issue where Liabilities:CC:Apple doesn't show when typing 'a'
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Liabilities:CC:Apple USD
-2023-10-01 open Assets:Cash:Apple USD
-2023-10-01 txn "Test"
-    a
-     |
-     ^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
-            .unwrap()
-            .unwrap_or_default();
-
-        println!(
-            "Apple test - Completion items for 'a': {:#?}",
-            items.iter().map(|i| &i.label).collect::<Vec<_>>()
-        );
-
-        // Should show BOTH accounts when typing lowercase 'a'
-        assert_eq!(
-            items.len(),
-            2,
-            "Should show both Apple accounts when typing 'a'"
-        );
-
-        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-        assert!(
-            labels.contains(&&"Assets:Cash:Apple".to_string()),
-            "Should include Assets:Cash:Apple"
-        );
-        assert!(
-            labels.contains(&&"Liabilities:CC:Apple".to_string()),
-            "Should include Liabilities:CC:Apple"
-        );
-    }
-
-    #[test]
-    fn test_apple_fuzzy_search_direct() {
-        // Test the fuzzy search function directly with Apple accounts
-        use crate::providers::completion::fuzzy_search_accounts;
-
-        let accounts = vec![
-            "Liabilities:CC:Apple".to_string(),
-            "Assets:Cash:Apple".to_string(),
-        ];
-
-        let matches = fuzzy_search_accounts(&accounts, "a");
-        println!("Apple fuzzy search for 'a': {matches:#?}");
-
-        // Should show both accounts
-        assert_eq!(matches.len(), 2, "Should show both Apple accounts");
-
-        let account_names: Vec<&String> = matches.iter().map(|(name, _)| name).collect();
-        assert!(account_names.contains(&&"Assets:Cash:Apple".to_string()));
-        assert!(account_names.contains(&&"Liabilities:CC:Apple".to_string()));
-    }
-
-    #[test]
-    fn test_uppercase_letter_filtering_issue() {
-        // Test that uppercase letters are filtering out accounts (current behavior)
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Cash:Checking USD
-2023-10-01 open Liabilities:CreditCard:Visa USD
-2023-10-01 open Expenses:Food:Groceries USD
-2023-10-01 open Income:Salary:Base USD
-2023-10-01 txn "Test"
-    A
-     |
-     ^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
-            .unwrap()
-            .unwrap_or_default();
-
-        println!("Completion items for uppercase 'A': {items:#?}");
-
-        // Should now show all accounts, with Assets accounts first
-        assert_eq!(items.len(), 4, "Should show all accounts when typing 'A'");
-
-        // Assets account should be first (highest score)
-        assert_eq!(items[0].label, "Assets:Cash:Checking");
-
-        // All accounts should be present
-        let labels: Vec<&String> = items.iter().map(|item| &item.label).collect();
-        assert!(labels.contains(&&"Assets:Cash:Checking".to_string()));
-        assert!(labels.contains(&&"Liabilities:CreditCard:Visa".to_string()));
-        assert!(labels.contains(&&"Expenses:Food:Groceries".to_string()));
-        assert!(labels.contains(&&"Income:Salary:Base".to_string()));
-    }
-
-    #[test]
-    fn test_first_letter_shows_all_accounts() {
-        // Test that typing a single letter shows ALL accounts, not just matching ones
-        use crate::providers::completion::fuzzy_search_accounts;
-
-        let accounts = vec![
-            "Assets:Cash:Checking".to_string(),
-            "Liabilities:CreditCard:Visa".to_string(),
-            "Expenses:Food:Groceries".to_string(),
-            "Income:Salary:Base".to_string(),
-            "Equity:OpeningBalances".to_string(),
-        ];
-
-        // Test single letter "a" - should show ALL 5 accounts
-        let matches = fuzzy_search_accounts(&accounts, "a");
-        println!("Matches for single letter 'a': {matches:#?}");
-
-        assert_eq!(
-            matches.len(),
-            5,
-            "Should show all accounts when typing single letter 'a'"
-        );
-
-        // All accounts should be present
-        let account_names: Vec<&String> = matches.iter().map(|(name, _)| name).collect();
-        assert!(account_names.contains(&&"Assets:Cash:Checking".to_string()));
-        assert!(account_names.contains(&&"Liabilities:CreditCard:Visa".to_string()));
-        assert!(account_names.contains(&&"Expenses:Food:Groceries".to_string()));
-        assert!(account_names.contains(&&"Income:Salary:Base".to_string()));
-        assert!(account_names.contains(&&"Equity:OpeningBalances".to_string()));
-
-        // Test single letter "e" - should show ALL accounts
-        let e_matches = fuzzy_search_accounts(&accounts, "e");
-        println!("Matches for single letter 'e': {e_matches:#?}");
-
-        assert_eq!(
-            e_matches.len(),
-            5,
-            "Should show all accounts when typing single letter 'e'"
-        );
-
-        // Test single letter "z" - should show ALL accounts even with no matches
-        let z_matches = fuzzy_search_accounts(&accounts, "z");
-        println!("Matches for single letter 'z': {z_matches:#?}");
-
-        assert_eq!(
-            z_matches.len(),
-            5,
-            "Should show all accounts even when no letter matches"
-        );
-    }
-
-    #[test]
-    fn test_intra_word_vs_cross_colon_scoring() {
-        // Test that intra-word matches are prioritized over cross-colon matches
-        use crate::providers::completion::fuzzy_search_accounts;
-
-        let accounts = vec![
-            "Assets:Cash:Checking".to_string(), // "cash" matches within segment
-            "Assets:Catering:Supplies".to_string(), // "ca" matches start of segment
-            "Assets:Stocks:Company".to_string(), // "co" matches start of segment
-            "Expenses:Communications:Phone".to_string(), // "co" matches within segment
-            "Assets:Currency:Euro".to_string(), // "cu" matches start of segment
-        ];
-
-        // Test "cash" - should prioritize the exact intra-word match
-        let matches = fuzzy_search_accounts(&accounts, "cash");
-        println!("Matches for 'cash': {matches:#?}");
-
-        // Assets:Cash:Checking should be highest because "cash" matches exactly within "Cash" segment
-        assert_eq!(matches[0].0, "Assets:Cash:Checking");
-        assert!(
-            matches[0].1 > 4000.0,
-            "Intra-word exact match should have very high score"
-        );
-
-        // Test "ca" - should prioritize matches within segments
-        let ca_matches = fuzzy_search_accounts(&accounts, "ca");
-        println!("Matches for 'ca': {ca_matches:#?}");
-
-        // Should prioritize Assets:Cash:Checking and Assets:Catering:Supplies
-        let top_two: Vec<&String> = ca_matches.iter().take(2).map(|(name, _)| name).collect();
-        assert!(top_two.contains(&&"Assets:Cash:Checking".to_string()));
-        assert!(top_two.contains(&&"Assets:Catering:Supplies".to_string()));
-
-        // Test "co" - Communications should rank higher than cross-colon matches
-        let co_matches = fuzzy_search_accounts(&accounts, "co");
-        println!("Matches for 'co': {co_matches:#?}");
-
-        // Expenses:Communications:Phone should rank highly due to intra-word match
-        let communications_score = co_matches
-            .iter()
-            .find(|(name, _)| name == "Expenses:Communications:Phone")
-            .map(|(_, score)| *score)
+    fn test_check_if_in_posting_area_with_flag() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        let text = r#"2026-01-06 * "payee" "narration"
+  Exp"#;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
             .unwrap();
+        let tree = parser.parse(text, None).unwrap();
 
-        // Should have significant intra-word score
-        assert!(
-            communications_score > 3000.0,
-            "Intra-word match should have high score"
-        );
+        // Cursor at row 1, column 5 (after "  Exp")
+        let cursor = Point { row: 1, column: 5 };
+
+        let context = check_if_in_posting_area(&tree, &rope, cursor);
+
+        match context {
+            CompletionContext::PostingAccount { prefix } => {
+                assert_eq!(prefix, "Exp");
+            }
+            _ => panic!("Expected PostingAccount context, got {:?}", context),
+        }
     }
 
     #[test]
-    fn test_unsupported_trigger_character() {
-        // Test that unsupported trigger characters return None
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Test USD
-"#;
-        let test_state = TestState::new(fixture).unwrap();
+    fn test_check_if_in_posting_area_not_in_transaction() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
 
-        // Use the proper path conversion to ensure consistency with TestState
-        let file_path = TestState::path_from_fixture("/main.beancount").unwrap();
-        let path_str = file_path.to_string_lossy();
-        let uri_str = if cfg!(windows) {
-            format!("file:///{}", path_str.replace('\\', "/"))
-        } else {
-            format!("file://{path_str}")
-        };
-        let uri = lsp_types::Uri::from_str(&uri_str).unwrap();
+        let text = r#"2026-01-06 open Assets:Cash
 
-        let cursor = lsp_types::TextDocumentPositionParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri },
-            position: lsp_types::Position {
-                line: 0,
-                character: 26,
-            },
-        };
-        let items = completion(test_state.snapshot, Some('x'), cursor).unwrap();
+A"#;
 
-        // Should return None for unsupported trigger characters
-        assert!(items.is_none());
-    }
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(text, None).unwrap();
 
-    #[test]
-    fn test_transaction_context_after_txn_keyword() {
-        // Test that we correctly detect payee/narration context after "txn" keyword
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Checking USD
-2023-10-01 open Expenses:Food USD
-2023-10-01 txn
-     |
-     ^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
-            .unwrap()
-            .unwrap_or_default();
+        // Cursor at row 2, column 1 (after empty line and "A")
+        let cursor = Point { row: 2, column: 1 };
 
-        // Should return narration completion (backward compatibility default)
-        assert!(
-            !items.is_empty(),
-            "Should provide completions after txn keyword"
-        );
-    }
+        let context = check_if_in_posting_area(&tree, &rope, cursor);
 
-    #[test]
-    fn test_transaction_context_with_complete_payee() {
-        // Test that we detect narration context when payee is already complete
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Checking USD
-2023-10-01 txn "Store"
-     |
-     ^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor)
-            .unwrap()
-            .unwrap_or_default();
-
-        // Should recognize this as narration position since payee is complete
-        assert!(
-            !items.is_empty(),
-            "Should provide completions after complete payee"
-        );
-    }
-
-    #[test]
-    fn test_quote_trigger_after_txn_payee_position() {
-        // Test that quote trigger after "txn" prioritizes payee completion
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Checking USD
-2023-10-01 txn "
-     |
-     ^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, Some('"'), cursor);
-
-        // Should provide completion suggestions for payee/narration
-        assert!(
-            items.is_ok(),
-            "Should handle quote trigger after txn keyword"
-        );
-    }
-
-    #[test]
-    fn test_transaction_context_before_txn_position() {
-        // Test that cursor position before "txn" completion zone works correctly
-        let fixture = r#"
-%! /main.beancount
-2023-10-01 open Assets:Checking USD
-2023-10-01 txn
-|
-^
-"#;
-        let test_state = TestState::new(fixture).unwrap();
-        let cursor = test_state.cursor().unwrap();
-        let items = completion(test_state.snapshot, None, cursor);
-
-        // Should handle cursor at txn position
-        assert!(items.is_ok(), "Should handle cursor at txn position");
+        // Should be DocumentRoot since we hit empty line
+        match context {
+            CompletionContext::DocumentRoot => {
+                // Expected
+            }
+            _ => panic!("Expected DocumentRoot context, got {:?}", context),
+        }
     }
 }

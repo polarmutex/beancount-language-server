@@ -96,7 +96,15 @@ pub mod text_document {
         match completion::completion(snapshot, trigger_char, params.text_document_position) {
             Ok(Some(items)) => {
                 tracing::info!("Completion returned {} items", items.len());
-                Ok(Some(lsp_types::CompletionResponse::Array(items)))
+                // Return CompletionList instead of Array to signal that server-side
+                // filtering is preferred. Setting `is_incomplete: true` tells clients
+                // like Zed to re-query on each keystroke rather than filtering internally.
+                Ok(Some(lsp_types::CompletionResponse::List(
+                    lsp_types::CompletionList {
+                        is_incomplete: true,
+                        items,
+                    },
+                )))
             }
             Ok(None) => {
                 tracing::debug!("No completion items available");
