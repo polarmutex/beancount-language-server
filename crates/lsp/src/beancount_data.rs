@@ -22,6 +22,7 @@ pub struct BeancountData {
     pub flagged_entries: Vec<FlaggedEntry>,
     tags: Vec<String>,
     links: Vec<String>,
+    commodities: Vec<String>,
 }
 
 impl BeancountData {
@@ -162,12 +163,67 @@ impl BeancountData {
         links.sort();
         links.dedup();
 
+        // Update commodities
+        tracing::debug!("beancount_data:: get commodities");
+        let mut commodities_set: HashSet<String> = HashSet::new();
+
+        // Get commodities from open directives
+        let mut cursor = tree.root_node().walk();
+        tree.root_node()
+            .children(&mut cursor)
+            .filter(|c| c.kind() == "open")
+            .for_each(|node| {
+                let mut node_cursor = node.walk();
+                // Look for currency nodes in open directives
+                for child in node.children(&mut node_cursor) {
+                    if child.kind() == "currency" {
+                        let commodity = text_for_tree_sitter_node(content, &child);
+                        commodities_set.insert(commodity);
+                    }
+                }
+            });
+
+        // Get commodities from commodity directives
+        let mut cursor = tree.root_node().walk();
+        tree.root_node()
+            .children(&mut cursor)
+            .filter(|c| c.kind() == "commodity")
+            .for_each(|node| {
+                let mut node_cursor = node.walk();
+                for child in node.children(&mut node_cursor) {
+                    if child.kind() == "currency" {
+                        let commodity = text_for_tree_sitter_node(content, &child);
+                        commodities_set.insert(commodity);
+                    }
+                }
+            });
+
+        // Get commodities from transaction postings (currency nodes)
+        let query_string = r#"
+        (currency) @currency
+        "#;
+        let query = tree_sitter::Query::new(&tree_sitter_beancount::language(), query_string)
+            .unwrap_or_else(|_| panic!("get_position_by_query invalid query {query_string}"));
+        let mut cursor_qry = tree_sitter::QueryCursor::new();
+        let binding = content.clone().to_string();
+        let mut matches = cursor_qry.matches(&query, tree.root_node(), binding.as_bytes());
+        while let Some(m) = matches.next() {
+            for capture in m.captures {
+                let commodity = text_for_tree_sitter_node(content, &capture.node);
+                commodities_set.insert(commodity);
+            }
+        }
+
+        let mut commodities: Vec<String> = commodities_set.into_iter().collect();
+        commodities.sort();
+
         Self {
             accounts,
             narration,
             flagged_entries,
             tags,
             links,
+            commodities,
         }
     }
 
@@ -185,5 +241,9 @@ impl BeancountData {
 
     pub fn get_links(&self) -> Vec<String> {
         self.links.clone()
+    }
+
+    pub fn get_commodities(&self) -> Vec<String> {
+        self.commodities.clone()
     }
 }
