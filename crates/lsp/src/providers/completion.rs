@@ -600,7 +600,7 @@ fn generate_completions(
 ) -> Result<Option<Vec<CompletionItem>>> {
     match context {
         CompletionContext::DocumentRoot => {
-            let mut items = complete_date()?;
+            let mut items = complete_date(content, position)?;
             items.extend(complete_directive_keywords()?);
             Ok(Some(items))
         }
@@ -703,38 +703,54 @@ fn complete_directive_keywords() -> Result<Vec<CompletionItem>> {
 }
 
 /// Complete date with current/previous/next month
-fn complete_date() -> Result<Vec<CompletionItem>> {
+fn complete_date(content: &ropey::Rope, position: Position) -> Result<Vec<CompletionItem>> {
     let today = chrono::Local::now().naive_local().date();
     let prev_month = sub_one_month(today).format("%Y-%m-").to_string();
     let cur_month = today.format("%Y-%m-").to_string();
     let next_month = add_one_month(today).format("%Y-%m-").to_string();
     let today_str = today.format("%Y-%m-%d").to_string();
 
+    // Calculate ranges for InsertReplaceEdit
+    let line = content.line(position.line as usize).to_string();
+    let (insert_range, replace_range) = calculate_word_ranges(&line, position);
+
     Ok(vec![
-        CompletionItem {
-            label: today_str,
-            detail: Some("today".to_string()),
-            kind: Some(CompletionItemKind::CONSTANT),
-            ..Default::default()
-        },
-        CompletionItem {
-            label: cur_month,
-            detail: Some("this month".to_string()),
-            kind: Some(CompletionItemKind::CONSTANT),
-            ..Default::default()
-        },
-        CompletionItem {
-            label: prev_month,
-            detail: Some("prev month".to_string()),
-            kind: Some(CompletionItemKind::CONSTANT),
-            ..Default::default()
-        },
-        CompletionItem {
-            label: next_month,
-            detail: Some("next month".to_string()),
-            kind: Some(CompletionItemKind::CONSTANT),
-            ..Default::default()
-        },
+        create_completion_with_insert_replace(
+            today_str,
+            "today".to_string(),
+            CompletionItemKind::CONSTANT,
+            insert_range,
+            replace_range,
+            1000.0,
+            vec![],
+        ),
+        create_completion_with_insert_replace(
+            cur_month,
+            "this month".to_string(),
+            CompletionItemKind::CONSTANT,
+            insert_range,
+            replace_range,
+            900.0,
+            vec![],
+        ),
+        create_completion_with_insert_replace(
+            prev_month,
+            "prev month".to_string(),
+            CompletionItemKind::CONSTANT,
+            insert_range,
+            replace_range,
+            800.0,
+            vec![],
+        ),
+        create_completion_with_insert_replace(
+            next_month,
+            "next month".to_string(),
+            CompletionItemKind::CONSTANT,
+            insert_range,
+            replace_range,
+            700.0,
+            vec![],
+        ),
     ])
 }
 
@@ -1385,7 +1401,12 @@ mod tests {
 
     #[test]
     fn test_complete_date() {
-        let items = complete_date().unwrap();
+        let content = ropey::Rope::from_str("2026-01-");
+        let position = Position {
+            line: 0,
+            character: 8,
+        };
+        let items = complete_date(&content, position).unwrap();
         assert_eq!(items.len(), 4);
 
         let details: Vec<String> = items.iter().filter_map(|i| i.detail.clone()).collect();
@@ -1393,6 +1414,14 @@ mod tests {
         assert!(details.contains(&"this month".to_string()));
         assert!(details.contains(&"prev month".to_string()));
         assert!(details.contains(&"next month".to_string()));
+
+        // Verify that all items have text_edit set for proper replacement
+        for item in &items {
+            assert!(
+                item.text_edit.is_some(),
+                "Date completion should have text_edit"
+            );
+        }
     }
 
     #[test]
