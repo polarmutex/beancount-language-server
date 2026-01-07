@@ -8,7 +8,7 @@ use nucleo::{
     Config, Matcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::debug;
@@ -278,9 +278,9 @@ fn check_if_in_posting_area(
                 if has_account {
                     // If there's more than one word, we might have account + amount/currency
                     if words.len() > 1 {
-                        // Check if there are digits (amount present)
-                        let has_digits = trimmed_current_line.chars().any(|c| c.is_ascii_digit());
-                        if has_digits {
+                        // Check if we're at the second word position (amount) or third+ (currency)
+                        // Second word: amount, Third+ word: currency
+                        if words.len() >= 3 {
                             return CompletionContext::PostingCurrency;
                         } else {
                             return CompletionContext::PostingAmount;
@@ -621,19 +621,19 @@ fn generate_completions(
 
         CompletionContext::PostingAmount => Ok(Some(complete_amount()?)),
 
-        CompletionContext::PostingCurrency => Ok(Some(complete_currency(content, position)?)),
+        CompletionContext::PostingCurrency => Ok(Some(complete_currency(data, content, position)?)),
 
         CompletionContext::OpenAccount { prefix } => {
             Ok(Some(complete_account(data, prefix, content, position)?))
         }
 
-        CompletionContext::OpenCurrency => Ok(Some(complete_currency(content, position)?)),
+        CompletionContext::OpenCurrency => Ok(Some(complete_currency(data, content, position)?)),
 
         CompletionContext::BalanceAccount { prefix } => {
             Ok(Some(complete_account(data, prefix, content, position)?))
         }
 
-        CompletionContext::PriceContext => Ok(Some(complete_currency(content, position)?)),
+        CompletionContext::PriceContext => Ok(Some(complete_currency(data, content, position)?)),
 
         CompletionContext::InsideString {
             prefix,
@@ -823,11 +823,32 @@ fn complete_subaccounts(
 }
 
 /// Complete currency codes
-fn complete_currency(content: &ropey::Rope, position: Position) -> Result<Vec<CompletionItem>> {
-    let currencies = vec![
+fn complete_currency(
+    data: &HashMap<PathBuf, Arc<BeancountData>>,
+    content: &ropey::Rope,
+    position: Position,
+) -> Result<Vec<CompletionItem>> {
+    // Collect commodities from all beancount files
+    let mut commodities_set: HashSet<String> = HashSet::new();
+    for bean_data in data.values() {
+        for commodity in bean_data.get_commodities() {
+            commodities_set.insert(commodity);
+        }
+    }
+
+    // If no commodities found in the files, fall back to common currencies
+    let fallback_currencies = vec![
         "USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD", "SEK", "NOK", "DKK", "PLN", "CZK",
         "HUF", "CNY", "INR", "BRL", "MXN", "ZAR", "RUB", "KRW", "SGD", "HKD", "THB",
     ];
+
+    let currencies: Vec<String> = if commodities_set.is_empty() {
+        fallback_currencies.iter().map(|s| s.to_string()).collect()
+    } else {
+        let mut commodities: Vec<String> = commodities_set.into_iter().collect();
+        commodities.sort();
+        commodities
+    };
 
     let line = content.line(position.line as usize).to_string();
     let (insert_range, replace_range) = calculate_word_ranges(&line, position);
