@@ -183,6 +183,9 @@ fn classify_node(kind: NodeKind) -> Option<TokenKind> {
         NodeKind::String => Option::Some(TokenKind::String),
 
         NodeKind::Unknown => Option::None,
+
+        // All other NodeKind variants are not classified for semantic highlighting
+        _ => Option::None,
     }
 }
 
