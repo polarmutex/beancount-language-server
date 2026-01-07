@@ -1,5 +1,4 @@
 use crate::treesitter_utils::text_for_tree_sitter_node;
-use std::collections::HashSet;
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::tree_sitter;
 
@@ -56,35 +55,34 @@ impl BeancountData {
             accounts.push(account);
         }
 
-        // Update account opens
+        // Update narration with frequency tracking
         tracing::debug!("beancount_data:: get narration nodes");
-        tracing::debug!("beancount_data:: get account strings");
         let transactions = tree
             .root_node()
             .children(&mut cursor)
             .filter(|c| c.kind() == "transaction")
             .collect::<Vec<_>>();
 
-        //TODO: consider doing something silimar with others around
-        let mut txn_string_strings: HashSet<String> = HashSet::new();
+        let mut narration_count: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for transaction in transactions {
-            if let Some(narration) = transaction.child_by_field_name("narration") {
-                txn_string_strings.insert(
-                    text_for_tree_sitter_node(content, &narration)
-                        .trim()
-                        .to_string(),
-                );
+            if let Some(narration_node) = transaction.child_by_field_name("narration") {
+                let narration_text = text_for_tree_sitter_node(content, &narration_node)
+                    .trim()
+                    .to_string();
+                if !narration_text.is_empty() {
+                    *narration_count.entry(narration_text).or_insert(0) += 1;
+                }
             }
         }
 
         tracing::debug!("beancount_data:: update narration");
         narration.clear();
 
-        for txn_string in txn_string_strings {
-            if !narration.contains(&txn_string) {
-                narration.push(txn_string);
-            }
-        }
+        // Sort by frequency (most used first), then alphabetically
+        let mut narration_vec: Vec<(String, usize)> = narration_count.into_iter().collect();
+        narration_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        narration = narration_vec.into_iter().map(|(text, _)| text).collect();
 
         // Update flagged entries
         tracing::debug!("beancount_data:: update flagged entries");
@@ -163,11 +161,12 @@ impl BeancountData {
         links.sort();
         links.dedup();
 
-        // Update commodities
+        // Update commodities with usage frequency
         tracing::debug!("beancount_data:: get commodities");
-        let mut commodities_set: HashSet<String> = HashSet::new();
+        let mut commodities_count: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
 
-        // Get commodities from open directives
+        // Get commodities from open directives (count once per directive)
         let mut cursor = tree.root_node().walk();
         tree.root_node()
             .children(&mut cursor)
@@ -177,13 +176,17 @@ impl BeancountData {
                 // Look for currency nodes in open directives
                 for child in node.children(&mut node_cursor) {
                     if child.kind() == "currency" {
-                        let commodity = text_for_tree_sitter_node(content, &child);
-                        commodities_set.insert(commodity);
+                        let commodity = text_for_tree_sitter_node(content, &child)
+                            .trim()
+                            .to_string();
+                        if !commodity.is_empty() {
+                            *commodities_count.entry(commodity).or_insert(0) += 1;
+                        }
                     }
                 }
             });
 
-        // Get commodities from commodity directives
+        // Get commodities from commodity directives (count once per directive)
         let mut cursor = tree.root_node().walk();
         tree.root_node()
             .children(&mut cursor)
@@ -192,13 +195,17 @@ impl BeancountData {
                 let mut node_cursor = node.walk();
                 for child in node.children(&mut node_cursor) {
                     if child.kind() == "currency" {
-                        let commodity = text_for_tree_sitter_node(content, &child);
-                        commodities_set.insert(commodity);
+                        let commodity = text_for_tree_sitter_node(content, &child)
+                            .trim()
+                            .to_string();
+                        if !commodity.is_empty() {
+                            *commodities_count.entry(commodity).or_insert(0) += 1;
+                        }
                     }
                 }
             });
 
-        // Get commodities from transaction postings (currency nodes)
+        // Get commodities from transaction postings (count each usage)
         let query_string = r#"
         (currency) @currency
         "#;
@@ -209,13 +216,22 @@ impl BeancountData {
         let mut matches = cursor_qry.matches(&query, tree.root_node(), binding.as_bytes());
         while let Some(m) = matches.next() {
             for capture in m.captures {
-                let commodity = text_for_tree_sitter_node(content, &capture.node);
-                commodities_set.insert(commodity);
+                let commodity = text_for_tree_sitter_node(content, &capture.node)
+                    .trim()
+                    .to_string();
+                if !commodity.is_empty() {
+                    *commodities_count.entry(commodity).or_insert(0) += 1;
+                }
             }
         }
 
-        let mut commodities: Vec<String> = commodities_set.into_iter().collect();
-        commodities.sort();
+        // Convert to vec and sort by frequency (most used first), then alphabetically
+        let mut commodities: Vec<(String, usize)> = commodities_count.into_iter().collect();
+        commodities.sort_by(|a, b| {
+            // First sort by count (descending), then by name (ascending)
+            b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+        });
+        let commodities: Vec<String> = commodities.into_iter().map(|(name, _)| name).collect();
 
         Self {
             accounts,
