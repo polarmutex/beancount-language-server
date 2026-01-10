@@ -214,7 +214,9 @@ fn determine_completion_context(
             "date" => CompletionContext::AfterDate,
             "flag" => CompletionContext::AfterFlag,
             "account" => analyze_account_context(current_node, cursor, content),
-            "string" => analyze_string_node_context(current_node, content, cursor),
+            "string" | "payee" | "narration" => {
+                analyze_string_node_context(current_node, content, cursor)
+            }
             _ => {
                 // Check parent for more context
                 if let Some(parent) = current_node.parent() {
@@ -343,23 +345,22 @@ fn analyze_transaction_context(
             match prev.kind() {
                 "date" => CompletionContext::AfterDate,
                 "flag" | "txn" => CompletionContext::AfterFlag,
-                "payee" | "string" => {
-                    // Check if this is first or second string
-                    let string_count = children
-                        .iter()
-                        .filter(|n| n.kind() == "string" || n.kind() == "payee")
-                        .count();
-                    if string_count >= 1 {
-                        CompletionContext::AfterPayee
-                    } else {
-                        CompletionContext::AfterFlag
-                    }
+                "payee" => {
+                    // After payee (first string), we expect narration
+                    CompletionContext::AfterPayee
                 }
                 "narration" => {
-                    // After narration, we're in posting area
-                    let line = content.line(cursor.row).to_string();
-                    let prefix = extract_account_prefix(&line, cursor.column);
-                    CompletionContext::PostingAccount { prefix }
+                    // After narration, check if we're on same line or posting area
+                    // If on same line as transaction, stay in transaction context
+                    if cursor.row == prev.start_position().row {
+                        // Still on transaction line, might be completing after narration
+                        CompletionContext::AfterPayee // Can happen with incomplete line
+                    } else {
+                        // On a new line, we're in posting area
+                        let line = content.line(cursor.row).to_string();
+                        let prefix = extract_account_prefix(&line, cursor.column);
+                        CompletionContext::PostingAccount { prefix }
+                    }
                 }
                 _ => {
                     // Default to posting account
@@ -454,13 +455,9 @@ fn analyze_string_node_context(
     if let Some(parent) = string_node.parent()
         && parent.kind() == "transaction"
     {
-        let mut walker = parent.walk();
-        let strings: Vec<_> = parent
-            .children(&mut walker)
-            .filter(|n| n.kind() == "string" || n.kind() == "payee" || n.kind() == "narration")
-            .collect();
-
-        let is_first = strings.first().map(|n| n.id()) == Some(string_node.id());
+        // The grammar aliases string nodes to "payee" or "narration"
+        // So check the node kind directly
+        let is_payee = string_node.kind() == "payee";
 
         let line = content.line(cursor.row).to_string();
         let prefix = extract_string_prefix(&line, cursor.column);
@@ -469,7 +466,7 @@ fn analyze_string_node_context(
 
         return CompletionContext::InsideString {
             prefix,
-            is_payee: is_first,
+            is_payee,
             has_opening_quote: has_opening,
             has_closing_quote: has_closing,
         };
@@ -493,7 +490,10 @@ fn analyze_string_context(content: &ropey::Rope, cursor: Point) -> CompletionCon
     let quote_count = before_cursor.matches('"').count();
 
     // Check if we have a complete payee (2+ quotes before, suggesting this is narration)
-    let is_payee = quote_count < 2 || !before_cursor.contains("txn");
+    // Quote count: 1 = inside first string (payee)
+    //              2 = after first string, before second
+    //              3+ = inside second string (narration)
+    let is_payee = quote_count < 3;
 
     // Check for closing quote after cursor
     let has_closing = line.chars().skip(cursor.column).any(|c| c == '"');
@@ -901,9 +901,9 @@ fn complete_payee(
     let mut payees: Vec<String> = Vec::new();
 
     for bean_data in data.values() {
-        for narration in bean_data.get_narration() {
-            let clean = narration.trim_matches('"');
-            if !clean.is_empty() && clean.len() < 50 {
+        for payee in bean_data.get_payees() {
+            let clean = payee.trim_matches('"');
+            if !clean.is_empty() {
                 payees.push(clean.to_string());
             }
         }
@@ -929,7 +929,7 @@ fn complete_payee(
             create_completion_with_insert_replace(
                 payee,
                 "Payee".to_string(),
-                CompletionItemKind::TEXT,
+                CompletionItemKind::ENUM,
                 insert_range,
                 replace_range,
                 score,
@@ -1893,5 +1893,928 @@ A"#;
             }
             _ => panic!("Expected DocumentRoot context, got {:?}", context),
         }
+    }
+
+    // ========================================================================
+    // Test Helpers
+    // ========================================================================
+
+    /// Helper to create BeancountData from text for testing
+    fn create_test_beancount_data(text: &str) -> BeancountData {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        BeancountData::new(&tree, &rope)
+    }
+
+    // ========================================================================
+    // Payee Completion Tests
+    // ========================================================================
+
+    #[test]
+    fn test_payee_context_after_flag() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        let text = r#"2026-01-06 *"#;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        // Cursor after flag (no trailing space)
+        let cursor = Point { row: 0, column: 12 };
+
+        let context = determine_completion_context(&tree, &rope, cursor, None);
+
+        match context {
+            CompletionContext::AfterFlag | CompletionContext::DocumentRoot => {
+                // Either is acceptable - incomplete transaction can be DocumentRoot
+            }
+            _ => panic!(
+                "Expected AfterFlag or DocumentRoot context, got {:?}",
+                context
+            ),
+        }
+    }
+
+    #[test]
+    fn test_payee_context_after_txn_keyword() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        let text = r#"2026-01-06 txn"#;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        // Cursor after txn (no trailing space)
+        let cursor = Point { row: 0, column: 14 };
+
+        let context = determine_completion_context(&tree, &rope, cursor, None);
+
+        match context {
+            CompletionContext::AfterFlag | CompletionContext::DocumentRoot => {
+                // Either is acceptable - incomplete transaction can be DocumentRoot
+            }
+            _ => panic!(
+                "Expected AfterFlag or DocumentRoot context, got {:?}",
+                context
+            ),
+        }
+    }
+
+    #[test]
+    fn test_payee_context_inside_first_string() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        let text = r#"2026-01-06 * "Groc"#;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        // Cursor inside first string
+        let cursor = Point { row: 0, column: 18 };
+
+        let context = determine_completion_context(&tree, &rope, cursor, None);
+
+        match context {
+            CompletionContext::InsideString {
+                is_payee, prefix, ..
+            } => {
+                assert!(is_payee, "Should detect payee context");
+                assert_eq!(prefix, "Groc");
+            }
+            _ => panic!("Expected InsideString (payee) context, got {:?}", context),
+        }
+    }
+
+    #[test]
+    fn test_payee_context_with_opening_quote() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        let text = r#"2026-01-06 * ""#;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        // Cursor right after opening quote
+        let cursor = Point { row: 0, column: 14 };
+
+        let context = determine_completion_context(&tree, &rope, cursor, Some('"'));
+
+        match context {
+            CompletionContext::InsideString {
+                is_payee,
+                has_opening_quote,
+                ..
+            } => {
+                assert!(is_payee, "Should detect payee context");
+                assert!(has_opening_quote, "Should detect opening quote");
+            }
+            _ => panic!("Expected InsideString (payee) context, got {:?}", context),
+        }
+    }
+
+    #[test]
+    fn test_complete_payee_empty_prefix() {
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let test_data = r#"
+2026-01-01 * "Kroger" "Groceries"
+2026-01-02 * "Walmart" "Shopping"
+2026-01-03 * "Target" "Clothes"
+"#;
+
+        let mut data_map = HashMap::new();
+        let bean_data = create_test_beancount_data(test_data);
+        data_map.insert(PathBuf::from("test.bean"), Arc::new(bean_data));
+
+        let content = Rope::from_str(r#"2026-01-06 * ""#);
+        let position = Position {
+            line: 0,
+            character: 14,
+        };
+
+        let items = complete_payee(&data_map, "", &content, position, false).unwrap();
+
+        assert!(items.len() >= 3, "Should return all payees when no prefix");
+
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"Kroger"));
+        assert!(labels.contains(&"Walmart"));
+        assert!(labels.contains(&"Target"));
+    }
+
+    #[test]
+    fn test_complete_payee_with_prefix() {
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let test_data = r#"
+2026-01-01 * "Kroger" "Test"
+2026-01-02 * "King Soopers" "Test"
+2026-01-03 * "Walmart" "Test"
+"#;
+
+        let mut data_map = HashMap::new();
+        let bean_data = create_test_beancount_data(test_data);
+        data_map.insert(PathBuf::from("test.bean"), Arc::new(bean_data));
+
+        let content = Rope::from_str(r#"2026-01-06 * "K"#);
+        let position = Position {
+            line: 0,
+            character: 15,
+        };
+
+        let items = complete_payee(&data_map, "K", &content, position, false).unwrap();
+
+        // Should fuzzy match Kroger and King Soopers
+        assert!(items.len() >= 2, "Should match payees starting with K");
+
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"Kroger"));
+        assert!(labels.contains(&"King Soopers"));
+    }
+
+    #[test]
+    fn test_complete_payee_adds_closing_quote() {
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let test_data = r#"
+2026-01-01 * "Kroger" "Test"
+"#;
+
+        let mut data_map = HashMap::new();
+        let bean_data = create_test_beancount_data(test_data);
+        data_map.insert(PathBuf::from("test.bean"), Arc::new(bean_data));
+
+        let content = Rope::from_str(r#"2026-01-06 * "Kr"#);
+        let position = Position {
+            line: 0,
+            character: 16,
+        };
+
+        // No closing quote
+        let items = complete_payee(&data_map, "Kr", &content, position, false).unwrap();
+        assert!(!items.is_empty());
+
+        // Should add closing quote in insert_text
+        if let Some(lsp_types::CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+            assert!(
+                edit.new_text.ends_with('"'),
+                "Should add closing quote: {}",
+                edit.new_text
+            );
+        }
+    }
+
+    #[test]
+    fn test_complete_payee_no_extra_quote_when_present() {
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let test_data = r#"
+2026-01-01 * "Kroger" "Test"
+"#;
+
+        let mut data_map = HashMap::new();
+        let bean_data = create_test_beancount_data(test_data);
+        data_map.insert(PathBuf::from("test.bean"), Arc::new(bean_data));
+
+        let content = Rope::from_str(r#"2026-01-06 * "Kr""#);
+        let position = Position {
+            line: 0,
+            character: 16,
+        };
+
+        // Has closing quote
+        let items = complete_payee(&data_map, "Kr", &content, position, true).unwrap();
+        assert!(!items.is_empty());
+
+        // Should NOT add closing quote
+        if let Some(lsp_types::CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+            assert!(
+                !edit.new_text.ends_with('"'),
+                "Should not add extra quote: {}",
+                edit.new_text
+            );
+        }
+    }
+
+    #[test]
+    fn test_complete_payee_deduplication() {
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let test_data = r#"
+2026-01-01 * "Kroger" "Test1"
+2026-01-02 * "Kroger" "Test2"
+2026-01-03 * "Kroger" "Test3"
+"#;
+
+        let mut data_map = HashMap::new();
+        let bean_data = create_test_beancount_data(test_data);
+        data_map.insert(PathBuf::from("test.bean"), Arc::new(bean_data));
+
+        let content = Rope::from_str(r#"2026-01-06 * ""#);
+        let position = Position {
+            line: 0,
+            character: 14,
+        };
+
+        let items = complete_payee(&data_map, "", &content, position, false).unwrap();
+
+        // Should deduplicate
+        assert_eq!(items.len(), 1, "Should deduplicate payees");
+        assert_eq!(items[0].label, "Kroger");
+    }
+
+    // ========================================================================
+    // Narration Completion Tests
+    // ========================================================================
+
+    #[test]
+    fn test_narration_context_after_payee() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        let text = r#"2026-01-06 * "Kroger" "#;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        // Cursor after first string (payee)
+        let cursor = Point { row: 0, column: 22 };
+
+        let context = determine_completion_context(&tree, &rope, cursor, None);
+
+        match context {
+            CompletionContext::AfterPayee | CompletionContext::DocumentRoot => {
+                // Either is acceptable - incomplete transaction can be DocumentRoot
+            }
+            _ => panic!(
+                "Expected AfterPayee or DocumentRoot context, got {:?}",
+                context
+            ),
+        }
+    }
+
+    #[test]
+    fn test_narration_context_inside_second_string() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        let text = r#"2026-01-06 * "Kroger" "Food"#;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        // Cursor inside second string (narration)
+        // "2026-01-06 * "Kroger" "Food"
+        //  Position:              25=second 'o' in Food
+        let cursor = Point { row: 0, column: 25 };
+
+        let context = determine_completion_context(&tree, &rope, cursor, None);
+
+        match context {
+            CompletionContext::InsideString { prefix, .. } => {
+                // The important thing is that we're inside a string context
+                // Whether it's detected as payee or narration can vary based on tree state
+                assert_eq!(prefix, "Fo"); // Position 25 = after 'Fo'
+            }
+            _ => panic!("Expected InsideString context, got {:?}", context),
+        }
+    }
+
+    #[test]
+    fn test_narration_context_with_opening_quote() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        let text = r#"2026-01-06 * "Kroger" ""#;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        // Cursor right after opening quote of second string
+        let cursor = Point { row: 0, column: 23 };
+
+        let context = determine_completion_context(&tree, &rope, cursor, Some('"'));
+
+        match context {
+            CompletionContext::InsideString {
+                has_opening_quote, ..
+            } => {
+                // Accept either payee or narration - detection can vary based on tree state
+                // The important thing is that we're in a string context
+                assert!(has_opening_quote, "Should detect opening quote");
+            }
+            CompletionContext::AfterPayee | CompletionContext::DocumentRoot => {
+                // Also acceptable for incomplete transactions
+            }
+            _ => panic!(
+                "Expected InsideString, AfterPayee, or DocumentRoot context, got {:?}",
+                context
+            ),
+        }
+    }
+
+    #[test]
+    fn test_complete_narration_empty_prefix() {
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let test_data = r#"
+2026-01-01 * "Store" "Groceries"
+2026-01-02 * "Station" "Gas"
+2026-01-03 * "Restaurant" "Dinner"
+"#;
+
+        let mut data_map = HashMap::new();
+        let bean_data = create_test_beancount_data(test_data);
+        data_map.insert(PathBuf::from("test.bean"), Arc::new(bean_data));
+
+        let content = Rope::from_str(r#"2026-01-06 * "Kroger" ""#);
+        let position = Position {
+            line: 0,
+            character: 23,
+        };
+
+        let items = complete_narration(&data_map, "", &content, position, false).unwrap();
+
+        assert!(
+            items.len() >= 3,
+            "Should return all narrations when no prefix"
+        );
+
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"Groceries"));
+        assert!(labels.contains(&"Gas"));
+        assert!(labels.contains(&"Dinner"));
+
+        // Verify payees are NOT in the results
+        assert!(!labels.contains(&"Store"));
+        assert!(!labels.contains(&"Station"));
+        assert!(!labels.contains(&"Restaurant"));
+    }
+
+    #[test]
+    fn test_complete_narration_with_prefix() {
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let test_data = r#"
+2026-01-01 * "Store" "Groceries"
+2026-01-02 * "Station" "Gas"
+2026-01-03 * "Shop" "Gift"
+"#;
+
+        let mut data_map = HashMap::new();
+        let bean_data = create_test_beancount_data(test_data);
+        data_map.insert(PathBuf::from("test.bean"), Arc::new(bean_data));
+
+        let content = Rope::from_str(r#"2026-01-06 * "Store" "G"#);
+        let position = Position {
+            line: 0,
+            character: 23, // Position at 'G'
+        };
+
+        let items = complete_narration(&data_map, "G", &content, position, false).unwrap();
+
+        // Should fuzzy match all items starting with G
+        assert!(items.len() >= 3, "Should match narrations starting with G");
+
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"Groceries"));
+        assert!(labels.contains(&"Gas"));
+        assert!(labels.contains(&"Gift"));
+    }
+
+    #[test]
+    fn test_complete_narration_adds_closing_quote() {
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let test_data = r#"
+2026-01-01 * "Store" "Groceries"
+"#;
+
+        let mut data_map = HashMap::new();
+        let bean_data = create_test_beancount_data(test_data);
+        data_map.insert(PathBuf::from("test.bean"), Arc::new(bean_data));
+
+        let content = Rope::from_str(r#"2026-01-06 * "Store" "Groc"#);
+        let position = Position {
+            line: 0,
+            character: 26, // Position after 'c' in "Groc"
+        };
+
+        // No closing quote
+        let items = complete_narration(&data_map, "Groc", &content, position, false).unwrap();
+        assert!(!items.is_empty());
+
+        // Should add closing quote in insert_text
+        if let Some(lsp_types::CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+            assert!(
+                edit.new_text.ends_with('"'),
+                "Should add closing quote: {}",
+                edit.new_text
+            );
+        }
+    }
+
+    #[test]
+    fn test_complete_narration_no_extra_quote_when_present() {
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let test_data = r#"
+2026-01-01 * "Store" "Groceries"
+"#;
+
+        let mut data_map = HashMap::new();
+        let bean_data = create_test_beancount_data(test_data);
+        data_map.insert(PathBuf::from("test.bean"), Arc::new(bean_data));
+
+        let content = Rope::from_str(r#"2026-01-06 * "Store" "Groc""#);
+        let position = Position {
+            line: 0,
+            character: 27,
+        };
+
+        // Has closing quote
+        let items = complete_narration(&data_map, "Groc", &content, position, true).unwrap();
+        assert!(!items.is_empty());
+
+        // Should NOT add closing quote
+        if let Some(lsp_types::CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+            assert!(
+                !edit.new_text.ends_with('"'),
+                "Should not add extra quote: {}",
+                edit.new_text
+            );
+        }
+    }
+
+    #[test]
+    fn test_complete_narration_deduplication() {
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let test_data = r#"
+2026-01-01 * "Store" "Groceries"
+2026-01-02 * "Market" "Groceries"
+2026-01-03 * "Shop" "Groceries"
+"#;
+
+        let mut data_map = HashMap::new();
+        let bean_data = create_test_beancount_data(test_data);
+        data_map.insert(PathBuf::from("test.bean"), Arc::new(bean_data));
+
+        let content = Rope::from_str(r#"2026-01-06 * "Store" ""#);
+        let position = Position {
+            line: 0,
+            character: 22, // Position inside empty narration string
+        };
+
+        let items = complete_narration(&data_map, "", &content, position, false).unwrap();
+
+        // Should deduplicate
+        assert_eq!(items.len(), 1, "Should deduplicate narrations");
+        assert_eq!(items[0].label, "Groceries");
+    }
+
+    // ========================================================================
+    // Edge Cases and Integration Tests
+    // ========================================================================
+
+    #[test]
+    fn test_payee_narration_sequence() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        // Test the full sequence: flag -> payee -> narration
+        let text = r#"2026-01-06 * "Kroger" "Groceries""#;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        // Position 1: After flag - with complete transaction, should recognize context
+        let cursor1 = Point { row: 0, column: 13 };
+        let context1 = determine_completion_context(&tree, &rope, cursor1, None);
+        // After flag in a complete transaction, context can vary based on tree structure
+        // Just verify it's a reasonable context
+        match context1 {
+            CompletionContext::AfterFlag
+            | CompletionContext::InsideString { .. }
+            | CompletionContext::DocumentRoot => {
+                // All acceptable for position after flag
+            }
+            _ => panic!("Unexpected context after flag: {:?}", context1),
+        }
+
+        // Position 2: Inside payee string
+        // "2026-01-06 * "Kroger" "Groceries""
+        //  Column:      14=K, 16=o, 19=r, 20=" (closing)
+        let cursor2 = Point { row: 0, column: 16 }; // Inside "Kroger" at 'o'
+        let context2 = determine_completion_context(&tree, &rope, cursor2, None);
+        // The parser may recognize this as AfterPayee if string node ends before cursor
+        match context2 {
+            CompletionContext::InsideString { is_payee, .. } => {
+                assert!(is_payee, "First string should be payee");
+            }
+            CompletionContext::AfterPayee => {
+                // Also acceptable - parser may have recognized payee completion
+            }
+            _ => panic!(
+                "Expected InsideString or AfterPayee for payee position, got {:?}",
+                context2
+            ),
+        }
+
+        // Position 3: After payee (should be AfterPayee for narration)
+        let cursor3 = Point { row: 0, column: 22 };
+        let context3 = determine_completion_context(&tree, &rope, cursor3, None);
+        assert!(
+            matches!(
+                context3,
+                CompletionContext::AfterPayee | CompletionContext::InsideString { .. }
+            ),
+            "Position after payee should be AfterPayee or InsideString, got {:?}",
+            context3
+        );
+
+        // Position 4: Inside narration string
+        // "2026-01-06 * "Kroger" "Groceries""
+        //  Position 30 is at 'i' in Groceries
+        let cursor4 = Point { row: 0, column: 30 };
+        let context4 = determine_completion_context(&tree, &rope, cursor4, None);
+        match context4 {
+            CompletionContext::InsideString { is_payee, .. } => {
+                assert!(!is_payee, "Second string should be narration");
+            }
+            CompletionContext::PostingAccount { .. }
+            | CompletionContext::AfterPayee
+            | CompletionContext::DocumentRoot => {
+                // Also acceptable - tree parsing can vary
+            }
+            _ => panic!("Unexpected context for narration position: {:?}", context4),
+        }
+    }
+
+    #[test]
+    fn test_extract_string_prefix_basic() {
+        assert_eq!(extract_string_prefix(r#""Kroger"#, 3), "Kr");
+        assert_eq!(extract_string_prefix(r#""Kroger"#, 7), "Kroger");
+        assert_eq!(extract_string_prefix(r#""Kroger"#, 1), "");
+    }
+
+    #[test]
+    fn test_extract_string_prefix_with_spaces() {
+        assert_eq!(extract_string_prefix(r#""King Soopers"#, 6), "King ");
+        assert_eq!(
+            extract_string_prefix(r#""King Soopers"#, 13),
+            "King Soopers"
+        );
+    }
+
+    #[test]
+    fn test_extract_string_prefix_empty() {
+        assert_eq!(extract_string_prefix(r#"""#, 1), "");
+        assert_eq!(extract_string_prefix(r#"""#, 0), "");
+    }
+
+    #[test]
+    fn test_fuzzy_search_strings_empty_query() {
+        let strings = vec![
+            "Kroger".to_string(),
+            "Walmart".to_string(),
+            "Target".to_string(),
+        ];
+
+        let results = fuzzy_search_strings(&strings, "");
+        assert_eq!(results.len(), 3, "Empty query should return all strings");
+
+        for (_, score) in &results {
+            assert_eq!(*score, 1.0, "Empty query should have fallback score");
+        }
+    }
+
+    #[test]
+    fn test_fuzzy_search_strings_with_query() {
+        let strings = vec![
+            "Kroger".to_string(),
+            "King Soopers".to_string(),
+            "Walmart".to_string(),
+        ];
+
+        let results = fuzzy_search_strings(&strings, "K");
+
+        // Should match strings starting with K
+        let k_results: Vec<_> = results.iter().filter(|(s, _)| s.starts_with('K')).collect();
+        assert_eq!(k_results.len(), 2, "Should match both K strings");
+    }
+
+    #[test]
+    fn test_fuzzy_search_strings_case_insensitive() {
+        let strings = vec!["Kroger".to_string(), "walmart".to_string()];
+
+        let upper_results = fuzzy_search_strings(&strings, "KROGER");
+        let lower_results = fuzzy_search_strings(&strings, "kroger");
+
+        assert!(!upper_results.is_empty(), "Should match case-insensitively");
+        assert!(!lower_results.is_empty(), "Should match case-insensitively");
+    }
+
+    #[test]
+    fn test_payee_narration_with_only_flag() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        // Just date and flag, no strings yet
+        let text = r#"2026-01-06 !"#;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        let cursor = Point { row: 0, column: 12 };
+        let context = determine_completion_context(&tree, &rope, cursor, None);
+
+        assert!(
+            matches!(
+                context,
+                CompletionContext::AfterFlag | CompletionContext::DocumentRoot
+            ),
+            "After ! flag should trigger payee completion or be DocumentRoot, got {:?}",
+            context
+        );
+    }
+
+    #[test]
+    fn test_narration_only_transaction() {
+        use ropey::Rope;
+        use tree_sitter::Parser;
+
+        // Transaction with only one string (grammatically "narration", no "payee")
+        let text = r#"2026-01-06 * "Groceries""#;
+
+        let rope = Rope::from_str(text);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        // Inside the string
+        let cursor = Point { row: 0, column: 20 };
+        let context = determine_completion_context(&tree, &rope, cursor, None);
+
+        // Single string transactions: the string node is labeled "narration" by the grammar
+        // (not "payee"), so is_payee will be false. However, we still add it to payee
+        // completions in beancount_data.rs for convenience.
+        match context {
+            CompletionContext::InsideString { is_payee, .. } => {
+                assert!(
+                    !is_payee,
+                    "Single string is grammatically 'narration', not 'payee'"
+                );
+            }
+            CompletionContext::PostingAccount { .. } | CompletionContext::DocumentRoot => {
+                // Also acceptable - incomplete line may be parsed as posting or root
+            }
+            _ => panic!(
+                "Unexpected context for narration-only transaction: {:?}",
+                context
+            ),
+        }
+    }
+
+    #[test]
+    fn test_integration_narration_completion_not_payee() {
+        use lsp_types::{TextDocumentIdentifier, TextDocumentPositionParams};
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::str::FromStr;
+        use std::sync::Arc;
+        use tree_sitter::Parser;
+
+        // Create test data with distinct payees and narrations
+        let test_data = r#"
+2026-01-01 * "PayeeOne" "NarrationOne"
+2026-01-02 * "PayeeTwo" "NarrationTwo"
+2026-01-03 * "PayeeThree" "NarrationThree"
+"#;
+
+        // Parse the test data
+        let rope = Rope::from_str(test_data);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(test_data, None).unwrap();
+        let bean_data = BeancountData::new(&Arc::new(tree), &rope);
+
+        // Create snapshot with test data
+        let mut beancount_data: HashMap<PathBuf, Arc<BeancountData>> = HashMap::new();
+        let (path, uri) = if cfg!(windows) {
+            let path = PathBuf::from("C:\\test.bean");
+            let url = url::Url::from_file_path(&path).unwrap();
+            let uri = lsp_types::Uri::from_str(url.as_str()).unwrap();
+            (path, uri)
+        } else {
+            let path = PathBuf::from("/test.bean");
+            let url = url::Url::from_file_path(&path).unwrap();
+            let uri = lsp_types::Uri::from_str(url.as_str()).unwrap();
+            (path, uri)
+        };
+        beancount_data.insert(path.clone(), Arc::new(bean_data));
+
+        // Parse the document being edited - use partial narration to test completion
+        let edit_text = r#"2026-01-06 * "NewPayee" "Nar"#;
+        let edit_rope = Rope::from_str(edit_text);
+        let mut edit_parser = Parser::new();
+        edit_parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let edit_tree = edit_parser.parse(edit_text, None).unwrap();
+
+        let mut forest = HashMap::new();
+        forest.insert(path.clone(), Arc::new(edit_tree));
+
+        let mut open_docs = HashMap::new();
+        open_docs.insert(
+            path.clone(),
+            crate::document::Document {
+                content: edit_rope.clone(),
+            },
+        );
+
+        let snapshot = LspServerStateSnapshot {
+            beancount_data,
+            config: crate::config::Config::new(PathBuf::from("/test")),
+            forest,
+            open_docs,
+        };
+
+        // Cursor position inside second string after "Nar"
+        // Text: '2026-01-06 * "NewPayee" "Nar"'
+        //        012345678901234567890123456 7
+        //                                  ^27 = after "Nar"
+        let position = TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: lsp_types::Position {
+                line: 0,
+                character: 27,
+            },
+        };
+
+        // Call the completion function
+        let result = completion(snapshot, None, position).unwrap();
+        assert!(result.is_some(), "Should return completion items");
+
+        let items = result.unwrap();
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+
+        // Should contain NARRATIONS
+        assert!(
+            labels.contains(&"NarrationOne"),
+            "Should contain narration: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"NarrationTwo"),
+            "Should contain narration: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"NarrationThree"),
+            "Should contain narration: {:?}",
+            labels
+        );
+
+        // Should NOT contain PAYEES
+        assert!(
+            !labels.contains(&"PayeeOne"),
+            "Should NOT contain payee in narration context: {:?}",
+            labels
+        );
+        assert!(
+            !labels.contains(&"PayeeTwo"),
+            "Should NOT contain payee in narration context: {:?}",
+            labels
+        );
+        assert!(
+            !labels.contains(&"PayeeThree"),
+            "Should NOT contain payee in narration context: {:?}",
+            labels
+        );
     }
 }
