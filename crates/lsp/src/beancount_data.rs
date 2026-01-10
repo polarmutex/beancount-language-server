@@ -17,6 +17,7 @@ pub struct FlaggedEntry {
 #[derive(Clone, Debug)]
 pub struct BeancountData {
     accounts: Vec<String>,
+    payees: Vec<String>,
     narration: Vec<String>,
     pub flagged_entries: Vec<FlaggedEntry>,
     tags: Vec<String>,
@@ -27,6 +28,7 @@ pub struct BeancountData {
 impl BeancountData {
     pub fn new(tree: &tree_sitter::Tree, content: &ropey::Rope) -> Self {
         let mut accounts = vec![];
+        let mut payees = vec![];
         let mut narration = vec![];
         let mut flagged_entries = vec![];
 
@@ -55,17 +57,41 @@ impl BeancountData {
             accounts.push(account);
         }
 
-        // Update narration with frequency tracking
-        tracing::debug!("beancount_data:: get narration nodes");
+        // Update payees and narration with frequency tracking
+        tracing::debug!("beancount_data:: get payee and narration nodes");
         let transactions = tree
             .root_node()
             .children(&mut cursor)
             .filter(|c| c.kind() == "transaction")
             .collect::<Vec<_>>();
 
+        let mut payee_count: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         let mut narration_count: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
         for transaction in transactions {
+            // When there's a payee field (two strings), use it
+            if let Some(payee_node) = transaction.child_by_field_name("payee") {
+                let payee_text = text_for_tree_sitter_node(content, &payee_node)
+                    .trim()
+                    .to_string();
+                if !payee_text.is_empty() {
+                    *payee_count.entry(payee_text).or_insert(0) += 1;
+                }
+            }
+            // When there's only narration (one string), also add it to payees
+            // since semantically it often represents the payee
+            else if let Some(narration_node) = transaction.child_by_field_name("narration") {
+                let narration_text = text_for_tree_sitter_node(content, &narration_node)
+                    .trim()
+                    .to_string();
+                if !narration_text.is_empty() {
+                    // Add single-string transactions to payees for completion
+                    *payee_count.entry(narration_text.clone()).or_insert(0) += 1;
+                }
+            }
+
+            // Always collect narration for narration completions
             if let Some(narration_node) = transaction.child_by_field_name("narration") {
                 let narration_text = text_for_tree_sitter_node(content, &narration_node)
                     .trim()
@@ -75,6 +101,14 @@ impl BeancountData {
                 }
             }
         }
+
+        tracing::debug!("beancount_data:: update payees");
+        payees.clear();
+
+        // Sort by frequency (most used first), then alphabetically
+        let mut payee_vec: Vec<(String, usize)> = payee_count.into_iter().collect();
+        payee_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        payees = payee_vec.into_iter().map(|(text, _)| text).collect();
 
         tracing::debug!("beancount_data:: update narration");
         narration.clear();
@@ -235,6 +269,7 @@ impl BeancountData {
 
         Self {
             accounts,
+            payees,
             narration,
             flagged_entries,
             tags,
@@ -245,6 +280,10 @@ impl BeancountData {
 
     pub fn get_accounts(&self) -> Vec<String> {
         self.accounts.clone()
+    }
+
+    pub fn get_payees(&self) -> Vec<String> {
+        self.payees.clone()
     }
 
     pub fn get_narration(&self) -> Vec<String> {
