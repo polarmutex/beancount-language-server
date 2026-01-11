@@ -1,4 +1,5 @@
 use crate::beancount_data::BeancountData;
+use crate::checkers::create_checker;
 use crate::document::Document;
 use crate::providers::diagnostics;
 use crate::server::LspServerState;
@@ -95,22 +96,21 @@ fn process_includes(
                 if parser
                     .set_language(&tree_sitter_beancount::language())
                     .is_ok()
+                    && let Some(tree) = parser.parse(&text, None)
                 {
-                    if let Some(tree) = parser.parse(&text, None) {
-                        let content = ropey::Rope::from_str(&text);
-                        let beancount_data = BeancountData::new(&tree, &content);
+                    let content = ropey::Rope::from_str(&text);
+                    let beancount_data = BeancountData::new(&tree, &content);
 
-                        // Add to state
-                        state.forest.insert(path.clone(), Arc::new(tree));
-                        state
-                            .beancount_data
-                            .insert(path.clone(), Arc::new(beancount_data));
+                    // Add to state
+                    state.forest.insert(path.clone(), Arc::new(tree));
+                    state
+                        .beancount_data
+                        .insert(path.clone(), Arc::new(beancount_data));
 
-                        debug!("Processed included file: {:?}", path);
+                    debug!("Processed included file: {:?}", path);
 
-                        // Recursively process includes in this file
-                        process_includes(state, &path, processed)?;
-                    }
+                    // Recursively process includes in this file
+                    process_includes(state, &path, processed)?;
                 }
             }
         }
@@ -283,7 +283,22 @@ fn handle_diagnostics(
     uri: lsp_types::Uri,
 ) -> Result<()> {
     tracing::debug!("text_document::handle_diagnostics");
-    let bean_check_cmd = &PathBuf::from("bean-check");
+
+    // Create the appropriate checker based on configuration
+    tracing::debug!(
+        "Bean check configuration: method={:?}, bean_check_cmd={}, python_cmd={}, python_script={}",
+        snapshot.config.bean_check.method,
+        snapshot.config.bean_check.bean_check_cmd.display(),
+        snapshot.config.bean_check.python_cmd.display(),
+        snapshot.config.bean_check.python_script_path.display()
+    );
+
+    let checker = create_checker(&snapshot.config.bean_check);
+    tracing::debug!(
+        "Using checker: {}, available: {}",
+        checker.name(),
+        checker.is_available()
+    );
 
     sender
         .send(Task::Progress(ProgressMsg::BeanCheck { done: 0, total: 1 }))
@@ -296,8 +311,11 @@ fn handle_diagnostics(
         uri.to_file_path().unwrap_or_default()
     };
 
-    let diags =
-        diagnostics::diagnostics(snapshot.beancount_data, bean_check_cmd, &root_journal_path);
+    let diags = diagnostics::diagnostics(
+        snapshot.beancount_data,
+        checker.as_ref(),
+        &root_journal_path,
+    );
 
     sender
         .send(Task::Progress(ProgressMsg::BeanCheck { done: 1, total: 1 }))
@@ -314,22 +332,10 @@ fn handle_diagnostics(
                 method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
                 params: to_json(lsp_types::PublishDiagnosticsParams {
                     uri: {
-                        // Handle cross-platform file URI creation
-                        let file_path_str = file.to_str().unwrap();
-                        let uri_str = if cfg!(windows)
-                            && file_path_str.len() > 1
-                            && file_path_str.chars().nth(1) == Some(':')
-                        {
-                            // Windows absolute path like "C:\path"
-                            format!("file:///{}", file_path_str.replace('\\', "/"))
-                        } else if cfg!(windows) && file_path_str.starts_with('/') {
-                            // Unix-style path on Windows, convert to Windows style
-                            format!("file:///C:{}", file_path_str.replace('\\', "/"))
-                        } else {
-                            // Unix path or other platforms
-                            format!("file://{file_path_str}")
-                        };
-                        lsp_types::Uri::from_str(&uri_str).unwrap()
+                        let url = url::Url::from_file_path(file)
+                            .expect("Failed to convert file path to URI");
+                        lsp_types::Uri::from_str(url.as_str())
+                            .expect("Failed to parse URL as LSP URI")
                     },
                     diagnostics,
                     version: None,

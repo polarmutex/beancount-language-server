@@ -20,21 +20,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Setup | Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup | Rust
-        uses: actions-rs/toolchain@v1.0.7
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
-          override: true
-          profile: minimal
           components: rustfmt
 
       - name: Build | Format
-        uses: actions-rs/cargo@v1
-        with:
-            command: fmt
-            args: -- --check
+        run: cargo fmt -- --check
 
   # Run the `clippy` linting tool
   clippy:
@@ -42,24 +36,55 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Setup | Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup | Cache
-        uses: Swatinem/rust-cache@v2
+        uses: actions/checkout@v6
 
       - name: Setup | Rust
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
-          override: true
-          profile: minimal
           components: clippy
 
       - name: Build | Lint
-        uses: actions-rs/cargo@v1
+        run: cargo clippy --all-targets --all-features
+
+  # Run stable Ubuntu tests (required for auto-merge)
+  test-ubuntu-stable:
+    name: Test Suite (Ubuntu Stable)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup | Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-            command: clippy
-            args: --all-targets --all-features
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Build | Test
+        run: "cargo llvm-cov
+          --all-features
+          --locked
+          --workspace
+          --lcov --output-path lcov.info
+          -- --include-ignored"
+        env:
+          RUST_BACKTRACE: "1"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        if: github.repository == 'polarmutex/beancount-language-server'
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: true
+
+      - name: Install cargo hack
+        uses: taiki-e/install-action@cargo-hack
+
+      - name: run cargo check with all possible feature set
+        run: cargo hack check --feature-powerset
 
   # Run tests on Linux, macOS, and Windows
   # On both Rust stable and Rust nightly
@@ -71,21 +96,21 @@ jobs:
       matrix:
         os: [ubuntu-latest, macOS-latest, windows-latest]
         rust: [stable, nightly]
+        # Exclude ubuntu-stable since we have a dedicated job for it
+        exclude:
+          - os: ubuntu-latest
+            rust: stable
     steps:
       - name: Setup | Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Setup | Cache
-        uses: Swatinem/rust-cache@v2
 
       # Install all the required dependencies for testing
       - name: Setup | Rust
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ matrix.rust }}
           components: llvm-tools-preview
-          profile: minimal
-          override: true
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -120,11 +145,35 @@ jobs:
   documentation:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
-          override: true
-          profile: minimal
       - run: cargo doc --all-features --no-deps --workspace
+
+  # Consolidated job for required checks (used for branch protection)
+  required-checks:
+    name: Required Checks
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - rustfmt
+      - clippy
+      - test-ubuntu-stable
+    steps:
+      - name: Check if all required jobs succeeded
+        run: |
+          if [[ "${{ needs.rustfmt.result }}" != "success" ]]; then
+            echo "rustfmt failed"
+            exit 1
+          fi
+          if [[ "${{ needs.clippy.result }}" != "success" ]]; then
+            echo "clippy failed"
+            exit 1
+          fi
+          if [[ "${{ needs.test-ubuntu-stable.result }}" != "success" ]]; then
+            echo "test-ubuntu-stable failed"
+            exit 1
+          fi
+          echo "All required checks passed!"

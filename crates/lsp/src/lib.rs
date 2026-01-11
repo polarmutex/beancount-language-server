@@ -1,5 +1,6 @@
 mod beancount_data;
 mod capabilities;
+pub mod checkers;
 mod config;
 mod dispatcher;
 pub mod document;
@@ -18,7 +19,7 @@ use crate::server::LspServerState;
 use anyhow::Result;
 use lsp_server::Connection;
 use lsp_types::InitializeParams;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use utils::ToFilePath;
 
 pub fn run_server() -> Result<()> {

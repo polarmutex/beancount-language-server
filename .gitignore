@@ -1,8 +1,12 @@
 .direnv
 coverage
 .DS_Store
+lcov.info
 
 # Added by cargo
 /target
 
 result
+*.py[cod]
+.serena
+beancount-language-server.log

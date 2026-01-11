@@ -3,26 +3,26 @@ import { window } from "vscode";
 
 export const log = new (class {
   private readonly output = window.createOutputChannel(
-    "beancount-language-server"
+    "beancount-language-server",
   );
 
   info(...msg: [unknown, ...unknown[]]): void {
-    log.write("INFO", ...msg);
+    this.write("INFO", ...msg);
   }
 
   debug(...msg: [unknown, ...unknown[]]): void {
-    log.write("DEBUG", ...msg);
+    this.write("DEBUG", ...msg);
   }
 
   error(...msg: [unknown, ...unknown[]]): void {
-    log.write("ERROR", ...msg);
-    log.output.show(true);
+    this.write("ERROR", ...msg);
+    this.output.show(true);
   }
 
   private write(label: string, ...messageParts: unknown[]): void {
-    const message = messageParts.map(log.stringify).join(" ");
+    const message = messageParts.map((part) => this.stringify(part)).join(" ");
     const dateTime = new Date().toLocaleString();
-    log.output.appendLine(`${label} [${dateTime}]: ${message}`);
+    this.output.appendLine(`${label} [${dateTime}]: ${message}`);
   }
 
   private stringify(val: unknown): string {

@@ -1,20 +1,35 @@
 version: 2
 updates:
-  - package-ecosystem: cargo
+  - package-ecosystem: rust-toolchain
     directory: "/"
-    target-branch: "develop"
     schedule:
       interval: monthly
-    open-pull-requests-limit: 10
+    labels:
+      - dependabot
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: monthly
     commit-message:
       prefix: "chore:"
     labels:
       - dependabot
+  - package-ecosystem: npm
+    directory: "/vscode"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "chore:"
+    labels:
+      - dependabot
+    ignore:
+      # vscode doesn't use latest node
+      - dependency-name: "@types/node"
+      # should match the version of `engines.vscode`
+      - dependency-name: "@types/vscode"
   - package-ecosystem: github-actions
     directory: "/"
-    target-branch: "develop"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
+      interval: monthly
     labels:
       - dependabot

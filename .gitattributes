@@ -1,0 +1,2 @@
+# Mark cargo-dist generated files as generated
+.github/workflows/release.yml linguist-generated=true

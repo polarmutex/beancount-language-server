@@ -1,5 +1,4 @@
 use crate::treesitter_utils::text_for_tree_sitter_node;
-use std::collections::HashSet;
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::tree_sitter;
 
@@ -18,15 +17,18 @@ pub struct FlaggedEntry {
 #[derive(Clone, Debug)]
 pub struct BeancountData {
     accounts: Vec<String>,
+    payees: Vec<String>,
     narration: Vec<String>,
     pub flagged_entries: Vec<FlaggedEntry>,
     tags: Vec<String>,
     links: Vec<String>,
+    commodities: Vec<String>,
 }
 
 impl BeancountData {
     pub fn new(tree: &tree_sitter::Tree, content: &ropey::Rope) -> Self {
         let mut accounts = vec![];
+        let mut payees = vec![];
         let mut narration = vec![];
         let mut flagged_entries = vec![];
 
@@ -55,35 +57,66 @@ impl BeancountData {
             accounts.push(account);
         }
 
-        // Update account opens
-        tracing::debug!("beancount_data:: get narration nodes");
-        tracing::debug!("beancount_data:: get account strings");
+        // Update payees and narration with frequency tracking
+        tracing::debug!("beancount_data:: get payee and narration nodes");
         let transactions = tree
             .root_node()
             .children(&mut cursor)
             .filter(|c| c.kind() == "transaction")
             .collect::<Vec<_>>();
 
-        //TODO: consider doing something silimar with others around
-        let mut txn_string_strings: HashSet<String> = HashSet::new();
+        let mut payee_count: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut narration_count: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for transaction in transactions {
-            if let Some(narration) = transaction.child_by_field_name("narration") {
-                txn_string_strings.insert(
-                    text_for_tree_sitter_node(content, &narration)
-                        .trim()
-                        .to_string(),
-                );
+            // When there's a payee field (two strings), use it
+            if let Some(payee_node) = transaction.child_by_field_name("payee") {
+                let payee_text = text_for_tree_sitter_node(content, &payee_node)
+                    .trim()
+                    .to_string();
+                if !payee_text.is_empty() {
+                    *payee_count.entry(payee_text).or_insert(0) += 1;
+                }
+            }
+            // When there's only narration (one string), also add it to payees
+            // since semantically it often represents the payee
+            else if let Some(narration_node) = transaction.child_by_field_name("narration") {
+                let narration_text = text_for_tree_sitter_node(content, &narration_node)
+                    .trim()
+                    .to_string();
+                if !narration_text.is_empty() {
+                    // Add single-string transactions to payees for completion
+                    *payee_count.entry(narration_text.clone()).or_insert(0) += 1;
+                }
+            }
+
+            // Always collect narration for narration completions
+            if let Some(narration_node) = transaction.child_by_field_name("narration") {
+                let narration_text = text_for_tree_sitter_node(content, &narration_node)
+                    .trim()
+                    .to_string();
+                if !narration_text.is_empty() {
+                    *narration_count.entry(narration_text).or_insert(0) += 1;
+                }
             }
         }
+
+        tracing::debug!("beancount_data:: update payees");
+        payees.clear();
+
+        // Sort by frequency (most used first), then alphabetically
+        let mut payee_vec: Vec<(String, usize)> = payee_count.into_iter().collect();
+        payee_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        payees = payee_vec.into_iter().map(|(text, _)| text).collect();
 
         tracing::debug!("beancount_data:: update narration");
         narration.clear();
 
-        for txn_string in txn_string_strings {
-            if !narration.contains(&txn_string) {
-                narration.push(txn_string);
-            }
-        }
+        // Sort by frequency (most used first), then alphabetically
+        let mut narration_vec: Vec<(String, usize)> = narration_count.into_iter().collect();
+        narration_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        narration = narration_vec.into_iter().map(|(text, _)| text).collect();
 
         // Update flagged entries
         tracing::debug!("beancount_data:: update flagged entries");
@@ -162,17 +195,95 @@ impl BeancountData {
         links.sort();
         links.dedup();
 
+        // Update commodities with usage frequency
+        tracing::debug!("beancount_data:: get commodities");
+        let mut commodities_count: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+
+        // Get commodities from open directives (count once per directive)
+        let mut cursor = tree.root_node().walk();
+        tree.root_node()
+            .children(&mut cursor)
+            .filter(|c| c.kind() == "open")
+            .for_each(|node| {
+                let mut node_cursor = node.walk();
+                // Look for currency nodes in open directives
+                for child in node.children(&mut node_cursor) {
+                    if child.kind() == "currency" {
+                        let commodity = text_for_tree_sitter_node(content, &child)
+                            .trim()
+                            .to_string();
+                        if !commodity.is_empty() {
+                            *commodities_count.entry(commodity).or_insert(0) += 1;
+                        }
+                    }
+                }
+            });
+
+        // Get commodities from commodity directives (count once per directive)
+        let mut cursor = tree.root_node().walk();
+        tree.root_node()
+            .children(&mut cursor)
+            .filter(|c| c.kind() == "commodity")
+            .for_each(|node| {
+                let mut node_cursor = node.walk();
+                for child in node.children(&mut node_cursor) {
+                    if child.kind() == "currency" {
+                        let commodity = text_for_tree_sitter_node(content, &child)
+                            .trim()
+                            .to_string();
+                        if !commodity.is_empty() {
+                            *commodities_count.entry(commodity).or_insert(0) += 1;
+                        }
+                    }
+                }
+            });
+
+        // Get commodities from transaction postings (count each usage)
+        let query_string = r#"
+        (currency) @currency
+        "#;
+        let query = tree_sitter::Query::new(&tree_sitter_beancount::language(), query_string)
+            .unwrap_or_else(|_| panic!("get_position_by_query invalid query {query_string}"));
+        let mut cursor_qry = tree_sitter::QueryCursor::new();
+        let binding = content.clone().to_string();
+        let mut matches = cursor_qry.matches(&query, tree.root_node(), binding.as_bytes());
+        while let Some(m) = matches.next() {
+            for capture in m.captures {
+                let commodity = text_for_tree_sitter_node(content, &capture.node)
+                    .trim()
+                    .to_string();
+                if !commodity.is_empty() {
+                    *commodities_count.entry(commodity).or_insert(0) += 1;
+                }
+            }
+        }
+
+        // Convert to vec and sort by frequency (most used first), then alphabetically
+        let mut commodities: Vec<(String, usize)> = commodities_count.into_iter().collect();
+        commodities.sort_by(|a, b| {
+            // First sort by count (descending), then by name (ascending)
+            b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+        });
+        let commodities: Vec<String> = commodities.into_iter().map(|(name, _)| name).collect();
+
         Self {
             accounts,
+            payees,
             narration,
             flagged_entries,
             tags,
             links,
+            commodities,
         }
     }
 
     pub fn get_accounts(&self) -> Vec<String> {
         self.accounts.clone()
+    }
+
+    pub fn get_payees(&self) -> Vec<String> {
+        self.payees.clone()
     }
 
     pub fn get_narration(&self) -> Vec<String> {
@@ -185,5 +296,9 @@ impl BeancountData {
 
     pub fn get_links(&self) -> Vec<String> {
         self.links.clone()
+    }
+
+    pub fn get_commodities(&self) -> Vec<String> {
+        self.commodities.clone()
     }
 }

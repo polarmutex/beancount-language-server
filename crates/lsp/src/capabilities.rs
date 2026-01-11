@@ -1,4 +1,8 @@
+use crate::providers::semantic_tokens;
 use lsp_types::RenameOptions;
+use lsp_types::SemanticTokensFullOptions;
+use lsp_types::SemanticTokensOptions;
+use lsp_types::SemanticTokensServerCapabilities;
 use lsp_types::WorkDoneProgressOptions;
 use lsp_types::{
     CompletionOptions, OneOf, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
@@ -11,7 +15,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             TextDocumentSyncOptions {
                 open_close: Some(true),
                 change: Some(TextDocumentSyncKind::INCREMENTAL),
-                will_save: Some(true),
+                will_save: None,
                 will_save_wait_until: Some(true),
                 save: Some(lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
                     lsp_types::SaveOptions {
@@ -38,6 +42,418 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
                 work_done_progress: None,
             },
         })),
+        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+            SemanticTokensOptions {
+                legend: semantic_tokens::legend(),
+                full: Some(SemanticTokensFullOptions::Bool(true)),
+                range: None,
+                ..Default::default()
+            },
+        )),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_text_document_sync_capabilities() {
+        let caps = server_capabilities();
+
+        // Verify text_document_sync is configured
+        let sync = caps
+            .text_document_sync
+            .expect("text_document_sync should be set");
+
+        match sync {
+            TextDocumentSyncCapability::Options(options) => {
+                assert_eq!(
+                    options.open_close,
+                    Some(true),
+                    "open_close should be enabled"
+                );
+                assert_eq!(
+                    options.change,
+                    Some(TextDocumentSyncKind::INCREMENTAL),
+                    "incremental sync should be enabled"
+                );
+                assert!(options.save.is_some(), "save should be configured");
+            }
+            _ => panic!("Expected TextDocumentSyncOptions"),
+        }
+    }
+
+    #[test]
+    fn test_will_save_capabilities() {
+        // will_save is not implemented, but will_save_wait_until is implemented
+        // for automatic format-on-save functionality
+        let caps = server_capabilities();
+
+        let sync = caps
+            .text_document_sync
+            .expect("text_document_sync should be set");
+
+        match sync {
+            TextDocumentSyncCapability::Options(options) => {
+                assert_eq!(
+                    options.will_save, None,
+                    "will_save should be disabled (not implemented)"
+                );
+                assert_eq!(
+                    options.will_save_wait_until,
+                    Some(true),
+                    "will_save_wait_until should be enabled for format-on-save"
+                );
+            }
+            _ => panic!("Expected TextDocumentSyncOptions"),
+        }
+    }
+
+    #[test]
+    fn test_completion_capabilities() {
+        let caps = server_capabilities();
+
+        let completion = caps
+            .completion_provider
+            .expect("completion_provider should be set");
+
+        // Verify trigger characters
+        let triggers = completion
+            .trigger_characters
+            .expect("trigger_characters should be set");
+
+        assert!(
+            triggers.contains(&"2".to_string()),
+            "Should trigger on '2' (dates)"
+        );
+        assert!(
+            triggers.contains(&"\"".to_string()),
+            "Should trigger on '\"' (payees/narration)"
+        );
+        assert!(
+            triggers.contains(&"#".to_string()),
+            "Should trigger on '#' (tags)"
+        );
+        assert!(
+            triggers.contains(&"^".to_string()),
+            "Should trigger on '^' (links)"
+        );
+        assert!(
+            triggers.contains(&":".to_string()),
+            "Should trigger on ':' (accounts)"
+        );
+        assert_eq!(
+            triggers.len(),
+            5,
+            "Should have exactly 5 trigger characters"
+        );
+    }
+
+    #[test]
+    fn test_formatting_capability() {
+        let caps = server_capabilities();
+
+        assert!(
+            caps.document_formatting_provider.is_some(),
+            "document_formatting_provider should be enabled"
+        );
+
+        match caps.document_formatting_provider {
+            Some(OneOf::Left(enabled)) => {
+                assert!(enabled, "formatting should be enabled");
+            }
+            _ => panic!("Expected simple boolean for formatting capability"),
+        }
+    }
+
+    #[test]
+    fn test_references_capability() {
+        let caps = server_capabilities();
+
+        assert!(
+            caps.references_provider.is_some(),
+            "references_provider should be enabled"
+        );
+
+        match caps.references_provider {
+            Some(OneOf::Left(enabled)) => {
+                assert!(enabled, "references should be enabled");
+            }
+            _ => panic!("Expected simple boolean for references capability"),
+        }
+    }
+
+    #[test]
+    fn test_rename_capability() {
+        let caps = server_capabilities();
+
+        let rename = caps.rename_provider.expect("rename_provider should be set");
+
+        match rename {
+            OneOf::Right(options) => {
+                assert_eq!(
+                    options.prepare_provider,
+                    Some(false),
+                    "prepare_provider should be disabled"
+                );
+            }
+            _ => panic!("Expected RenameOptions"),
+        }
+    }
+
+    #[test]
+    fn test_semantic_tokens_capability() {
+        let caps = server_capabilities();
+
+        let semantic = caps
+            .semantic_tokens_provider
+            .expect("semantic_tokens_provider should be set");
+
+        match semantic {
+            SemanticTokensServerCapabilities::SemanticTokensOptions(options) => {
+                // Verify full document semantic tokens is enabled
+                match options.full {
+                    Some(SemanticTokensFullOptions::Bool(enabled)) => {
+                        assert!(enabled, "full semantic tokens should be enabled");
+                    }
+                    _ => panic!("Expected boolean for full semantic tokens"),
+                }
+
+                // Verify range is not supported
+                assert_eq!(
+                    options.range, None,
+                    "range semantic tokens should be disabled"
+                );
+
+                // Verify legend is properly configured
+                let legend = options.legend;
+                assert!(
+                    !legend.token_types.is_empty(),
+                    "token_types should not be empty"
+                );
+            }
+            _ => panic!("Expected SemanticTokensOptions"),
+        }
+    }
+
+    #[test]
+    fn test_capabilities_match_implemented_features() {
+        // This test documents which capabilities are advertised
+        // and serves as a regression test to ensure we don't advertise
+        // capabilities without implementing handlers
+        let caps = server_capabilities();
+
+        // Implemented capabilities (have handlers in server.rs)
+        assert!(
+            caps.text_document_sync.is_some(),
+            "text_document_sync is implemented"
+        );
+        assert!(
+            caps.completion_provider.is_some(),
+            "completion is implemented"
+        );
+        assert!(
+            caps.document_formatting_provider.is_some(),
+            "formatting is implemented"
+        );
+        assert!(
+            caps.references_provider.is_some(),
+            "references is implemented"
+        );
+        assert!(caps.rename_provider.is_some(), "rename is implemented");
+        assert!(
+            caps.semantic_tokens_provider.is_some(),
+            "semantic_tokens is implemented"
+        );
+
+        // Verify NOT implemented capabilities are disabled
+        assert_eq!(caps.hover_provider, None, "hover is not implemented");
+        assert_eq!(
+            caps.definition_provider, None,
+            "definition is not implemented"
+        );
+        assert_eq!(
+            caps.type_definition_provider, None,
+            "type_definition is not implemented"
+        );
+        assert_eq!(
+            caps.implementation_provider, None,
+            "implementation is not implemented"
+        );
+        assert_eq!(
+            caps.document_symbol_provider, None,
+            "document_symbol is not implemented"
+        );
+        assert_eq!(
+            caps.workspace_symbol_provider, None,
+            "workspace_symbol is not implemented"
+        );
+        assert_eq!(
+            caps.code_action_provider, None,
+            "code_action is not implemented"
+        );
+        assert_eq!(
+            caps.code_lens_provider, None,
+            "code_lens is not implemented"
+        );
+        assert_eq!(
+            caps.document_link_provider, None,
+            "document_link is not implemented"
+        );
+        assert_eq!(
+            caps.folding_range_provider, None,
+            "folding_range is not implemented"
+        );
+    }
+
+    #[test]
+    fn test_semantic_tokens_legend() {
+        // Verify the semantic tokens legend is properly structured
+        let legend = semantic_tokens::legend();
+
+        // Basic sanity checks
+        assert!(
+            !legend.token_types.is_empty(),
+            "Legend should have token types"
+        );
+
+        // Verify token types are unique
+        let mut seen = std::collections::HashSet::new();
+        for token_type in &legend.token_types {
+            assert!(
+                seen.insert(token_type.as_str()),
+                "Duplicate token type: {}",
+                token_type.as_str()
+            );
+        }
+
+        // Verify token modifiers are unique (currently empty, but check anyway)
+        let mut seen = std::collections::HashSet::new();
+        for modifier in &legend.token_modifiers {
+            assert!(
+                seen.insert(modifier.as_str()),
+                "Duplicate token modifier: {}",
+                modifier.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn test_advertised_capabilities_have_handlers() {
+        // This test verifies that for each capability we advertise,
+        // there exists a corresponding handler function with the correct signature.
+        // This is a compile-time check that prevents advertising capabilities
+        // without implementing them (like the willSaveWaitUntil bug in issue #741).
+
+        use crate::handlers;
+        use crate::server::LspServerStateSnapshot;
+
+        // Get the advertised capabilities
+        let caps = server_capabilities();
+
+        // Completion capability -> handlers::text_document::completion
+        if caps.completion_provider.is_some() {
+            // Verify the handler function exists and has the correct signature
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::CompletionParams,
+            ) -> anyhow::Result<Option<lsp_types::CompletionResponse>> =
+                handlers::text_document::completion;
+        }
+
+        // Formatting capability -> handlers::text_document::formatting
+        if caps.document_formatting_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::DocumentFormattingParams,
+            ) -> anyhow::Result<Option<Vec<lsp_types::TextEdit>>> =
+                handlers::text_document::formatting;
+        }
+
+        // References capability -> handlers::text_document::handle_references
+        if caps.references_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::ReferenceParams,
+            ) -> anyhow::Result<Option<Vec<lsp_types::Location>>> =
+                handlers::text_document::handle_references;
+        }
+
+        // Rename capability -> handlers::text_document::handle_rename
+        if caps.rename_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::RenameParams,
+            ) -> anyhow::Result<Option<lsp_types::WorkspaceEdit>> =
+                handlers::text_document::handle_rename;
+        }
+
+        // Semantic tokens capability -> handlers::text_document::semantic_tokens_full
+        if caps.semantic_tokens_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::SemanticTokensParams,
+            )
+                -> anyhow::Result<Option<lsp_types::SemanticTokensResult>> =
+                handlers::text_document::semantic_tokens_full;
+        }
+
+        // Text document sync notifications (these don't return responses)
+        if let Some(TextDocumentSyncCapability::Options(sync_options)) = &caps.text_document_sync {
+            // did_open handler
+            if sync_options.open_close == Some(true) {
+                let _handler: fn(
+                    &mut crate::server::LspServerState,
+                    lsp_types::DidOpenTextDocumentParams,
+                ) -> anyhow::Result<()> = handlers::text_document::did_open;
+            }
+
+            // did_close handler
+            if sync_options.open_close == Some(true) {
+                let _handler: fn(
+                    &mut crate::server::LspServerState,
+                    lsp_types::DidCloseTextDocumentParams,
+                ) -> anyhow::Result<()> = handlers::text_document::did_close;
+            }
+
+            // did_change handler
+            if sync_options.change.is_some() {
+                let _handler: fn(
+                    &mut crate::server::LspServerState,
+                    lsp_types::DidChangeTextDocumentParams,
+                ) -> anyhow::Result<()> = handlers::text_document::did_change;
+            }
+
+            // did_save handler
+            if sync_options.save.is_some() {
+                let _handler: fn(
+                    &mut crate::server::LspServerState,
+                    lsp_types::DidSaveTextDocumentParams,
+                ) -> anyhow::Result<()> = handlers::text_document::did_save;
+            }
+
+            // will_save_wait_until handler for format-on-save
+            if sync_options.will_save_wait_until == Some(true) {
+                let _handler: fn(
+                    LspServerStateSnapshot,
+                    lsp_types::WillSaveTextDocumentParams,
+                )
+                    -> anyhow::Result<Option<Vec<lsp_types::TextEdit>>> =
+                    handlers::text_document::will_save_wait_until;
+            }
+
+            // will_save is not implemented
+            assert_eq!(
+                sync_options.will_save, None,
+                "will_save should not be advertised without a handler implementation"
+            );
+        }
+
+        // This test will fail to compile if:
+        // 1. A capability is advertised but the handler function doesn't exist
+        // 2. A handler function exists but has the wrong signature
+        // 3. A handler is imported from the wrong module
     }
 }

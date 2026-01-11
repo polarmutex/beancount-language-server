@@ -3,8 +3,8 @@ use crate::server::LspServerState;
 use crate::server::LspServerStateSnapshot;
 use crate::server::Task;
 use anyhow::Result;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 fn result_to_response<R>(
     id: lsp_server::RequestId,
@@ -174,10 +174,10 @@ impl<'a> NotificationDispatcher<'a> {
 
     /// Wraps-up the dispatcher. If the notification was not handled, log an error.
     pub fn finish(&mut self) {
-        if let Some(notification) = &self.notification {
-            if !notification.method.starts_with("$/") {
-                tracing::error!("unhandled notification: {:?}", notification);
-            }
+        if let Some(notification) = &self.notification
+            && !notification.method.starts_with("$/")
+        {
+            tracing::error!("unhandled notification: {:?}", notification);
         }
     }
 }

@@ -12,7 +12,6 @@ documentation = "https://docs.rs/beancount-language-server"
 keywords = ["beancount", "lsp", "language-server", "accounting", "finance"]
 categories = ["development-tools", "text-editors"]
 description = "A Language Server Protocol implementation for Beancount, providing rich editing features like completions, diagnostics, and formatting"
-publish = false
 
 [dependencies]
 # Core functionality
@@ -28,10 +27,12 @@ threadpool = "1.8"
 
 # Text processing and parsing
 ropey.workspace = true
-tree-sitter-beancount = "2.4.1"
+tree-sitter-beancount = "2.4.2"
 # tree-sitter-beancount = { git = "https://github.com/polarmutex/tree-sitter-beancount.git", branch = "devel" }
 regex.workspace = true
 nucleo = "0.5"
+strum = "0.27.2"
+strum_macros = "0.27.2"
 
 # Serialization and configuration
 serde.workspace = true
@@ -39,16 +40,19 @@ serde_json.workspace = true
 
 # Utilities
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 itertools = "0.14"
 shellexpand = "3.1"
 glob = "0.3"
-url = "2.0"
+url = "2.5"
 
 # Data structures
 dashmap = "6.1"
-bytes = "1.10"
+bytes = "1.11"
 linked-list = "0.1"
+
+# Python integration (optional)
+pyo3 = { version = "0.27", features = ["auto-initialize"], optional = true }
 
 # Logging
 tracing-subscriber = { version = "0.3", default-features = false, features = [
@@ -71,3 +75,7 @@ dist = true
 
 [package.metadata.release]
 tag = true
+
+[features]
+default = []
+python-embedded = ["pyo3"]

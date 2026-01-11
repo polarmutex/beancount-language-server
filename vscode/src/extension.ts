@@ -1,4 +1,5 @@
-import { exec } from "child_process";
+import * as fs from "fs";
+import * as path from "path";
 import * as vscode from "vscode";
 import {
   Executable,
@@ -7,29 +8,24 @@ import {
   ServerOptions,
 } from "vscode-languageclient/node";
 
-import { PersistentState } from "./persistent_state";
-import * as util from "./util";
-
-//import { SemanticTokensProvider, buildLegend } from "./semantic_tokens";
+import { log } from "./util";
 
 let client: LanguageClient;
 
 export async function activate(
-  context: vscode.ExtensionContext
+  context: vscode.ExtensionContext,
 ): Promise<void> {
-  const state = new PersistentState(context.globalState);
-  //TODO needeed? if (server_path.startsWith("~/")) {
-  //  server_path = os.homedir() + server_path.slice("~".length);
-  //}
-  const server_path = await get_server_path(context, state);
+  const server_path = await get_server_path(context);
   if (!server_path) {
     await vscode.window.showErrorMessage(
       "The beancount-language-server extension doesn't ship with prebuilt binaries for your platform yet. " +
         "You can still use it by cloning the polarmutex/beancount-language-server repo from GitHub to build the LSP " +
-        "yourself and use it with this extension with the beancount-language-server.server_path setting"
+        "yourself and use it with this extension with the beancountLangServer.serverPath setting",
     );
     return;
   }
+
+  log.info("use lsp executable", server_path);
 
   const server_executable: Executable = {
     command: server_path,
@@ -41,38 +37,38 @@ export async function activate(
   };
 
   const config = vscode.workspace.getConfiguration("beancountLangServer");
+
+  // Build initialization options - only include journal_file if it's valid and non-empty
+  const initializationOptions: { journal_file?: string; formatting?: unknown } =
+    {
+      formatting: config.get("formatting"),
+    };
+
+  const journalFile = config.get<string>("journalFile");
+  if (journalFile && journalFile.trim() !== "") {
+    initializationOptions.journal_file = journalFile;
+  }
+
   const client_options: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "beancount" }],
-    //synchronize: {
-    //  // Notify the server about file changes to '.clientrc files contained in the workspace
-    //  fileEvents: vscode.workspace.createFileSystemWatcher("**/.beancount"),
-    //},
-    initializationOptions: {
-      journal_file: config.get("journalFile"),
+    synchronize: {
+      //  // Notify the server about file changes to '.clientrc files contained in the workspace
+      fileEvents: vscode.workspace.createFileSystemWatcher(
+        "**/.{bean,beancount}",
+      ),
     },
+    initializationOptions,
   };
 
   client = new LanguageClient(
     "beancount-language-server",
     "Beancount Language Server",
     server_options,
-    client_options
+    client_options,
   );
 
   // Start the client. This will also launch the server
-  client.start();
-
-  //const legend = buildLegend();
-  //const tokenProvider = new SemanticTokensProvider(legend);
-  //await tokenProvider.ast.init();
-
-  //context.subscriptions.push(
-  //  vscode.languages.registerDocumentSemanticTokensProvider(
-  //    { language: "beancount" },
-  //    tokenProvider,
-  //    legend
-  //  )
-  //);
+  await client.start();
 }
 
 export function deactivate(): Thenable<void> | undefined {
@@ -98,75 +94,17 @@ const PLATFORM_TRIPLETS: PlatformTriplets = {
   },
 };
 
-async function isNixOs(): Promise<boolean> {
-  try {
-    const contents = (
-      await vscode.workspace.fs.readFile(vscode.Uri.file("/etc/os-release"))
-    ).toString();
-    const idString =
-      contents.split("\n").find((a) => a.startsWith("ID=")) || "ID=linux";
-    return idString.indexOf("nixos") !== -1;
-  } catch {
-    return false;
-  }
-}
-
-async function patchelf(dest: vscode.Uri): Promise<void> {
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: "Patching beancount-language-server for NixOS",
-    },
-    async (progress, _) => {
-      const expression = `
-            {srcStr, pkgs ? import <nixpkgs> {}}:
-                pkgs.stdenv.mkDerivation {
-                    name = "beancount-language-server";
-                    src = /. + srcStr;
-                    phases = [ "installPhase" "fixupPhase" ];
-                    installPhase = "cp $src $out";
-                    fixupPhase = ''
-                    chmod 755 $out
-                    patchelf --set-interpreter "$(cat $NIX_CC/nix-support/dynamic-linker)" $out
-                    '';
-                }
-            `;
-      const origFile = vscode.Uri.file(dest.fsPath + "-orig");
-      await vscode.workspace.fs.rename(dest, origFile, { overwrite: true });
-      try {
-        progress.report({ message: "Patching executable", increment: 20 });
-        await new Promise((resolve, reject) => {
-          const handle = exec(
-            `nix-build -E - --argstr srcStr '${origFile.fsPath}' -o '${dest.fsPath}'`,
-            (err, stdout, stderr) => {
-              if (err != null) {
-                reject(Error(stderr));
-              } else {
-                resolve(stdout);
-              }
-            }
-          );
-          handle.stdin?.write(expression);
-          handle.stdin?.end();
-        });
-      } finally {
-        await vscode.workspace.fs.delete(origFile);
-      }
-    }
-  );
-}
-
 async function get_server_path(
   context: vscode.ExtensionContext,
-  state: PersistentState
 ): Promise<string | undefined> {
   const config = vscode.workspace.getConfiguration("beancountLangServer");
-  const explicitPath = ""; //config.get("beancountLangServer.server_path");
-  //if (typeof explicitPath === "string" && explicitPath !== "") {
-  //    return explicitPath;
-  //}
+  const explicitPath = config.get("serverPath");
+  if (typeof explicitPath === "string" && explicitPath !== "") {
+    return explicitPath;
+  }
 
-  const triplet = PLATFORM_TRIPLETS[process.platform]?.[process.arch];
+  const triplet =
+    PLATFORM_TRIPLETS[process.platform]?.[process.arch as Architecture];
   if (!triplet) {
     return undefined;
   }
@@ -177,35 +115,39 @@ async function get_server_path(
   const bundlePath = vscode.Uri.joinPath(
     context.extensionUri,
     "server",
-    binaryName
+    triplet,
+    binaryName,
   );
   const bundleExists = await vscode.workspace.fs.stat(bundlePath).then(
     () => true,
-    () => false
+    () => false,
   );
 
-  //if (bundleExists) {
-  //  let server = bundlePath;
-  //  if (await isNixOs()) {
-  //    await vscode.workspace.fs.createDirectory(config.globalStorageUri).then();
-  //    const dest = vscode.Uri.joinPath(config.globalStorageUri, binaryName);
-  //    let exists = await vscode.workspace.fs.stat(dest).then(
-  //      () => true,
-  //      () => false
-  //    );
-  //    if (exists && config.package.version !== state.serverVersion) {
-  //      await vscode.workspace.fs.delete(dest);
-  //      exists = false;
-  //    }
-  //    if (!exists) {
-  //      await vscode.workspace.fs.copy(bundlePath, dest);
-  //      await patchelf(dest);
-  //    }
-  //    server = dest;
-  //  }
-  //await state.updateServerVersion(config.package.version);
-  //return server.fsPath;
-  //}
+  if (bundleExists) {
+    return bundlePath.fsPath;
+  }
 
-  return bundleExists ? bundlePath.fsPath : undefined;
+  const onPath = await find_on_path(binaryName);
+  return onPath ?? undefined;
+}
+
+async function find_on_path(binaryName: string): Promise<string | null> {
+  const candidates = process.env.PATH?.split(path.delimiter) ?? [];
+  const names =
+    process.platform === "win32"
+      ? [binaryName, `${binaryName}.exe`]
+      : [binaryName];
+
+  for (const dir of candidates) {
+    for (const name of names) {
+      const full = path.join(dir, name);
+      try {
+        await fs.promises.access(full, fs.constants.X_OK);
+        return full;
+      } catch (_) {
+        // continue searching
+      }
+    }
+  }
+  return null;
 }

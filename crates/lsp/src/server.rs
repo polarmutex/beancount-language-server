@@ -134,36 +134,47 @@ impl LspServerState {
 
             // Check if exists
             if !journal_root.exists() {
-                tracing::error!("Journal root does not exist: {}", journal_root.display());
-                return Err(anyhow::anyhow!(
-                    "Journal root does not exist: {}",
-                    journal_root.display()
-                ));
-            }
+                let error_msg = format!("Journal root does not exist: {}", journal_root.display());
+                tracing::error!("{}", error_msg);
 
-            tracing::info!(
-                "Initializing forest for journal root: {}",
-                journal_root.display()
-            );
-            let snapshot = self.snapshot();
-            let sender = self.task_sender.clone();
-            self.thread_pool.execute(move || {
-                match forest::parse_initial_forest(snapshot, journal_root, sender) {
-                    Ok(_) => tracing::info!("Forest initialization completed successfully"),
-                    Err(e) => tracing::error!("Forest initialization failed: {}", e),
-                }
-            });
+                // Send error message to client
+                self.send_notification::<lsp_types::notification::ShowMessage>(
+                    lsp_types::ShowMessageParams {
+                        typ: lsp_types::MessageType::ERROR,
+                        message: error_msg.clone(),
+                    },
+                );
+
+                // Log warning and continue without forest initialization instead of returning error
+                // This allows the language server to continue functioning for open documents
+                tracing::warn!(
+                    "Continuing without forest initialization due to invalid journal root"
+                );
+            } else {
+                tracing::info!(
+                    "Initializing forest for journal root: {}",
+                    journal_root.display()
+                );
+                let snapshot = self.snapshot();
+                let sender = self.task_sender.clone();
+                self.thread_pool.execute(move || {
+                    match forest::parse_initial_forest(snapshot, journal_root, sender) {
+                        Ok(_) => tracing::info!("Forest initialization completed successfully"),
+                        Err(e) => tracing::error!("Forest initialization failed: {}", e),
+                    }
+                });
+            }
         } else {
             tracing::warn!("No journal_root configured, skipping forest initialization");
         }
 
         tracing::debug!("Entering main event loop");
         while let Some(event) = self.next_event(&receiver) {
-            if let Event::Lsp(lsp_server::Message::Notification(notification)) = &event {
-                if notification.method == lsp_types::notification::Exit::METHOD {
-                    tracing::info!("Received exit notification, shutting down");
-                    return Ok(());
-                }
+            if let Event::Lsp(lsp_server::Message::Notification(notification)) = &event
+                && notification.method == lsp_types::notification::Exit::METHOD
+            {
+                tracing::info!("Received exit notification, shutting down");
+                return Ok(());
             }
             self.handle_event(event)?;
         }
@@ -303,8 +314,14 @@ impl LspServerState {
             })?
             .on::<lsp_types::request::Completion>(handlers::text_document::completion)?
             .on::<lsp_types::request::Formatting>(handlers::text_document::formatting)?
+            .on::<lsp_types::request::WillSaveWaitUntil>(
+                handlers::text_document::will_save_wait_until,
+            )?
             .on::<lsp_types::request::Rename>(handlers::text_document::handle_rename)?
             .on::<lsp_types::request::References>(handlers::text_document::handle_references)?
+            .on::<lsp_types::request::SemanticTokensFullRequest>(
+                handlers::text_document::semantic_tokens_full,
+            )?
             .finish();
         Ok(())
     }
@@ -425,143 +442,3 @@ impl LspServerState {
         }
     }
 }
-
-/*
-pub fn capabilities() -> lsp_types::ServerCapabilities {
-    let text_document_sync = {
-        let options = lsp_types::TextDocumentSyncOptions {
-            open_close: Some(true),
-            change: Some(lsp_types::TextDocumentSyncKind::INCREMENTAL),
-            will_save: Some(true),
-            will_save_wait_until: Some(false),
-            save: Some(lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
-                lsp_types::SaveOptions {
-                    include_text: Some(true),
-                },
-            )),
-        };
-        Some(lsp_types::TextDocumentSyncCapability::Options(options))
-    };
-    let completion_provider = {
-        let options = lsp_types::CompletionOptions {
-            resolve_provider: Some(false),
-            trigger_characters: Some(vec![
-                "2".to_string(),
-                ":".to_string(),
-                "#".to_string(),
-                "\"".to_string(),
-            ]),
-            ..Default::default()
-        };
-        Some(options)
-    };
-
-    let document_formatting_provider = { Some(lsp_types::OneOf::Left(true)) };
-
-    lsp_types::ServerCapabilities {
-        text_document_sync,
-        completion_provider,
-        document_formatting_provider,
-        ..Default::default()
-    }
-}*/
-
-/*
-#[tower_lsp::async_trait]
-impl LanguageServer for LspServer {
-    async fn initialize(
-        &self,
-        params: lsp_types::InitializeParams,
-    ) -> jsonrpc::Result<lsp_types::InitializeResult> {
-        self.client
-            .log_message(
-                lsp_types::MessageType::ERROR,
-                "Beancount Server initializing",
-            )
-            .await;
-
-        *self.session.client_capabilities.write().await = Some(params.capabilities);
-        let capabilities = capabilities();
-
-        let beancount_lsp_settings: BeancountLspOptions =
-            if let Some(json) = params.initialization_options {
-                serde_json::from_value(json).unwrap()
-            } else {
-                BeancountLspOptions {
-                    journal_file: String::from(""),
-                }?
-            };
-        // TODO need error if it does not exist
-        *self.session.root_journal_path.write().await =
-            Some(PathBuf::from(beancount_lsp_settings.journal_file.clone()));
-
-        Ok(lsp_types::InitializeResult {
-            capabilities,
-            ..lsp_types::InitializeResult::default()
-        })
-    }
-
-    async fn initialized(&self, _: lsp_types::InitializedParams) {
-        if self.session.root_journal_path.read().await.is_some() {
-            forest::parse_initial_forest(
-                &self.session,
-                lsp_types::Url::from_file_path(
-                    self.session.root_journal_path.read().await.clone().unwrap(),
-                )
-                .unwrap(),
-            )
-            .await
-            .unwrap();
-        }
-    }
-
-    async fn shutdown(&self) -> jsonrpc::Result<()> {
-        Ok(())
-    }
-
-    async fn did_open(&self, params: lsp_types::DidOpenTextDocumentParams) {
-        handlers::text_document::did_open(&self.session, params)
-            .await
-            .unwrap()
-    }
-
-    async fn did_save(&self, params: lsp_types::DidSaveTextDocumentParams) {
-        handlers::text_document::did_save(&self.session, params)
-            .await
-            .unwrap()
-    }
-
-    async fn did_change(&self, params: lsp_types::DidChangeTextDocumentParams) {
-        handlers::text_document::did_change(&self.session, params)
-            .await
-            .unwrap()
-    }
-
-    async fn did_close(&self, params: lsp_types::DidCloseTextDocumentParams) {
-        handlers::text_document::did_close(&self.session, params)
-            .await
-            .unwrap()
-    }
-
-    async fn completion(
-        &self,
-        params: lsp_types::CompletionParams,
-    ) -> jsonrpc::Result<Option<lsp_types::CompletionResponse>> {
-        let result = handlers::text_document::completion(&self.session, params).await;
-        Ok(result.map_err(error::IntoJsonRpcError)?)
-    }
-
-    async fn formatting(
-        &self,
-        params: lsp_types::DocumentFormattingParams,
-    ) -> jsonrpc::Result<Option<Vec<lsp_types::TextEdit>>> {
-        let result = handlers::text_document::formatting(&self.session, params).await;
-        Ok(result.map_err(error::IntoJsonRpcError)?)
-    }
-}
-
-pub async fn run_server(stdin: Stdin, stdout: Stdout) {
-    let (service, messages) = LspService::build(LspServer::new).finish();
-    Server::new(stdin, stdout, messages).serve(service).await;
-}
-*/

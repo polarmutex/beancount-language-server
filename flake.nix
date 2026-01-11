@@ -15,10 +15,6 @@
       url = "github:rustsec/advisory-db";
       flake = false;
     };
-    cargo-dist-src = {
-      url = "github:axodotdev/cargo-dist/v0.28.1";
-      flake = false;
-    };
   };
 
   outputs = inputs @ {
@@ -28,7 +24,6 @@
     flake-parts,
     rust-overlay,
     advisory-db,
-    cargo-dist-src,
     ...
   }:
     flake-parts.lib.mkFlake {inherit inputs;} {
@@ -53,7 +48,18 @@
         };
         inherit (pkgs) lib;
 
-        craneLib = (crane.mkLib pkgs).overrideToolchain (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml);
+        # Use latest stable Rust instead of pinning to specific version
+        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+          extensions = ["rust-src" "rust-analyzer" "llvm-tools-preview"];
+          targets = [
+            "aarch64-apple-darwin"
+            "aarch64-pc-windows-msvc"
+            "aarch64-unknown-linux-gnu"
+            "x86_64-pc-windows-msvc"
+            "x86_64-unknown-linux-gnu"
+          ];
+        };
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
         src = craneLib.cleanCargoSource ./.;
 
@@ -120,6 +126,77 @@
         packages = {
           inherit beancount-language-server;
           default = beancount-language-server;
+
+          # VSCode extension VSIX package
+          beancount-vscode-vsix = let
+            vscodeWithLicense = pkgs.runCommand "vscode-src" {} ''
+              cp -r ${./vscode} $out
+              chmod -R +w $out
+              rm -f $out/LICENSE
+              cp ${./LICENSE} $out/LICENSE
+            '';
+          in pkgs.stdenv.mkDerivation rec {
+            pname = "beancount-vscode-vsix";
+            version = (builtins.fromJSON (builtins.readFile ./vscode/package.json)).version;
+
+            src = vscodeWithLicense;
+
+            nativeBuildInputs = with pkgs; [
+              nodejs
+              pnpm
+              pnpmConfigHook
+            ];
+
+            pnpmDeps = pkgs.fetchPnpmDeps {
+              inherit pname version src;
+              hash = "sha256-n0qfM51winZCu2kv9pqJmQE4OVKl4+DFC/2wgJ/hYZs=";
+              fetcherVersion = 3; # lockfileVersion 9.0 uses fetcher v3
+            };
+
+            buildPhase = ''
+              runHook preBuild
+
+              # Create server directory with the locally built binary
+              # Map Nix system to rust triplet for VSCode extension compatibility
+              triplet=""
+              case "${system}" in
+                x86_64-linux) triplet="x86_64-unknown-linux-gnu" ;;
+                aarch64-linux) triplet="aarch64-unknown-linux-gnu" ;;
+                x86_64-darwin) triplet="x86_64-apple-darwin" ;;
+                aarch64-darwin) triplet="aarch64-apple-darwin" ;;
+                *) echo "Unsupported system: ${system}"; exit 1 ;;
+              esac
+
+              mkdir -p server/$triplet
+              cp ${beancount-language-server}/bin/beancount-language-server server/$triplet/
+              chmod +x server/$triplet/beancount-language-server
+
+              # Build the extension (compiles TypeScript)
+              pnpm run build-base
+
+              # Package the VSIX
+              mkdir -p dist
+              pnpm exec vsce package --no-dependencies -o dist/beancount-language-server-${system}.vsix
+
+              runHook postBuild
+            '';
+
+            installPhase = ''
+              runHook preInstall
+
+              mkdir -p $out
+              cp dist/*.vsix $out/
+
+              runHook postInstall
+            '';
+
+            meta = with lib; {
+              description = "Beancount language server VSCode extension";
+              homepage = "https://github.com/polarmutex/beancount-language-server";
+              license = licenses.mit;
+              platforms = platforms.all;
+            };
+          };
         };
 
         devShells.default = craneLib.devShell {
@@ -130,15 +207,14 @@
           packages = with pkgs;
             [
               git-cliff
+              cargo-edit
               beancount
-              (pkgs.cargo-dist.overrideAttrs (oldAttrs: {
-                version = "0.28.1";
-                src = cargo-dist-src;
-                cargoDeps = pkgs.rustPlatform.importCargoLock {
-                  lockFile = "${cargo-dist-src}/Cargo.lock";
-                };
-              }))
-              (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+              cargo-llvm-cov
+              cargo-hack
+              just
+              rustToolchain
+              nodejs
+              nodePackages.pnpm
             ]
             ++ lib.optionals stdenv.isLinux [systemd];
 
