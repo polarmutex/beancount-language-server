@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.0] - 2026-01-11
+
+### Bug Fixes
+
+- Properly URL-encode file paths when creating URIs (#723)
+- Filter out dupes on payee in complete list
+- For complets date support text edit to replace text before it
+- Payee and narration bugs
+
+### Features
+
+- Rewrite completion handler to support LSP 3.17 textedit
+- Complete commodities
+
 ## [1.6.0] - 2026-01-06
 
 ### Features
