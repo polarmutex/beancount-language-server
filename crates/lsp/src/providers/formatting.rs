@@ -17,6 +17,8 @@ struct FormatableLine {
     number: String,
     /// Rest of the line after the number (currency, comments, etc.)
     rest: String,
+    /// Full text content of the line
+    full_line: String,
 }
 
 /// Configuration for formatting calculations
@@ -295,6 +297,7 @@ fn extract_line_components(
         prefix: prefix_text,
         number: number_text,
         rest: rest_text,
+        full_line,
     })
 }
 
@@ -354,8 +357,10 @@ fn generate_currency_column_edits(
             line.rest.trim_start()
         );
 
-        if let Some(edit) = create_line_replacement_edit(line.line_num, &target_line, doc) {
-            text_edits.push(edit);
+        if line.full_line != target_line {
+            if let Some(edit) = create_line_replacement_edit(line.line_num, &target_line, doc) {
+                text_edits.push(edit);
+            }
         }
     }
 
