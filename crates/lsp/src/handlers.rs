@@ -13,7 +13,7 @@ pub mod text_document {
         state: &mut LspServerState,
         params: lsp_types::DidOpenTextDocumentParams,
     ) -> Result<()> {
-        tracing::info!("Document opened: {}", params.text_document.uri.as_str());
+        tracing::trace!("Document opened: {}", params.text_document.uri.as_str());
         tracing::debug!(
             "Document language: {}, version: {}",
             params.text_document.language_id,
@@ -27,7 +27,7 @@ pub mod text_document {
         state: &mut LspServerState,
         params: lsp_types::DidSaveTextDocumentParams,
     ) -> Result<()> {
-        tracing::info!("Document saved: {}", params.text_document.uri.as_str());
+        tracing::trace!("Document saved: {}", params.text_document.uri.as_str());
         text_document::did_save(state, params)
     }
 
@@ -36,7 +36,7 @@ pub mod text_document {
         state: &mut LspServerState,
         params: lsp_types::DidCloseTextDocumentParams,
     ) -> Result<()> {
-        tracing::info!("Document closed: {}", params.text_document.uri.as_str());
+        tracing::trace!("Document closed: {}", params.text_document.uri.as_str());
         text_document::did_close(state, params)
     }
 
@@ -95,7 +95,7 @@ pub mod text_document {
 
         match completion::completion(snapshot, trigger_char, params.text_document_position) {
             Ok(Some(items)) => {
-                tracing::info!("Completion returned {} items", items.len());
+                tracing::trace!("Completion returned {} items", items.len());
                 // Return CompletionList instead of Array to signal that server-side
                 // filtering is preferred. Setting `is_incomplete: true` tells clients
                 // like Zed to re-query on each keystroke rather than filtering internally.
@@ -121,7 +121,7 @@ pub mod text_document {
         snapshot: LspServerStateSnapshot,
         params: lsp_types::DocumentFormattingParams,
     ) -> Result<Option<Vec<lsp_types::TextEdit>>> {
-        tracing::info!(
+        tracing::trace!(
             "Formatting requested for: {}",
             params.text_document.uri.as_str()
         );
@@ -133,7 +133,7 @@ pub mod text_document {
 
         match formatting::formatting(snapshot, params) {
             Ok(Some(edits)) => {
-                tracing::info!("Formatting returned {} text edits", edits.len());
+                tracing::trace!("Formatting returned {} text edits", edits.len());
                 Ok(Some(edits))
             }
             Ok(None) => {
@@ -152,7 +152,7 @@ pub mod text_document {
         snapshot: LspServerStateSnapshot,
         params: lsp_types::WillSaveTextDocumentParams,
     ) -> Result<Option<Vec<lsp_types::TextEdit>>> {
-        tracing::info!(
+        tracing::trace!(
             "WillSaveWaitUntil requested for: {}",
             params.text_document.uri.as_str()
         );
@@ -170,7 +170,7 @@ pub mod text_document {
 
         match formatting::formatting(snapshot, formatting_params) {
             Ok(Some(edits)) => {
-                tracing::info!("WillSaveWaitUntil returned {} text edits", edits.len());
+                tracing::trace!("WillSaveWaitUntil returned {} text edits", edits.len());
                 Ok(Some(edits))
             }
             Ok(None) => {
@@ -188,7 +188,7 @@ pub mod text_document {
         snapshot: LspServerStateSnapshot,
         params: lsp_types::ReferenceParams,
     ) -> Result<Option<Vec<lsp_types::Location>>> {
-        tracing::info!(
+        tracing::trace!(
             "References requested for: {} at {}:{}",
             params.text_document_position.text_document.uri.as_str(),
             params.text_document_position.position.line,
@@ -197,7 +197,7 @@ pub mod text_document {
 
         match references::references(snapshot, params) {
             Ok(Some(locations)) => {
-                tracing::info!("Found {} references", locations.len());
+                tracing::trace!("Found {} references", locations.len());
                 Ok(Some(locations))
             }
             Ok(None) => {
@@ -215,7 +215,7 @@ pub mod text_document {
         snapshot: LspServerStateSnapshot,
         params: lsp_types::RenameParams,
     ) -> Result<Option<lsp_types::WorkspaceEdit>> {
-        tracing::info!(
+        tracing::trace!(
             "Rename requested for: {} at {}:{} to '{}'",
             params.text_document_position.text_document.uri.as_str(),
             params.text_document_position.position.line,
@@ -230,7 +230,7 @@ pub mod text_document {
                     .as_ref()
                     .map(|changes| changes.values().map(|edits| edits.len()).sum::<usize>())
                     .unwrap_or(0);
-                tracing::info!("Rename will make {} text edits", change_count);
+                tracing::trace!("Rename will make {} text edits", change_count);
                 Ok(Some(workspace_edit))
             }
             Ok(None) => {
