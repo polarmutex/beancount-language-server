@@ -366,7 +366,7 @@ impl LspServerState {
                     response.error
                 );
             } else {
-                tracing::info!(
+                tracing::trace!(
                     "Request {} ({}) completed successfully in {:?}",
                     response.id,
                     method,
