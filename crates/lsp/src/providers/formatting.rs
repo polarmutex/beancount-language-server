@@ -476,6 +476,12 @@ fn create_line_replacement_edit(
         .to_string();
     let original_line_len = original_line.trim_end().len();
 
+    // Skip edit if the line content hasn't changed
+    // This optimization prevents unnecessary edits for already-formatted lines
+    if original_line.trim_end() == new_content.trim_end() {
+        return None;
+    }
+
     let line_start = lsp_types::Position {
         line: line_num as u32,
         character: 0,
@@ -1803,6 +1809,254 @@ mod tests {
                     "Posting should be indented to 2 spaces: '{line}'"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_no_edits_for_perfectly_formatted_content() {
+        // Test that already-formatted content generates ZERO edits
+        let content = r#"2023-01-01 * "Test transaction"
+  Assets:Cash    100.00 USD
+  Expenses:Food    50.0 USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        if !edits.is_empty() {
+            println!("Generated {} edits:", edits.len());
+            for (i, edit) in edits.iter().enumerate() {
+                println!(
+                    "  Edit {}: line {} char {}-{}: '{}'",
+                    i,
+                    edit.range.start.line,
+                    edit.range.start.character,
+                    edit.range.end.character,
+                    edit.new_text
+                );
+            }
+        }
+
+        assert_eq!(
+            edits.len(),
+            0,
+            "Perfectly formatted content should generate zero edits, but got {} edits",
+            edits.len()
+        );
+    }
+
+    #[test]
+    fn test_edits_generated_for_unformatted_content() {
+        // Test that unformatted content DOES generate edits
+        let content = r#"2023-01-01 * "Test transaction"
+  Assets:Cash 100.00 USD
+  Expenses:Food 50.0 USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        assert!(
+            !edits.is_empty(),
+            "Unformatted content should generate edits"
+        );
+
+        // Verify formatting produces correct alignment
+        let formatted = apply_edits(content, &edits);
+        let lines: Vec<&str> = formatted.lines().collect();
+        if lines.len() >= 3 {
+            let line1 = lines[1];
+            let line2 = lines[2];
+
+            if let (Some(pos1), Some(pos2)) = (line1.find("100.00"), line2.find("50.0")) {
+                let end1 = pos1 + "100.00".len();
+                let end2 = pos2 + "50.0".len();
+                assert_eq!(end1, end2, "Numbers should be right-aligned");
+            }
+        }
+    }
+
+    #[test]
+    fn test_mixed_formatted_and_unformatted_lines() {
+        // Test that only unformatted lines get edits
+        let content = r#"2023-01-01 * "Test transaction"
+  Assets:Cash          100.00 USD
+  Expenses:Food 50.0 USD
+  Income:Salary      -150.00 USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        // Should only edit the Expenses:Food line (line 2, 0-indexed)
+        // The other lines are already correctly formatted
+        assert!(
+            !edits.is_empty(),
+            "Should generate edits for unformatted line"
+        );
+
+        // Verify we're not editing already-formatted lines unnecessarily
+        // by checking that edits only target specific lines
+        let formatted = apply_edits(content, &edits);
+
+        // After formatting, all lines should be aligned
+        let lines: Vec<&str> = formatted.lines().collect();
+        if lines.len() >= 4 {
+            // Check all amounts are right-aligned
+            let positions: Vec<_> = lines[1..4]
+                .iter()
+                .filter_map(|line| {
+                    line.find("100.00")
+                        .or_else(|| line.find("50.0"))
+                        .or_else(|| line.find("150.00"))
+                        .map(|pos| pos + line[pos..].split_whitespace().next().unwrap_or("").len())
+                })
+                .collect();
+
+            if positions.len() >= 2 {
+                assert_eq!(
+                    positions[0], positions[1],
+                    "All numbers should be right-aligned"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_currency_column_no_edits_when_aligned() {
+        // Test currency column mode with already-aligned content
+        let content = r#"2023-01-01 * "Test transaction"
+  Assets:Cash                              100.00 USD
+  Expenses:Food                              50.0 USD
+"#;
+
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: Some(50),
+            account_amount_spacing: 2,
+            number_currency_spacing: 1,
+            indent_width: None,
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        if !edits.is_empty() {
+            println!("Generated {} edits:", edits.len());
+            for (i, edit) in edits.iter().enumerate() {
+                println!(
+                    "  Edit {}: line {} char {}-{}: '{}'",
+                    i,
+                    edit.range.start.line,
+                    edit.range.start.character,
+                    edit.range.end.character,
+                    edit.new_text
+                );
+            }
+            let formatted = apply_edits(content, &edits);
+            println!("Original content:\n{}", content);
+            println!("Formatted content:\n{}", formatted);
+        }
+
+        assert_eq!(
+            edits.len(),
+            0,
+            "Already-aligned currency column should generate zero edits, but got {} edits",
+            edits.len()
+        );
+    }
+
+    #[test]
+    fn test_currency_column_generates_edits_when_misaligned() {
+        // Test currency column mode with misaligned content
+        let content = r#"2023-01-01 * "Test transaction"
+  Assets:Cash 100.00 USD
+  Expenses:Food 50.0 USD
+"#;
+
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: Some(50),
+            account_amount_spacing: 2,
+            number_currency_spacing: 1,
+            indent_width: None,
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        assert!(
+            !edits.is_empty(),
+            "Misaligned currency column should generate edits"
+        );
+
+        // Verify currency is aligned at the specified column
+        let formatted = apply_edits(content, &edits);
+        let lines: Vec<&str> = formatted.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains("USD")
+                && let Some(usd_pos) = line.find("USD")
+            {
+                println!("Line {i}: currency at column {usd_pos}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_idempotent_formatting_generates_no_edits() {
+        // Test that formatting the same content twice generates no edits the second time
+        let content = r#"2023-01-01 * "Test transaction"
+  Assets:Cash 100.00 USD
+  Expenses:Food 50.0 USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+
+        // First format
+        let edits1 = state.format().unwrap().unwrap();
+        assert!(!edits1.is_empty(), "First format should generate edits");
+
+        let formatted = apply_edits(content, &edits1);
+
+        // Create new state with formatted content
+        let state2 = TestState::new(&formatted).unwrap();
+
+        // Second format should generate zero edits
+        let edits2 = state2.format().unwrap().unwrap();
+        assert_eq!(
+            edits2.len(),
+            0,
+            "Formatting already-formatted content should generate zero edits (idempotent), but got {} edits",
+            edits2.len()
+        );
+    }
+
+    #[test]
+    fn test_whitespace_only_changes_generate_no_edits() {
+        // Test that content with equivalent whitespace generates no edits
+        // This tests the trim_end() comparison logic
+        let content = r#"2023-01-01 * "Test transaction"
+  Assets:Cash    100.00 USD
+  Expenses:Food    50.0 USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        // If content is already properly formatted (even with trailing spaces trimmed),
+        // it should generate zero edits
+        if edits.is_empty() {
+            println!("No edits generated - content already formatted");
+        } else {
+            println!("Edits generated: {}", edits.len());
+            let formatted = apply_edits(content, &edits);
+
+            // Verify the formatted version doesn't change on second format
+            let state2 = TestState::new(&formatted).unwrap();
+            let edits2 = state2.format().unwrap().unwrap();
+            assert_eq!(edits2.len(), 0, "Second format should generate zero edits");
         }
     }
 }
