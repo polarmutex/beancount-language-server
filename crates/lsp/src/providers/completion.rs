@@ -2754,6 +2754,7 @@ A"#;
             path.clone(),
             crate::document::Document {
                 content: edit_rope.clone(),
+                version: 0,
             },
         );
 
