@@ -45,32 +45,17 @@ pub fn run_server() -> Result<()> {
         }
     };
 
-    let server_capabilities = capabilities::server_capabilities();
-    tracing::debug!("Server capabilities configured");
-
-    let initialize_result = lsp_types::InitializeResult {
-        capabilities: server_capabilities,
-        server_info: Some(lsp_types::ServerInfo {
-            name: String::from("beancount-language-server"),
-            version: Some(String::from(env!("CARGO_PKG_VERSION"))),
-        }),
-    };
-
-    let initialize_result = serde_json::to_value(initialize_result).unwrap();
-
-    connection.initialize_finish(request_id, initialize_result)?;
-    tracing::info!("Initialization completed successfully");
-
-    if let Some(client_info) = initialize_params.client_info {
+    if let Some(client_info) = &initialize_params.client_info {
         tracing::info!(
             "Connected to client: '{}' version {}",
             client_info.name,
-            client_info.version.unwrap_or_else(|| "unknown".to_string())
+            client_info.version.as_deref().unwrap_or("unknown")
         );
     } else {
         tracing::warn!("Client did not provide client info");
     }
 
+    // Parse config first so we can conditionally register capabilities
     let config = {
         let root_file = if let Some(workspace_folders) = &initialize_params.workspace_folders {
             let root = workspace_folders
@@ -107,6 +92,22 @@ pub fn run_server() -> Result<()> {
         }
         config
     };
+
+    let server_capabilities = capabilities::server_capabilities();
+    tracing::debug!("Server capabilities configured");
+
+    let initialize_result = lsp_types::InitializeResult {
+        capabilities: server_capabilities,
+        server_info: Some(lsp_types::ServerInfo {
+            name: String::from("beancount-language-server"),
+            version: Some(String::from(env!("CARGO_PKG_VERSION"))),
+        }),
+    };
+
+    let initialize_result = serde_json::to_value(initialize_result).unwrap();
+
+    connection.initialize_finish(request_id, initialize_result)?;
+    tracing::info!("Initialization completed successfully");
 
     tracing::debug!("Starting main loop");
     main_loop(connection, config)?;

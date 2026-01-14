@@ -16,7 +16,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
                 open_close: Some(true),
                 change: Some(TextDocumentSyncKind::INCREMENTAL),
                 will_save: None,
-                will_save_wait_until: Some(true),
+                will_save_wait_until: None,
                 save: Some(lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
                     lsp_types::SaveOptions {
                         include_text: Some(false),
@@ -87,8 +87,8 @@ mod tests {
 
     #[test]
     fn test_will_save_capabilities() {
-        // will_save is not implemented, but will_save_wait_until is implemented
-        // for automatic format-on-save functionality
+        // Neither will_save nor will_save_wait_until are implemented
+        // Formatting is controlled by the client via documentFormattingProvider
         let caps = server_capabilities();
 
         let sync = caps
@@ -102,9 +102,8 @@ mod tests {
                     "will_save should be disabled (not implemented)"
                 );
                 assert_eq!(
-                    options.will_save_wait_until,
-                    Some(true),
-                    "will_save_wait_until should be enabled for format-on-save"
+                    options.will_save_wait_until, None,
+                    "will_save_wait_until should be disabled - formatting controlled by client"
                 );
             }
             _ => panic!("Expected TextDocumentSyncOptions"),
@@ -157,12 +156,12 @@ mod tests {
 
         assert!(
             caps.document_formatting_provider.is_some(),
-            "document_formatting_provider should be enabled"
+            "document_formatting_provider should be enabled by default"
         );
 
         match caps.document_formatting_provider {
             Some(OneOf::Left(enabled)) => {
-                assert!(enabled, "formatting should be enabled");
+                assert!(enabled, "formatting should be enabled by default");
             }
             _ => panic!("Expected simple boolean for formatting capability"),
         }
@@ -434,20 +433,14 @@ mod tests {
                 ) -> anyhow::Result<()> = handlers::text_document::did_save;
             }
 
-            // will_save_wait_until handler for format-on-save
-            if sync_options.will_save_wait_until == Some(true) {
-                let _handler: fn(
-                    LspServerStateSnapshot,
-                    lsp_types::WillSaveTextDocumentParams,
-                )
-                    -> anyhow::Result<Option<Vec<lsp_types::TextEdit>>> =
-                    handlers::text_document::will_save_wait_until;
-            }
-
-            // will_save is not implemented
+            // will_save and will_save_wait_until are not implemented
             assert_eq!(
                 sync_options.will_save, None,
                 "will_save should not be advertised without a handler implementation"
+            );
+            assert_eq!(
+                sync_options.will_save_wait_until, None,
+                "will_save_wait_until should not be used for formatting (client controls formatting)"
             );
         }
 

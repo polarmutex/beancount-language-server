@@ -147,43 +147,6 @@ pub mod text_document {
         }
     }
 
-    /// handler for `textDocument/willSaveWaitUntil`.
-    pub(crate) fn will_save_wait_until(
-        snapshot: LspServerStateSnapshot,
-        params: lsp_types::WillSaveTextDocumentParams,
-    ) -> Result<Option<Vec<lsp_types::TextEdit>>> {
-        tracing::trace!(
-            "WillSaveWaitUntil requested for: {}",
-            params.text_document.uri.as_str()
-        );
-
-        // Convert WillSaveTextDocumentParams to DocumentFormattingParams
-        let formatting_params = lsp_types::DocumentFormattingParams {
-            text_document: params.text_document,
-            options: lsp_types::FormattingOptions {
-                tab_size: 4,
-                insert_spaces: true,
-                ..Default::default()
-            },
-            work_done_progress_params: Default::default(),
-        };
-
-        match formatting::formatting(snapshot, formatting_params) {
-            Ok(Some(edits)) => {
-                tracing::trace!("WillSaveWaitUntil returned {} text edits", edits.len());
-                Ok(Some(edits))
-            }
-            Ok(None) => {
-                tracing::debug!("No formatting changes needed before save");
-                Ok(None)
-            }
-            Err(e) => {
-                tracing::error!("WillSaveWaitUntil formatting failed: {}", e);
-                Err(e)
-            }
-        }
-    }
-
     pub(crate) fn handle_references(
         snapshot: LspServerStateSnapshot,
         params: lsp_types::ReferenceParams,
