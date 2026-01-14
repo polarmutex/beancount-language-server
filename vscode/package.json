@@ -103,6 +103,33 @@
             }
           }
         },
+        "beancountLangServer.beanCheck": {
+          "scope": "resource",
+          "description": "Bean-check execution options",
+          "type": "object",
+          "default": {},
+          "additionalProperties": true,
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": [
+                "system",
+                "python-system",
+                "python-embedded"
+              ],
+              "default": "python-system",
+              "description": "Execution method for bean-check (system, python-system, python-embedded)."
+            },
+            "bean_check_cmd": {
+              "type": "string",
+              "description": "Path to bean-check executable when using the system method."
+            },
+            "python_cmd": {
+              "type": "string",
+              "description": "Python executable to use for the python methods."
+            }
+          }
+        },
         "beancountLangServer.serverPath": {
           "scope": "resource",
           "type": "string",
