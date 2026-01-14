@@ -623,6 +623,7 @@ mod tests {
                 path.clone(),
                 Document {
                     content: rope_content.clone(),
+                    version: 0,
                 },
             );
 
@@ -664,6 +665,7 @@ mod tests {
                 path.clone(),
                 Document {
                     content: rope_content.clone(),
+                    version: 0,
                 },
             );
 

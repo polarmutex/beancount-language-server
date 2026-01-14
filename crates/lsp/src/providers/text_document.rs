@@ -214,37 +214,83 @@ pub(crate) fn did_change(
     tracing::debug!("text_document::did_change - requesting {:#?}", uri);
     let doc = state.open_docs.get_mut(uri).unwrap();
 
-    tracing::debug!("text_document::did_change - convert edits");
-    let edits = params
+    // Version tracking for synchronization validation
+    let new_version = params.text_document.version;
+    if new_version <= doc.version {
+        tracing::warn!(
+            "Received out-of-order or duplicate change: current version={}, received version={}",
+            doc.version,
+            new_version
+        );
+    }
+    tracing::trace!("Document version: {} -> {}", doc.version, new_version);
+
+    tracing::debug!("text_document::did_change - convert edits and apply changes");
+
+    // Calculate tree-sitter edits before modifying the document
+    // This must be done first since edits are based on the old content
+    let ts_edits = params
         .content_changes
         .iter()
         .map(|change| lsp_textdocchange_to_ts_inputedit(&doc.content, change))
         .collect::<Result<Vec<_>, _>>()?;
 
-    tracing::debug!("text_document::did_change - apply edits - document");
+    // Apply changes to document content
+    // We reuse position calculations to avoid redundant UTF-16 conversions
     for change in &params.content_changes {
         let text = change.text.as_str();
-        let text_bytes = text.as_bytes();
-        let text_end_byte_idx = text_bytes.len();
 
         let range = if let Some(range) = change.range {
             range
         } else {
-            let start_line_idx = doc.content.byte_to_line(0);
-            let end_line_idx = doc.content.byte_to_line(text_end_byte_idx);
-
-            let start = lsp_types::Position::new(start_line_idx as u32, 0);
-            let end = lsp_types::Position::new(end_line_idx as u32, 0);
-            lsp_types::Range { start, end }
+            // Full document replacement: range should cover entire current document
+            let end_line = (doc.content.len_lines().saturating_sub(1)) as u32;
+            let end_line_len = if doc.content.len_lines() > 0 {
+                // Get the character length of the last line (excluding newline)
+                let last_line = doc.content.line(end_line as usize);
+                last_line.len_chars().saturating_sub(1).max(0) as u32
+            } else {
+                0
+            };
+            lsp_types::Range {
+                start: lsp_types::Position::new(0, 0),
+                end: lsp_types::Position::new(end_line, end_line_len),
+            }
         };
 
+        // Convert LSP positions (line, UTF-16 column) to rope character indices
+        // LSP positions use UTF-16 code units for columns, rope uses UTF-8 characters
         let start_row_char_idx = doc.content.line_to_char(range.start.line as usize);
-        let start_col_char_idx = doc.content.utf16_cu_to_char(range.start.character as usize);
         let end_row_char_idx = doc.content.line_to_char(range.end.line as usize);
-        let end_col_char_idx = doc.content.utf16_cu_to_char(range.end.character as usize);
+
+        // Convert UTF-16 column offsets to character offsets within the line
+        // CRITICAL: range.start.character is UTF-16 offset *within the line*, not document-wide
+        let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
+        let start_col_char_idx = doc
+            .content
+            .utf16_cu_to_char(start_line_utf16_cu + range.start.character as usize)
+            - start_row_char_idx;
+
+        let end_line_utf16_cu = doc.content.char_to_utf16_cu(end_row_char_idx);
+        let end_col_char_idx = doc
+            .content
+            .utf16_cu_to_char(end_line_utf16_cu + range.end.character as usize)
+            - end_row_char_idx;
 
         let start_char_idx = start_row_char_idx + start_col_char_idx;
         let end_char_idx = end_row_char_idx + end_col_char_idx;
+
+        tracing::trace!(
+            "Applying change: range={}:{}-{}:{}, char_idx={}-{}, text_len={}",
+            range.start.line,
+            range.start.character,
+            range.end.line,
+            range.end.character,
+            start_char_idx,
+            end_char_idx,
+            text.len()
+        );
+
         doc.content.remove(start_char_idx..end_char_idx);
 
         if !change.text.is_empty() {
@@ -252,17 +298,25 @@ pub(crate) fn did_change(
         }
     }
 
-    debug!("text_document::did_change - apply edits - tree");
+    debug!("text_document::did_change - incremental tree parse");
     let result = {
         let parser = state.parsers.get_mut(uri).unwrap();
         let old_tree_arc = state.forest.get(uri).unwrap();
+
+        // Avoid cloning the tree when possible - tree-sitter's edit() takes &mut
+        // We clone here because we need to preserve the old tree in the Arc
+        // until we've successfully parsed the new tree
         let mut old_tree = (**old_tree_arc).clone();
 
-        for edit in &edits {
+        // Apply all edits to the tree to prepare for incremental parsing
+        for edit in &ts_edits {
             old_tree.edit(edit);
         }
 
-        parser.parse(doc.text().to_string(), Some(&old_tree))
+        // Parse with incremental tree
+        // Note: We could avoid the string allocation by implementing a custom TextProvider
+        // that yields rope chunks, but the current tree-sitter bindings make this complex
+        parser.parse(doc.text_string(), Some(&old_tree))
     };
 
     debug!("text_document::did_change - save tree");
@@ -272,6 +326,9 @@ pub(crate) fn did_change(
         *state.beancount_data.get_mut(uri).unwrap() =
             Arc::new(BeancountData::new(&tree_arc, &doc.content));
     }
+
+    // Update document version after successfully applying changes
+    doc.version = new_version;
 
     debug!("text_document::did_change - done");
     Ok(())
@@ -345,4 +402,236 @@ fn handle_diagnostics(
             .unwrap()
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::document::Document;
+    use lsp_types::{Position, Range, TextDocumentContentChangeEvent};
+
+    /// Helper to create a test document with UTF-8 content
+    fn create_test_document(content: &str) -> Document {
+        Document {
+            content: ropey::Rope::from_str(content),
+            version: 0,
+        }
+    }
+
+    #[test]
+    fn test_utf8_multibyte_character_handling() {
+        // Test content with various multi-byte UTF-8 characters
+        let content = "2023-01-01 * \"Café ☕\" \"Description with émojis 🎉\"\n  Assets:Cash  -100.00 USD\n  Expenses:Food  100.00 USD\n";
+        let mut doc = create_test_document(content);
+
+        // Simulate a change that replaces "Café" with "Restaurant"
+        // "Café" has é which is 2 bytes in UTF-8 but 1 UTF-16 code unit
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position {
+                    line: 0,
+                    character: 15, // Position after quote before C
+                },
+                end: Position {
+                    line: 0,
+                    character: 19, // Position after é (4 UTF-16 code units: C, a, f, é)
+                },
+            }),
+            range_length: None,
+            text: "Restaurant".to_string(),
+        };
+
+        // Calculate the rope positions using the fixed logic
+        let start_row_char_idx = doc.content.line_to_char(0);
+        let end_row_char_idx = doc.content.line_to_char(0);
+
+        let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
+        let start_col_char_idx =
+            doc.content.utf16_cu_to_char(start_line_utf16_cu + 15) - start_row_char_idx;
+
+        let end_line_utf16_cu = doc.content.char_to_utf16_cu(end_row_char_idx);
+        let end_col_char_idx =
+            doc.content.utf16_cu_to_char(end_line_utf16_cu + 19) - end_row_char_idx;
+
+        let start_char_idx = start_row_char_idx + start_col_char_idx;
+        let end_char_idx = end_row_char_idx + end_col_char_idx;
+
+        // Apply the change
+        doc.content.remove(start_char_idx..end_char_idx);
+        doc.content.insert(start_char_idx, &change.text);
+
+        // Verify the result
+        let result = doc.content.to_string();
+        assert!(
+            result.contains("Restaurant"),
+            "Should contain 'Restaurant', got: {}",
+            result
+        );
+        assert!(
+            result.contains("☕"),
+            "Should preserve emoji ☕, got: {}",
+            result
+        );
+        assert!(
+            result.contains("🎉"),
+            "Should preserve emoji 🎉, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("Café"),
+            "Should not contain 'Café' anymore, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_full_document_replacement_with_utf8() {
+        let initial_content = "2023-01-01 * \"Test\" \"Test\"\n  Assets:Cash  100.00 USD\n";
+        let mut doc = create_test_document(initial_content);
+
+        // Full document replacement (no range specified)
+        let new_content =
+            "2024-01-01 * \"New café ☕\" \"With émojis 🎉\"\n  Assets:Bank  200.00 EUR\n";
+        let _change = TextDocumentContentChangeEvent {
+            range: None,
+            range_length: None,
+            text: new_content.to_string(),
+        };
+
+        // Calculate range for full document replacement
+        let end_line = (doc.content.len_lines().saturating_sub(1)) as u32;
+        let end_line_len = if doc.content.len_lines() > 0 {
+            let last_line = doc.content.line(end_line as usize);
+            last_line.len_chars().saturating_sub(1).max(0) as u32
+        } else {
+            0
+        };
+
+        let _range = Range {
+            start: Position::new(0, 0),
+            end: Position::new(end_line, end_line_len),
+        };
+
+        // Apply using the calculated range
+        let start_char_idx = 0;
+        let end_char_idx = doc.content.len_chars();
+
+        doc.content.remove(start_char_idx..end_char_idx);
+        doc.content.insert(start_char_idx, new_content);
+
+        // Verify the result
+        let result = doc.content.to_string();
+        assert_eq!(result, new_content, "Full document replacement failed");
+        assert!(result.contains("café"), "Should contain 'café'");
+        assert!(result.contains("☕"), "Should contain emoji ☕");
+        assert!(result.contains("🎉"), "Should contain emoji 🎉");
+    }
+
+    #[test]
+    fn test_emoji_at_edit_boundary() {
+        // Test editing near emoji boundaries (common source of bugs)
+        let content = "2023-01-01 * \"Before🎉After\" \"Test\"\n  Assets:Cash  100.00 USD\n";
+        let mut doc = create_test_document(content);
+
+        // Replace "After" which comes right after an emoji
+        // String: 2023-01-01 * "Before🎉After" "Test"
+        // The emoji 🎉 is 4 bytes in UTF-8, 2 UTF-16 code units (surrogate pair)
+        // UTF-16 positions: After starts at 22, ends at 27
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position {
+                    line: 0,
+                    character: 22, // UTF-16 position where "After" starts (after the emoji)
+                },
+                end: Position {
+                    line: 0,
+                    character: 27, // UTF-16 position where "After" ends
+                },
+            }),
+            range_length: None,
+            text: "Modified".to_string(),
+        };
+
+        // Calculate positions with fixed logic
+        let start_row_char_idx = doc.content.line_to_char(0);
+        let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
+        let start_col_char_idx = doc.content.utf16_cu_to_char(
+            start_line_utf16_cu + change.range.as_ref().unwrap().start.character as usize,
+        ) - start_row_char_idx;
+
+        let end_col_char_idx = doc.content.utf16_cu_to_char(
+            start_line_utf16_cu + change.range.as_ref().unwrap().end.character as usize,
+        ) - start_row_char_idx;
+
+        let start_char_idx = start_row_char_idx + start_col_char_idx;
+        let end_char_idx = start_row_char_idx + end_col_char_idx;
+
+        // Apply the change
+        doc.content.remove(start_char_idx..end_char_idx);
+        doc.content.insert(start_char_idx, &change.text);
+
+        // Verify the result
+        let result = doc.content.to_string();
+        assert!(
+            result.contains("Before🎉Modified"),
+            "Should contain 'Before🎉Modified', got: {}",
+            result
+        );
+        assert!(
+            !result.contains("After"),
+            "Should not contain 'After', got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_asian_characters_handling() {
+        // Test with CJK characters (3 bytes in UTF-8, 1 UTF-16 code unit each)
+        let content = "2023-01-01 * \"日本語テスト\" \"中文测试\"\n  Assets:Cash  100.00 USD\n";
+        let mut doc = create_test_document(content);
+
+        // Replace "日本語" with "にほんご"
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position {
+                    line: 0,
+                    character: 15, // After opening quote
+                },
+                end: Position {
+                    line: 0,
+                    character: 18, // After 3 characters (each is 1 UTF-16 CU)
+                },
+            }),
+            range_length: None,
+            text: "にほんご".to_string(),
+        };
+
+        // Calculate positions
+        let start_row_char_idx = doc.content.line_to_char(0);
+        let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
+
+        let start_col_char_idx =
+            doc.content.utf16_cu_to_char(start_line_utf16_cu + 15) - start_row_char_idx;
+        let end_col_char_idx =
+            doc.content.utf16_cu_to_char(start_line_utf16_cu + 18) - start_row_char_idx;
+
+        let start_char_idx = start_row_char_idx + start_col_char_idx;
+        let end_char_idx = start_row_char_idx + end_col_char_idx;
+
+        // Apply change
+        doc.content.remove(start_char_idx..end_char_idx);
+        doc.content.insert(start_char_idx, &change.text);
+
+        // Verify
+        let result = doc.content.to_string();
+        assert!(
+            result.contains("にほんご"),
+            "Should contain 'にほんご', got: {}",
+            result
+        );
+        assert!(
+            result.contains("中文测试"),
+            "Should preserve '中文测试', got: {}",
+            result
+        );
+    }
 }

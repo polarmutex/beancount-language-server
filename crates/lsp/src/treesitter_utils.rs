@@ -11,8 +11,9 @@ pub fn lsp_textdocchange_to_ts_inputedit(
     let range = if let Some(range) = change.range {
         range
     } else {
+        // Full document replacement: range covers the entire OLD document
         let start = byte_to_lsp_position(source, 0);
-        let end = byte_to_lsp_position(source, text_end_byte_idx);
+        let end = byte_to_lsp_position(source, source.len_bytes());
         lsp_types::Range { start, end }
     };
 
