@@ -95,7 +95,7 @@ pub(crate) fn formatting(
     snapshot: LspServerStateSnapshot,
     params: lsp_types::DocumentFormattingParams,
 ) -> Result<Option<Vec<lsp_types::TextEdit>>> {
-    tracing::info!(
+    tracing::trace!(
         "Starting formatting for document: {}",
         params.text_document.uri.as_str()
     );

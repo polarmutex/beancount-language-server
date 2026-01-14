@@ -321,12 +321,13 @@ fn handle_diagnostics(
         .send(Task::Progress(ProgressMsg::BeanCheck { done: 1, total: 1 }))
         .unwrap();
 
-    for file in snapshot.forest.keys() {
-        let diagnostics = if diags.contains_key(file) {
-            diags.get(file).unwrap().clone()
-        } else {
-            vec![]
-        };
+    // Publish diagnostics for all files that appear either in the forest or in
+    // the diagnostics map (bean-check may report files not present in the parsed forest).
+    let mut files: std::collections::HashSet<PathBuf> = snapshot.forest.keys().cloned().collect();
+    files.extend(diags.keys().cloned());
+
+    for file in files {
+        let diagnostics = diags.get(&file).cloned().unwrap_or_default();
         sender
             .send(Task::Notify(lsp_server::Notification {
                 method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
