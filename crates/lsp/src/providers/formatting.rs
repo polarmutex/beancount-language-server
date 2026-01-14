@@ -251,41 +251,52 @@ fn extract_line_components(
 ) -> Option<FormatableLine> {
     let line_num = prefix_node.start_position().row;
 
-    // Get the full line text
-    let line_start_char = doc.content.line_to_char(line_num);
+    // Get the line end boundary in the rope (character-based)
     let line_end_char = if line_num + 1 < doc.content.len_lines() {
         doc.content.line_to_char(line_num + 1)
     } else {
         doc.content.len_chars()
     };
-    let full_line = doc
-        .content
-        .slice(line_start_char..line_end_char)
-        .to_string();
+
+    // IMPORTANT: tree-sitter node positions use BYTE offsets, not character offsets
+    // We need to convert byte offsets to character offsets for UTF-8 safety
 
     // Extract prefix (from line start to end of account/directive)
-    let prefix_end_char = doc.content.line_to_char(prefix_node.start_position().row)
-        + prefix_node.end_position().column;
-    let prefix_start_char = doc.content.line_to_char(prefix_node.start_position().row);
+    // The prefix should include everything from the beginning of the line to the end of the prefix node
+    let line_start_byte = doc.content.char_to_byte(doc.content.line_to_char(line_num));
+    let prefix_end_byte = prefix_node.end_byte().min(doc.content.len_bytes());
+    let prefix_start_char = doc.content.byte_to_char(line_start_byte);
+    let prefix_end_char = doc
+        .content
+        .byte_to_char(prefix_end_byte)
+        .min(doc.content.len_chars());
     let prefix_text = doc
         .content
         .slice(prefix_start_char..prefix_end_char)
         .to_string();
 
     // Extract number text
-    let number_start_char = doc.content.line_to_char(number_node.start_position().row)
-        + number_node.start_position().column;
-    let number_end_char = doc.content.line_to_char(number_node.end_position().row)
-        + number_node.end_position().column;
+    let number_start_byte = number_node.start_byte().min(doc.content.len_bytes());
+    let number_end_byte = number_node.end_byte().min(doc.content.len_bytes());
+    let number_start_char = doc
+        .content
+        .byte_to_char(number_start_byte)
+        .min(doc.content.len_chars());
+    let number_end_char = doc
+        .content
+        .byte_to_char(number_end_byte)
+        .min(doc.content.len_chars());
     let number_text = doc
         .content
         .slice(number_start_char..number_end_char)
         .to_string();
 
     // Extract rest (everything after the number)
-    let rest_start = number_node.end_position().column;
-    let rest_text = if rest_start < full_line.len() {
-        full_line[rest_start..].to_string()
+    // Use the rope directly to handle UTF-8 correctly - rope uses character indices
+    let rest_text = if number_end_char < line_end_char {
+        doc.content
+            .slice(number_end_char..line_end_char)
+            .to_string()
     } else {
         String::new()
     };
@@ -474,7 +485,6 @@ fn create_line_replacement_edit(
         .content
         .slice(line_start_char..line_end_char)
         .to_string();
-    let original_line_len = original_line.trim_end().len();
 
     // Skip edit if the line content hasn't changed
     // This optimization prevents unnecessary edits for already-formatted lines
@@ -482,13 +492,16 @@ fn create_line_replacement_edit(
         return None;
     }
 
+    // Calculate character length (not byte length) for UTF-8 safety
+    let original_line_char_len = original_line.trim_end().chars().count();
+
     let line_start = lsp_types::Position {
         line: line_num as u32,
         character: 0,
     };
     let line_end = lsp_types::Position {
         line: line_num as u32,
-        character: original_line_len as u32,
+        character: original_line_char_len as u32,
     };
 
     Some(lsp_types::TextEdit {
@@ -2058,5 +2071,89 @@ mod tests {
             let edits2 = state2.format().unwrap().unwrap();
             assert_eq!(edits2.len(), 0, "Second format should generate zero edits");
         }
+    }
+
+    #[test]
+    fn test_formatting_with_utf8_special_characters() {
+        // Test issue #767: formatting with UTF-8 special characters like "ã"
+        let content = r#"; Expenses Accounts
+2020-01-01 open Expenses:Moradia:Manutenção BRL
+
+; Assets Accounts
+2020-01-01 open Assets:Nub:CC BRL
+2020-01-01 open Equity:Opening-Balances BRL
+
+2020-01-01 pad Assets:Nub:CC Equity:Opening-Balances
+
+2026-01-07 * "Some awesome purchase"
+  Expenses:Moradia:Manutenção                       18.00 BRL
+  Assets:Nub:CC
+
+2026-01-10 balance Assets:Nub:CC  156.00 BRL
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        let formatted = apply_edits(content, &edits);
+        println!("Original:\n{content}");
+        println!("Formatted:\n{formatted}");
+
+        // The amount should remain intact (not corrupted like ".00 B")
+        assert!(
+            formatted.contains("18.00 BRL"),
+            "Amount should not be corrupted: {formatted}"
+        );
+        assert!(
+            !formatted.contains(".00 B BRL"),
+            "Amount should not be corrupted to '.00 B': {formatted}"
+        );
+
+        // Account name should remain intact
+        assert!(
+            formatted.contains("Manutenção"),
+            "Account name should not be corrupted: {formatted}"
+        );
+    }
+
+    #[test]
+    fn test_formatting_with_various_utf8_characters() {
+        // Test with various UTF-8 characters in account names
+        let content = r#"2023-01-01 * "UTF-8 test"
+  Expenses:Café                              10.00 EUR
+  Expenses:Résumé                             5.50 USD
+  Assets:Банк                               100.00 RUB
+  Income:日本                               -50.00 JPY
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        let formatted = apply_edits(content, &edits);
+        println!("UTF-8 test formatted:\n{formatted}");
+
+        // All amounts should remain intact
+        assert!(
+            formatted.contains("10.00 EUR"),
+            "EUR amount should be intact"
+        );
+        assert!(
+            formatted.contains("5.50 USD"),
+            "USD amount should be intact"
+        );
+        assert!(
+            formatted.contains("100.00 RUB"),
+            "RUB amount should be intact"
+        );
+        assert!(
+            formatted.contains("-50.00 JPY"),
+            "JPY amount should be intact"
+        );
+
+        // All account names should remain intact
+        assert!(formatted.contains("Café"), "Café should be intact");
+        assert!(formatted.contains("Résumé"), "Résumé should be intact");
+        assert!(formatted.contains("Банк"), "Банк should be intact");
+        assert!(formatted.contains("日本"), "日本 should be intact");
     }
 }
