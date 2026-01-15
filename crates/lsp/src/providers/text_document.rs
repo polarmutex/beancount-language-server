@@ -38,37 +38,48 @@ fn process_includes(
         None => return Ok(()), // File not parsed yet, skip
     };
 
-    // Find all include directives in this file
+    // Find all include directives in this file using tree-sitter query
     let text = fs::read_to_string(file_path)?;
     let bytes = text.as_bytes();
-    let mut cursor = tree.root_node().walk();
 
-    let include_paths: Vec<PathBuf> = tree
-        .root_node()
-        .children(&mut cursor)
-        .filter(|c| c.kind() == "include")
-        .filter_map(|include_node| {
-            let mut node_cursor = include_node.walk();
-            let string_node = include_node
-                .children(&mut node_cursor)
-                .find(|c| c.kind() == "string")?;
+    let include_query_string = r#"
+    (include (string) @string)
+    "#;
+    let include_query =
+        tree_sitter::Query::new(&tree_sitter_beancount::language(), include_query_string)
+            .unwrap_or_else(|_| panic!("Invalid query for includes: {include_query_string}"));
+    let mut cursor_qry = tree_sitter::QueryCursor::new();
+    let mut include_matches = cursor_qry.matches(&include_query, tree.root_node(), bytes);
 
-            let filename = string_node
-                .utf8_text(bytes)
-                .ok()?
-                .trim_start_matches('"')
-                .trim_end_matches('"');
+    let include_paths: Vec<PathBuf> = {
+        use tree_sitter::StreamingIterator;
+        let mut paths = Vec::new();
 
-            let path = std::path::Path::new(filename);
-            let resolved_path = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                file_path.parent()?.join(path)
-            };
+        while let Some(qmatch) = include_matches.next() {
+            for capture in qmatch.captures {
+                let filename = capture
+                    .node
+                    .utf8_text(bytes)
+                    .ok()
+                    .map(|s| s.trim_start_matches('"').trim_end_matches('"'));
 
-            Some(resolved_path)
-        })
-        .collect();
+                if let Some(filename) = filename {
+                    let path = std::path::Path::new(filename);
+                    let resolved_path = if path.is_absolute() {
+                        path.to_path_buf()
+                    } else if let Some(parent) = file_path.parent() {
+                        parent.join(path)
+                    } else {
+                        continue;
+                    };
+
+                    paths.push(resolved_path);
+                }
+            }
+        }
+
+        paths
+    };
 
     // Process each included file
     for include_path in include_paths {

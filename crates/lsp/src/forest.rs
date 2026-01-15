@@ -1,3 +1,17 @@
+//! Forest parsing for beancount files
+//!
+//! This module handles initial parsing of beancount file forests, including:
+//! - Recursive include directive resolution
+//! - File caching for performance
+//! - Progress tracking during parsing
+//!
+//! # Query Usage
+//!
+//! Uses tree-sitter queries for extracting include directives:
+//! - `(include (string) @string)` - Extract string nodes from include directives
+//!
+//! This is more efficient and clearer than manual tree walking.
+
 use crate::beancount_data::BeancountData;
 use crate::server::LspServerStateSnapshot;
 use crate::server::ProgressMsg;
@@ -86,7 +100,6 @@ pub(crate) fn parse_initial_forest(
             }
         };
         let tree_arc = Arc::new(tree);
-        let mut cursor = tree_arc.root_node().walk();
 
         let content = ropey::Rope::from_str(text.as_str());
         let beancount_data = BeancountData::new(&tree_arc, &content);
@@ -105,35 +118,45 @@ pub(crate) fn parse_initial_forest(
             }))
             .unwrap();
 
-        let include_patterns: Vec<String> = tree_arc
-            .root_node()
-            .children(&mut cursor)
-            .filter(|c| c.kind() == "include")
-            .filter_map(|include_node| {
-                let mut node_cursor = include_node.walk();
-                let node = include_node
-                    .children(&mut node_cursor)
-                    .find(|c| c.kind() == "string")?;
+        // Extract include patterns using tree-sitter query
+        let include_query_string = r#"
+        (include (string) @string)
+        "#;
+        let include_query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), include_query_string)
+                .unwrap_or_else(|_| panic!("Invalid query for includes: {include_query_string}"));
+        let mut cursor_qry = tree_sitter::QueryCursor::new();
+        let mut include_matches = cursor_qry.matches(&include_query, tree_arc.root_node(), bytes);
 
-                let filename = node
-                    .utf8_text(bytes)
-                    .unwrap()
-                    .trim_start_matches('"')
-                    .trim_end_matches('"');
+        let include_patterns: Vec<String> = {
+            use tree_sitter::StreamingIterator;
+            let mut patterns = Vec::new();
 
-                let path = path::Path::new(filename);
+            while let Some(qmatch) = include_matches.next() {
+                for capture in qmatch.captures {
+                    let filename = capture
+                        .node
+                        .utf8_text(bytes)
+                        .unwrap()
+                        .trim_start_matches('"')
+                        .trim_end_matches('"');
 
-                let path = if path.is_absolute() {
-                    path.to_path_buf()
-                } else if file.is_absolute() {
-                    file.parent().unwrap().join(path)
-                } else {
-                    path.to_path_buf()
-                };
+                    let path = path::Path::new(filename);
 
-                Some(path.to_string_lossy().to_string())
-            })
-            .collect();
+                    let path = if path.is_absolute() {
+                        path.to_path_buf()
+                    } else if file.is_absolute() {
+                        file.parent().unwrap().join(path)
+                    } else {
+                        path.to_path_buf()
+                    };
+
+                    patterns.push(path.to_string_lossy().to_string());
+                }
+            }
+
+            patterns
+        };
 
         // Process all include patterns and deduplicate results
         let mut discovered_files = HashSet::new();
