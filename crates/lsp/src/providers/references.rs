@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tracing::debug;
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::tree_sitter;
+use url::Url;
 
 /// Provider function for `textDocument/references`.
 pub(crate) fn references(
@@ -172,24 +173,7 @@ fn find_references(
         .map(|(url, node): (PathBuf, tree_sitter::Node)| {
             let range = node.range();
             Location::new(
-                {
-                    // Handle cross-platform file URI creation
-                    let file_path_str = url.to_str().unwrap();
-                    let uri_str = if cfg!(windows)
-                        && file_path_str.len() > 1
-                        && file_path_str.chars().nth(1) == Some(':')
-                    {
-                        // Windows absolute path like "C:\path"
-                        format!("file:///{}", file_path_str.replace('\\', "/"))
-                    } else if cfg!(windows) && file_path_str.starts_with('/') {
-                        // Unix-style path on Windows, convert to Windows style
-                        format!("file:///C:{}", file_path_str.replace('\\', "/"))
-                    } else {
-                        // Unix path or other platforms
-                        format!("file://{file_path_str}")
-                    };
-                    lsp_types::Uri::from_str(&uri_str).unwrap()
-                },
+                lsp_types::Uri::from_str(Url::from_file_path(&url).unwrap().as_ref()).unwrap(),
                 lsp_types::Range {
                     start: lsp_types::Position {
                         line: range.start_point.row as u32,
@@ -353,7 +337,7 @@ mod tests {
         let state = TestState::new(content).unwrap();
 
         let uri =
-            lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy())).unwrap();
+            lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref()).unwrap();
         let params = lsp_types::ReferenceParams {
             text_document_position: lsp_types::TextDocumentPositionParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri },
@@ -387,7 +371,7 @@ mod tests {
         let state = TestState::new(content).unwrap();
 
         let uri =
-            lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy())).unwrap();
+            lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref()).unwrap();
         let params = lsp_types::RenameParams {
             text_document_position: lsp_types::TextDocumentPositionParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -422,7 +406,7 @@ mod tests {
         let state = TestState::new(content).unwrap();
 
         let uri =
-            lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy())).unwrap();
+            lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref()).unwrap();
 
         // Test at line 1 (open directive)
         let params1 = lsp_types::ReferenceParams {
