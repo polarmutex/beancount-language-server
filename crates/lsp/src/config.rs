@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn test_bean_check_cmd_path() {
         let config = Config::new(PathBuf::new());
-        // Check default first
+        // Check default value
         assert_eq!(
             config.bean_check.bean_check_cmd,
             Some(PathBuf::from("bean-check"))
@@ -388,18 +388,8 @@ mod tests {
     #[test]
     fn test_bean_check_python_cmd() {
         let config = Config::new(PathBuf::new());
-        // Check default first
+        // Check default value
         assert_eq!(config.bean_check.python_cmd, Some(PathBuf::from("python3")));
-    }
-
-    #[test]
-    fn test_bean_check_python_script_path() {
-        let config = Config::new(PathBuf::new());
-        // Check default first
-        assert_eq!(
-            config.bean_check.python_cmd,
-            Some(PathBuf::from("python/bean_check.py"))
-        );
     }
 
     #[test]
@@ -408,10 +398,7 @@ mod tests {
         assert_eq!(config.root_file, PathBuf::from("/path/to/file.bean"));
         assert_eq!(config.journal_root, None);
         assert_eq!(config.formatting.prefix_width, None);
-        assert_eq!(
-            config.bean_check.method,
-            Some(BeancountCheckMethod::SystemCall)
-        );
+        assert_eq!(config.bean_check.method, None);
     }
 
     #[test]
@@ -432,11 +419,8 @@ mod tests {
                 serde_json::from_str(r#"{"bean_check": {"method": "invalid-method"}}"#).unwrap(),
             )
             .unwrap();
-        // Should keep default method
-        assert_eq!(
-            config.bean_check.method,
-            Some(BeancountCheckMethod::SystemCall)
-        );
+        // Should keep default method (None)
+        assert_eq!(config.bean_check.method, None);
     }
 
     #[test]

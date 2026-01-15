@@ -361,4 +361,137 @@ mod tests {
         assert_eq!(errors[0].file, PathBuf::from("C:/weird:path/01.bean"));
         assert_eq!(errors[0].message, "extra colon path");
     }
+
+    #[test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore)]
+    fn test_system_call_checker_integration_valid() {
+        // Try to find bean-check in PATH
+        let bean_check_cmd =
+            which::which("bean-check").unwrap_or_else(|_| PathBuf::from("bean-check"));
+        let checker = SystemCallChecker::new(bean_check_cmd);
+
+        // Skip if bean-check not available
+        if !checker.is_available() {
+            return;
+        }
+
+        let (_temp_dir, file_path) = create_temp_beancount_file(
+            "2023-01-01 open Assets:Cash\n\
+             2023-01-02 open Expenses:Food\n",
+        );
+
+        let result = checker.check(&file_path);
+        assert!(result.is_ok());
+        let check_result = result.unwrap();
+        // Valid file should have no errors
+        assert_eq!(check_result.errors.len(), 0);
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore)]
+    fn test_system_call_checker_integration_with_errors() {
+        let bean_check_cmd =
+            which::which("bean-check").unwrap_or_else(|_| PathBuf::from("bean-check"));
+        let checker = SystemCallChecker::new(bean_check_cmd);
+
+        if !checker.is_available() {
+            return;
+        }
+
+        // Create a file with unbalanced transaction
+        let content = concat!(
+            "2023-01-01 open Assets:Cash\n",
+            "2023-01-01 open Expenses:Food\n",
+            "\n",
+            "2023-01-02 * \"Test transaction\"\n",
+            "  Assets:Cash     100.00 USD\n",
+            "  Expenses:Food   -50.00 USD\n",
+        );
+        let (_temp_dir, file_path) = create_temp_beancount_file(content);
+
+        let result = checker.check(&file_path);
+        assert!(result.is_ok());
+        let check_result = result.unwrap();
+
+        // Should detect the unbalanced transaction
+        assert!(
+            !check_result.errors.is_empty(),
+            "Expected errors for unbalanced transaction"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore)]
+    fn test_system_call_checker_integration_balance_failure() {
+        let bean_check_cmd =
+            which::which("bean-check").unwrap_or_else(|_| PathBuf::from("bean-check"));
+        let checker = SystemCallChecker::new(bean_check_cmd);
+
+        if !checker.is_available() {
+            return;
+        }
+
+        let (_temp_dir, file_path) = create_temp_beancount_file(
+            "2023-01-01 open Assets:Cash\n\
+             2023-01-01 open Equity:Opening\n\
+             \n\
+             2023-01-02 * \"Opening balance\"\n\
+               Assets:Cash  100.00 USD\n\
+               Equity:Opening\n\
+             \n\
+             2023-01-03 balance Assets:Cash  200.00 USD\n",
+        );
+
+        let result = checker.check(&file_path);
+        assert!(result.is_ok());
+        let check_result = result.unwrap();
+
+        // Should detect balance assertion failure
+        assert!(
+            !check_result.errors.is_empty(),
+            "Expected balance assertion error"
+        );
+
+        // Verify error mentions balance
+        let has_balance_error = check_result
+            .errors
+            .iter()
+            .any(|err| err.message.to_lowercase().contains("balance"));
+        assert!(has_balance_error, "Expected balance error in diagnostics");
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore)]
+    fn test_system_call_checker_integration_line_numbers() {
+        let bean_check_cmd =
+            which::which("bean-check").unwrap_or_else(|_| PathBuf::from("bean-check"));
+        let checker = SystemCallChecker::new(bean_check_cmd);
+
+        if !checker.is_available() {
+            return;
+        }
+
+        // Create file with error on specific line
+        let (_temp_dir, file_path) = create_temp_beancount_file(
+            "2023-01-01 open Assets:Cash\n\
+             2023-01-01 open Equity:Opening\n\
+             \n\
+             2023-01-02 * \"Opening\"\n\
+               Assets:Cash  100.00 USD\n\
+               Equity:Opening\n\
+             \n\
+             2023-01-03 balance Assets:Cash  999.00 USD\n", // Line 8
+        );
+
+        let result = checker.check(&file_path);
+        assert!(result.is_ok());
+        let check_result = result.unwrap();
+
+        // Should have at least one error
+        assert!(!check_result.errors.is_empty());
+
+        // Verify at least one error has a valid line number > 0
+        let has_valid_line = check_result.errors.iter().any(|err| err.line > 0);
+        assert!(has_valid_line, "Expected errors with valid line numbers");
+    }
 }
