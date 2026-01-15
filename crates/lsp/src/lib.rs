@@ -9,6 +9,7 @@ pub mod forest;
 pub mod handlers;
 pub mod progress;
 pub mod providers;
+mod query_utils;
 pub mod server;
 //pub mod session;
 mod treesitter_utils;
