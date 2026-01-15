@@ -41,7 +41,7 @@ pub trait BeancountChecker: Send + Sync {
 }
 
 /// Configuration for bean-check execution method selection.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub enum BeancountCheckMethod {
     /// Use system call to execute bean-check binary (traditional approach)
     #[default]
