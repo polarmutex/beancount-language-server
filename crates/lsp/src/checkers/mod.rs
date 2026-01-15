@@ -1,6 +1,5 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info};
 use which::which;
 
 #[cfg(feature = "python-embedded")]
@@ -76,8 +75,8 @@ impl BeancountCheckConfig {
     pub fn new() -> Self {
         Self {
             method: None, // None means auto-discovery
-            bean_check_cmd: Some(PathBuf::from("bean-check")),
-            python_cmd: Some(PathBuf::from("python3")),
+            bean_check_cmd: None,
+            python_cmd: None,
         }
     }
 }
@@ -91,6 +90,11 @@ impl BeancountCheckConfig {
 /// * Boxed trait object implementing BeancountChecker
 fn find_python_from_venv(root_dir: &Path) -> Option<PathBuf> {
     let venv_dir = root_dir.join(".venv");
+
+    if !venv_dir.exists() {
+        tracing::info!("Python venv not found at: {}", venv_dir.to_string_lossy());
+        return None;
+    }
 
     if cfg!(unix) {
         let python = venv_dir.join("bin").join("python");
@@ -129,24 +133,32 @@ fn resolve_python_cmd(config: &BeancountCheckConfig, root_dir: &Path) -> Option<
     if let Some(cmd) = &user_cmd
         && !cmd.as_os_str().is_empty()
     {
+        tracing::info!("Using configured python_cmd: {}", cmd.to_string_lossy());
         return Some(cmd.clone());
     }
 
     if let Some(venv_python) = find_python_from_venv(root_dir) {
+        tracing::info!("Using venv python: {}", venv_python.to_string_lossy());
         return Some(venv_python);
     }
 
     if let Some(python3) = find_in_path("python3")
         && is_python_available(&python3)
     {
+        tracing::info!("Using python3 from PATH: {}", python3.to_string_lossy());
         return Some(python3);
     }
 
     if let Some(python) = find_in_path("python")
         && is_python_available(&python)
     {
+        tracing::info!("Using python from PATH: {}", python.to_string_lossy());
         return Some(python);
     }
+
+    tracing::info!(
+        "No usable python found: configured python_cmd missing/empty, no venv python, and python/python3 not available on PATH."
+    );
 
     None
 }
@@ -155,6 +167,7 @@ fn resolve_bean_check_cmd(config: &BeancountCheckConfig, root_dir: &Path) -> Opt
     if let Some(cmd) = &config.bean_check_cmd
         && !cmd.as_os_str().is_empty()
     {
+        tracing::info!("Using configured bean_check_cmd: {}", cmd.to_string_lossy());
         return Some(cmd.clone());
     }
 
@@ -162,6 +175,10 @@ fn resolve_bean_check_cmd(config: &BeancountCheckConfig, root_dir: &Path) -> Opt
     if cfg!(unix) {
         let venv_bean_check = venv_dir.join("bin").join("bean-check");
         if venv_bean_check.is_file() {
+            tracing::info!(
+                "Using venv bean-check: {}",
+                venv_bean_check.to_string_lossy()
+            );
             return Some(venv_bean_check);
         }
     }
@@ -169,17 +186,33 @@ fn resolve_bean_check_cmd(config: &BeancountCheckConfig, root_dir: &Path) -> Opt
     if cfg!(windows) {
         let venv_bean_check = venv_dir.join("Scripts").join("bean-check.exe");
         if venv_bean_check.is_file() {
+            tracing::info!(
+                "Using venv bean-check: {}",
+                venv_bean_check.to_string_lossy()
+            );
             return Some(venv_bean_check);
         }
         let venv_bean_check = venv_dir.join("Scripts").join("bean-check");
         if venv_bean_check.is_file() {
+            tracing::info!(
+                "Using venv bean-check: {}",
+                venv_bean_check.to_string_lossy()
+            );
             return Some(venv_bean_check);
         }
     }
 
     if let Some(candidate) = find_in_path("bean-check") {
+        tracing::info!(
+            "Using bean-check from PATH: {}",
+            candidate.to_string_lossy()
+        );
         return Some(candidate);
     }
+
+    tracing::info!(
+        "No usable bean-check found: configured bean_check_cmd missing/empty, no venv bean-check, and bean-check not on PATH."
+    );
 
     None
 }
@@ -211,7 +244,7 @@ pub fn create_checker(
     config: &BeancountCheckConfig,
     root_dir: &Path,
 ) -> Option<Box<dyn BeancountChecker>> {
-    debug!("Creating bean checker with method: {:?}", config.method);
+    tracing::debug!("Creating bean checker with method: {:?}", config.method);
 
     let method = config.method;
 
@@ -219,10 +252,10 @@ pub fn create_checker(
         Some(BeancountCheckMethod::PythonEmbedded) => {
             let pyo3 = PyO3EmbeddedChecker::new();
             if pyo3.is_available() {
-                debug!("Using PyO3EmbeddedChecker");
+                tracing::debug!("Using PyO3EmbeddedChecker");
                 Some(Box::new(pyo3))
             } else if let Some(python_checker) = create_python_checker(config, root_dir) {
-                debug!("PyO3EmbeddedChecker unavailable; using SystemPythonChecker");
+                tracing::debug!("PyO3EmbeddedChecker unavailable; using SystemPythonChecker");
                 Some(Box::new(python_checker))
             } else {
                 let system_checker = create_system_call_checker(config, root_dir);
@@ -235,7 +268,7 @@ pub fn create_checker(
         }
         Some(BeancountCheckMethod::PythonSystem) => {
             if let Some(python_checker) = create_python_checker(config, root_dir) {
-                debug!("Using SystemPythonChecker");
+                tracing::debug!("Using SystemPythonChecker");
                 Some(Box::new(python_checker))
             } else {
                 let system_checker = create_system_call_checker(config, root_dir);
@@ -257,10 +290,10 @@ pub fn create_checker(
         None => {
             let pyo3 = PyO3EmbeddedChecker::new();
             if pyo3.is_available() {
-                debug!("Using PyO3EmbeddedChecker (preferred order)");
+                tracing::debug!("Using PyO3EmbeddedChecker (preferred order)");
                 Some(Box::new(pyo3))
             } else if let Some(python_checker) = create_python_checker(config, root_dir) {
-                debug!("Using SystemPythonChecker (preferred order)");
+                tracing::debug!("Using SystemPythonChecker (preferred order)");
                 Some(Box::new(python_checker))
             } else {
                 let system_checker = create_system_call_checker(config, root_dir);
@@ -274,13 +307,15 @@ pub fn create_checker(
     };
 
     if let Some(checker) = &checker {
-        info!(
+        tracing::info!(
             "Selected checker: {}, availability: {}",
             checker.name(),
             checker.is_available()
         );
     } else {
-        info!("No checker available");
+        tracing::info!(
+            "No checker available after evaluation. See previous info logs for why python/bean-check were not found."
+        );
     }
 
     checker
@@ -294,8 +329,8 @@ mod tests {
     fn test_default_config() {
         let config = BeancountCheckConfig::new();
         assert!(config.method.is_none()); // None means auto-discovery
-        assert_eq!(config.bean_check_cmd, Some(PathBuf::from("bean-check")));
-        assert_eq!(config.python_cmd, Some(PathBuf::from("python3")));
+        assert_eq!(config.bean_check_cmd, None);
+        assert_eq!(config.python_cmd, None);
     }
 
     #[test]

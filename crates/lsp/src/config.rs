@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub root_file: PathBuf,
+    /// root directory of current workspace
+    pub root_dir: PathBuf,
+    /// path to root journal file
     pub journal_root: Option<PathBuf>,
     pub formatting: FormattingConfig,
     pub bean_check: BeancountCheckConfig,
@@ -53,9 +55,9 @@ impl FormattingConfig {
 }
 
 impl Config {
-    pub fn new(root_file: PathBuf) -> Self {
+    pub fn new(root_dir: PathBuf) -> Self {
         Self {
-            root_file,
+            root_dir,
             journal_root: None,
             formatting: FormattingConfig::default(),
             bean_check: BeancountCheckConfig::new(),
@@ -379,23 +381,20 @@ mod tests {
     fn test_bean_check_cmd_path() {
         let config = Config::new(PathBuf::new());
         // Check default value
-        assert_eq!(
-            config.bean_check.bean_check_cmd,
-            Some(PathBuf::from("bean-check"))
-        );
+        assert_eq!(config.bean_check.bean_check_cmd, None);
     }
 
     #[test]
     fn test_bean_check_python_cmd() {
         let config = Config::new(PathBuf::new());
         // Check default value
-        assert_eq!(config.bean_check.python_cmd, Some(PathBuf::from("python3")));
+        assert_eq!(config.bean_check.python_cmd, None);
     }
 
     #[test]
     fn test_config_new() {
         let config = Config::new(PathBuf::from("/path/to/file.bean"));
-        assert_eq!(config.root_file, PathBuf::from("/path/to/file.bean"));
+        assert_eq!(config.root_dir, PathBuf::from("/path/to/file.bean"));
         assert_eq!(config.journal_root, None);
         assert_eq!(config.formatting.prefix_width, None);
         assert_eq!(config.bean_check.method, None);
