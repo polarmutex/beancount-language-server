@@ -25,6 +25,7 @@ pub(crate) enum ProgressMsg {
     BeanCheck {
         total: usize,
         done: usize,
+        checker_name: String,
     },
     ForestInit {
         total: usize,
@@ -254,7 +255,11 @@ impl LspServerState {
 
     fn handle_progress_task(&mut self, task: ProgressMsg) -> Result<()> {
         match task {
-            ProgressMsg::BeanCheck { total, done } => {
+            ProgressMsg::BeanCheck {
+                total,
+                done,
+                checker_name,
+            } => {
                 let progress_state = if done == 0 {
                     Progress::Begin
                 } else if done < total {
@@ -263,7 +268,7 @@ impl LspServerState {
                     Progress::End
                 };
                 self.report_progress(
-                    "bean check",
+                    &format!("bean check ({})", checker_name),
                     progress_state,
                     Some(format!("{done}/{total}")),
                     Some(Progress::fraction(done, total)),
