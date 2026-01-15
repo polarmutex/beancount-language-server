@@ -58,7 +58,7 @@ impl Config {
             root_file,
             journal_root: None,
             formatting: FormattingConfig::default(),
-            bean_check: BeancountCheckConfig::default(),
+            bean_check: BeancountCheckConfig::new(),
         }
     }
     pub fn update(&mut self, json: serde_json::Value) -> Result<()> {
@@ -102,16 +102,13 @@ impl Config {
             // Update bean-check configuration
             if let Some(bean_check) = beancount_lsp_settings.bean_check {
                 if let Some(method) = bean_check.method {
-                    self.bean_check.method = method;
+                    self.bean_check.method = Some(method);
                 }
                 if let Some(bean_check_cmd) = bean_check.bean_check_cmd {
-                    self.bean_check.bean_check_cmd = PathBuf::from(bean_check_cmd);
+                    self.bean_check.bean_check_cmd = Some(PathBuf::from(bean_check_cmd));
                 }
                 if let Some(python_cmd) = bean_check.python_cmd {
-                    self.bean_check.python_cmd = PathBuf::from(python_cmd);
-                }
-                if let Some(python_script_path) = bean_check.python_script_path {
-                    self.bean_check.python_script_path = PathBuf::from(python_script_path);
+                    self.bean_check.python_cmd = Some(PathBuf::from(python_cmd));
                 }
             }
         }
@@ -150,15 +147,13 @@ pub struct FormattingOptions {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct BeancountCheckOptions {
-    /// Method for bean-check execution: "system" or "python"
+    /// Method for bean-check execution: "system", "python-system", or "python-embedded"
     #[serde(with = "bean_check_method_serde")]
     pub method: Option<BeancountCheckMethod>,
     /// Path to bean-check executable (for system method)
     pub bean_check_cmd: Option<String>,
     /// Path to Python executable (for python method)
     pub python_cmd: Option<String>,
-    /// Path to Python script (for python method)
-    pub python_script_path: Option<String>,
 }
 
 // Custom serde module for BeancountCheckMethod
@@ -176,6 +171,7 @@ mod bean_check_method_serde {
         match value {
             Some(BeancountCheckMethod::SystemCall) => "system".serialize(serializer),
             Some(BeancountCheckMethod::PythonEmbedded) => "python-embedded".serialize(serializer),
+            Some(BeancountCheckMethod::PythonSystem) => "python-system".serialize(serializer),
             None => serializer.serialize_none(),
         }
     }
@@ -190,6 +186,7 @@ mod bean_check_method_serde {
             Some("python-embedded") | Some("pyo3") => {
                 Ok(Some(BeancountCheckMethod::PythonEmbedded))
             }
+            Some("python-system") => Ok(Some(BeancountCheckMethod::PythonSystem)),
             Some(_) => Ok(None), // Invalid method, ignore gracefully
             None => Ok(None),
         }
@@ -346,7 +343,10 @@ mod tests {
         config
             .update(serde_json::from_str(r#"{"bean_check": {"method": "system"}}"#).unwrap())
             .unwrap();
-        assert_eq!(config.bean_check.method, BeancountCheckMethod::SystemCall);
+        assert_eq!(
+            config.bean_check.method,
+            Some(BeancountCheckMethod::SystemCall)
+        );
     }
 
     #[test]
@@ -359,7 +359,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             config.bean_check.method,
-            BeancountCheckMethod::PythonEmbedded
+            Some(BeancountCheckMethod::PythonEmbedded)
         );
     }
 
@@ -371,7 +371,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             config.bean_check.method,
-            BeancountCheckMethod::PythonEmbedded
+            Some(BeancountCheckMethod::PythonEmbedded)
         );
     }
 
@@ -381,7 +381,7 @@ mod tests {
         // Check default first
         assert_eq!(
             config.bean_check.bean_check_cmd,
-            PathBuf::from("bean-check")
+            Some(PathBuf::from("bean-check"))
         );
     }
 
@@ -389,7 +389,7 @@ mod tests {
     fn test_bean_check_python_cmd() {
         let config = Config::new(PathBuf::new());
         // Check default first
-        assert_eq!(config.bean_check.python_cmd, PathBuf::from("python3"));
+        assert_eq!(config.bean_check.python_cmd, Some(PathBuf::from("python3")));
     }
 
     #[test]
@@ -397,8 +397,8 @@ mod tests {
         let config = Config::new(PathBuf::new());
         // Check default first
         assert_eq!(
-            config.bean_check.python_script_path,
-            PathBuf::from("python/bean_check.py")
+            config.bean_check.python_cmd,
+            Some(PathBuf::from("python/bean_check.py"))
         );
     }
 
@@ -408,7 +408,10 @@ mod tests {
         assert_eq!(config.root_file, PathBuf::from("/path/to/file.bean"));
         assert_eq!(config.journal_root, None);
         assert_eq!(config.formatting.prefix_width, None);
-        assert_eq!(config.bean_check.method, BeancountCheckMethod::SystemCall);
+        assert_eq!(
+            config.bean_check.method,
+            Some(BeancountCheckMethod::SystemCall)
+        );
     }
 
     #[test]
@@ -430,7 +433,10 @@ mod tests {
             )
             .unwrap();
         // Should keep default method
-        assert_eq!(config.bean_check.method, BeancountCheckMethod::SystemCall);
+        assert_eq!(
+            config.bean_check.method,
+            Some(BeancountCheckMethod::SystemCall)
+        );
     }
 
     #[test]
@@ -485,11 +491,11 @@ mod tests {
         assert_eq!(config.formatting.prefix_width, Some(60));
         assert_eq!(
             config.bean_check.method,
-            BeancountCheckMethod::PythonEmbedded
+            Some(BeancountCheckMethod::PythonEmbedded)
         );
         assert_eq!(
             config.bean_check.python_cmd,
-            PathBuf::from("/usr/bin/python3")
+            Some(PathBuf::from("/usr/bin/python3"))
         );
     }
 }

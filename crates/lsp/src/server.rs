@@ -1,4 +1,6 @@
 use crate::beancount_data::BeancountData;
+use crate::checkers::BeancountChecker;
+use crate::checkers::create_checker;
 use crate::config::Config;
 use crate::dispatcher::NotificationDispatcher;
 use crate::dispatcher::RequestDispatcher;
@@ -81,6 +83,9 @@ pub(crate) struct LspServerState {
 
     // Thread pool for async execution
     pub thread_pool: threadpool::ThreadPool,
+
+    // Cached checker instance (created once and reused)
+    pub checker: Option<Arc<dyn BeancountChecker>>,
 }
 
 /// A snapshot of the state of the language server
@@ -89,6 +94,7 @@ pub(crate) struct LspServerStateSnapshot {
     pub config: Config,
     pub forest: HashMap<PathBuf, Arc<tree_sitter::Tree>>,
     pub open_docs: HashMap<PathBuf, Document>,
+    pub checker: Option<Arc<dyn BeancountChecker>>,
 }
 
 /*
@@ -116,11 +122,15 @@ impl LspServerState {
             task_sender,
             task_receiver,
             thread_pool: threadpool::ThreadPool::default(),
+            checker: None,
         }
     }
 
     pub fn run(&mut self, receiver: Receiver<lsp_server::Message>) -> Result<()> {
         tracing::info!("LSP server starting main event loop");
+
+        // Initialize checker once (can be slow); report progress to users.
+        self.ensure_checker();
 
         // init forest
         if self.config.journal_root.is_some() {
@@ -436,6 +446,47 @@ impl LspServerState {
             config: self.config.clone(),
             forest: self.forest.clone(),
             open_docs: self.open_docs.clone(),
+            checker: self.checker.clone(),
         }
+    }
+
+    fn ensure_checker(&mut self) -> Option<Arc<dyn BeancountChecker>> {
+        if let Some(checker) = &self.checker {
+            return Some(checker.clone());
+        }
+
+        self.report_progress(
+            "checker auto",
+            Progress::Begin,
+            Some("discovering available checkers".to_string()),
+            None,
+        );
+
+        let checker = create_checker(&self.config.bean_check, &self.config.root_file);
+        let checker = checker.map(|checker| {
+            let checker_name = checker.name().to_string();
+            let checker: Arc<dyn BeancountChecker> = Arc::from(checker);
+            self.checker = Some(checker.clone());
+
+            self.report_progress(
+                "checker auto",
+                Progress::End,
+                Some(format!("using {checker_name}")),
+                None,
+            );
+
+            checker
+        });
+
+        if checker.is_none() {
+            self.report_progress(
+                "checker auto",
+                Progress::End,
+                Some("no checker available".to_string()),
+                None,
+            );
+        }
+
+        checker
     }
 }

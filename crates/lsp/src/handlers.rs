@@ -271,6 +271,7 @@ pub mod text_document {
                         open_docs,
                         beancount_data,
                         config,
+                        checker: None,
                     },
                     path,
                 })

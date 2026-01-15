@@ -119,16 +119,8 @@ fn convert_errors_to_diagnostics(
             error.line.saturating_sub(1)
         };
 
-        let position = lsp_types::Position {
-            line: line_number,
-            character: 0, // Start of line (bean-check doesn't provide column info)
-        };
-
         let diagnostic = lsp_types::Diagnostic {
-            range: lsp_types::Range {
-                start: position,
-                end: position, // Point diagnostic
-            },
+            range: full_line_range(line_number),
             message: error.message,
             severity: Some(lsp_types::DiagnosticSeverity::ERROR),
             source: Some("bean-check".to_string()),
@@ -161,16 +153,8 @@ fn merge_flagged_entries_from_checker(
             entry.line.saturating_sub(1)
         };
 
-        let position = lsp_types::Position {
-            line: line_number,
-            character: 0,
-        };
-
         let diagnostic = lsp_types::Diagnostic {
-            range: lsp_types::Range {
-                start: position,
-                end: position,
-            },
+            range: full_line_range(line_number),
             message: entry.message,
             severity: Some(lsp_types::DiagnosticSeverity::WARNING),
             source: Some("bean-check".to_string()),
@@ -194,16 +178,8 @@ fn merge_flagged_entries_from_parsed_data(
 ) {
     for (file_path, data) in beancount_data.iter() {
         for flagged_entry in &data.flagged_entries {
-            let position = lsp_types::Position {
-                line: flagged_entry.line,
-                character: 0, // Start of line
-            };
-
             let diagnostic = lsp_types::Diagnostic {
-                range: lsp_types::Range {
-                    start: position,
-                    end: position,
-                },
+                range: full_line_range(flagged_entry.line),
                 message: "Transaction flagged for review".to_string(),
                 severity: Some(lsp_types::DiagnosticSeverity::WARNING),
                 source: Some("beancount-lsp".to_string()),
@@ -218,6 +194,17 @@ fn merge_flagged_entries_from_parsed_data(
                 .or_default()
                 .push(diagnostic);
         }
+    }
+}
+
+/// Build a full-line range starting at column 0 to a very large column value.
+fn full_line_range(line: u32) -> lsp_types::Range {
+    lsp_types::Range {
+        start: lsp_types::Position { line, character: 0 },
+        end: lsp_types::Position {
+            line,
+            character: u32::MAX,
+        },
     }
 }
 

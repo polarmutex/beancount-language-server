@@ -2763,6 +2763,7 @@ A"#;
             config: crate::config::Config::new(PathBuf::from("/test")),
             forest,
             open_docs,
+            checker: None,
         };
 
         // Cursor position inside second string after "Nar"
