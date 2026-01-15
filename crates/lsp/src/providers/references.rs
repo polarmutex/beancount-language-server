@@ -236,6 +236,7 @@ mod tests {
                     open_docs,
                     beancount_data,
                     config,
+                    checker: None,
                 },
                 path,
             })

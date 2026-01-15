@@ -142,18 +142,23 @@ The language server accepts configuration via LSP initialization options:
 
 ### Configuration Options
 
-| Option         | Type   | Description                             | Default |
-| -------------- | ------ | --------------------------------------- | ------- |
-| `journal_file` | string | Path to the main beancount journal file | None    |
+| Option         | Type   | Description                                                         | Default |
+| -------------- | ------ | ------------------------------------------------------------------- | ------- |
+| `journal_file` | string | Path to the main beancount journal file (required for diagnostics)  | None    |
 
 ### Bean-check Configuration
 
-| Option                      | Type   | Description                                                        | Default                  |
-| --------------------------- | ------ | ------------------------------------------------------------------ | ------------------------ |
-| `bean_check.method`         | string | Validation method: "system", "python-script", or "python-embedded" | "system"                 |
-| `bean_check.bean_check_cmd` | string | Path to bean-check binary (for "system" method)                    | "bean-check"             |
-| `bean_check.python_cmd`     | string | Path to Python executable (for Python methods)                     | "python3"                |
-| `bean_check.python_script`  | string | Path to Python validation script (for "python-script" method)      | "./python/bean_check.py" |
+| Option                      | Type   | Description                                                         | Default      |
+| --------------------------- | ------ | ------------------------------------------------------------------- | ------------ |
+| `bean_check.method`         | string | Validation method: "system", "python-system", or "python-embedded" | None    |
+| `bean_check.bean_check_cmd` | string | Path to bean-check binary (for "system" method)                     | "bean-check" from virtualenv of path |
+| `bean_check.python_cmd`     | string | Path to Python executable (for Python methods)                      | "python"/"python3"  from virtualenv of PATH    |
+
+**Preferred checker order (when `bean_check.method` is not set):**
+
+1. `python-embedded` (if built with the feature and available)
+2. `python-system` (if a compatible Python with beancount is available)
+3. `system` (if bean-check is available)
 
 #### Bean-check Methods
 
@@ -166,9 +171,9 @@ The language server supports three different methods for validating beancount fi
 - Requires `bean-check` binary to be installed and available in PATH
 - Compatible with all existing bean-check installations
 
-**Python Script Method** (experimental):
+**Python System Method** (experimental):
 
-- Executes a Python script that uses the beancount library directly
+- Executes embedded Python code via `python -c` that uses the beancount library directly
 - Provides structured JSON output for better error handling
 - Supports both validation errors and flagged entry detection
 - Requires Python with beancount library installed
@@ -194,14 +199,13 @@ The language server supports three different methods for validating beancount fi
 }
 ```
 
-**Python script with custom paths:**
+**Python system method with custom paths:**
 
 ```json
 {
   "bean_check": {
-    "method": "python-script",
-    "python_cmd": "/usr/bin/python3",
-    "python_script": "./python/bean_check.py"
+    "method": "python-system",
+    "python_cmd": "/usr/bin/python3"
   }
 }
 ```

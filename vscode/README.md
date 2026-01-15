@@ -40,13 +40,13 @@ Add the settings you need to `settings.json`:
 Key options:
 
 - `serverPath` (optional): Use a custom server binary path instead of the bundled one (set if you want to run your own build)
-- `journalFile`: Path to your primary Beancount journal
+- `journalFile`: Path to your primary Beancount journal (required for diagnostics)
 - `formatting.*`: formatting related option, check https://github.com/polarmutex/beancount-language-server?tab=readme-ov-file#%EF%B8%8F-configuration for more details
 
 ## Troubleshooting
 
 - Make sure Python and the `beancount` package are available in the same environment VS Code uses.
-- If diagnostics do not appear, run `bean-check` (or your configured command) in a VS Code terminal to confirm it works there.
+- If diagnostics do not appear, ensure `beancountLangServer.journalFile` is set and run `bean-check` (or your configured command) in a VS Code terminal to confirm it works there.
 
 ## Develop the extension
 

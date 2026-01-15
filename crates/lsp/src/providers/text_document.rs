@@ -1,5 +1,4 @@
 use crate::beancount_data::BeancountData;
-use crate::checkers::create_checker;
 use crate::document::Document;
 use crate::providers::diagnostics;
 use crate::server::LspServerState;
@@ -13,9 +12,9 @@ use anyhow::Result;
 use crossbeam_channel::Sender;
 use glob::glob;
 use lsp_types::notification::Notification;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::debug;
@@ -337,20 +336,18 @@ pub(crate) fn did_change(
 fn handle_diagnostics(
     snapshot: LspServerStateSnapshot,
     sender: Sender<Task>,
-    uri: lsp_types::Uri,
+    _uri: lsp_types::Uri,
 ) -> Result<()> {
     tracing::debug!("text_document::handle_diagnostics");
 
-    // Create the appropriate checker based on configuration
-    tracing::debug!(
-        "Bean check configuration: method={:?}, bean_check_cmd={}, python_cmd={}, python_script={}",
-        snapshot.config.bean_check.method,
-        snapshot.config.bean_check.bean_check_cmd.display(),
-        snapshot.config.bean_check.python_cmd.display(),
-        snapshot.config.bean_check.python_script_path.display()
-    );
+    let checker = match snapshot.checker.clone() {
+        Some(checker) => checker,
+        None => {
+            tracing::warn!("No checker available; skipping diagnostics");
+            return Ok(());
+        }
+    };
 
-    let checker = create_checker(&snapshot.config.bean_check);
     tracing::debug!(
         "Using checker: {}, available: {}",
         checker.name(),
@@ -361,11 +358,12 @@ fn handle_diagnostics(
         .send(Task::Progress(ProgressMsg::BeanCheck { done: 0, total: 1 }))
         .unwrap();
 
-    let root_journal_path = if snapshot.config.journal_root.is_some() {
-        snapshot.config.journal_root.unwrap()
-    } else {
-        // Use proper URI to file path conversion instead of string replacement
-        uri.to_file_path().unwrap_or_default()
+    let root_journal_path = match snapshot.config.journal_root.clone() {
+        Some(path) => path,
+        None => {
+            tracing::warn!("No journal_root configured; skipping diagnostics");
+            return Ok(());
+        }
     };
 
     let diags = diagnostics::diagnostics(
@@ -378,12 +376,15 @@ fn handle_diagnostics(
         .send(Task::Progress(ProgressMsg::BeanCheck { done: 1, total: 1 }))
         .unwrap();
 
+    let mut normalized_diags: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
+    for (path, diagnostics) in diags {
+        let key = normalize_path_for_diagnostics(&path);
+        normalized_diags.entry(key).or_default().extend(diagnostics);
+    }
+
     for file in snapshot.forest.keys() {
-        let diagnostics = if diags.contains_key(file) {
-            diags.get(file).unwrap().clone()
-        } else {
-            vec![]
-        };
+        let lookup = normalize_path_for_diagnostics(file);
+        let diagnostics = normalized_diags.remove(&lookup).unwrap_or_default();
         sender
             .send(Task::Notify(lsp_server::Notification {
                 method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
@@ -401,7 +402,51 @@ fn handle_diagnostics(
             }))
             .unwrap()
     }
+
+    for (file, diagnostics) in normalized_diags {
+        sender
+            .send(Task::Notify(lsp_server::Notification {
+                method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
+                params: to_json(lsp_types::PublishDiagnosticsParams {
+                    uri: {
+                        let url = url::Url::from_file_path(&file)
+                            .expect("Failed to convert file path to URI");
+                        lsp_types::Uri::from_str(url.as_str())
+                            .expect("Failed to parse URL as LSP URI")
+                    },
+                    diagnostics,
+                    version: None,
+                })
+                .unwrap(),
+            }))
+            .unwrap()
+    }
     Ok(())
+}
+
+fn normalize_path_for_diagnostics(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let normalized = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        strip_verbatim_prefix(normalized)
+    }
+
+    #[cfg(not(windows))]
+    {
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    }
+}
+
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let path_str = path.to_string_lossy();
+    if let Some(stripped) = path_str.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{}", stripped))
+    } else if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path
+    }
 }
 
 #[cfg(test)]
