@@ -83,3 +83,4 @@ tag = true
 [features]
 default = []
 python-embedded = ["pyo3"]
+integration-tests = []

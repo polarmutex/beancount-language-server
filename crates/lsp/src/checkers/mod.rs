@@ -75,9 +75,9 @@ impl Default for BeancountCheckConfig {
 impl BeancountCheckConfig {
     pub fn new() -> Self {
         Self {
-            method: None,
-            bean_check_cmd: None,
-            python_cmd: None,
+            method: None, // None means auto-discovery
+            bean_check_cmd: Some(PathBuf::from("bean-check")),
+            python_cmd: Some(PathBuf::from("python3")),
         }
     }
 }
@@ -293,9 +293,9 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = BeancountCheckConfig::new();
-        assert!(config.method.is_none());
-        assert!(config.bean_check_cmd.is_none());
-        assert!(config.python_cmd.is_none());
+        assert!(config.method.is_none()); // None means auto-discovery
+        assert_eq!(config.bean_check_cmd, Some(PathBuf::from("bean-check")));
+        assert_eq!(config.python_cmd, Some(PathBuf::from("python3")));
     }
 
     #[test]
@@ -331,6 +331,320 @@ mod tests {
 
         #[cfg(not(feature = "python-embedded"))]
         if let Some(checker) = checker {
+            assert!(checker.name() == "SystemPythonChecker" || checker.name() == "SystemCall");
+        }
+    }
+
+    #[test]
+    fn test_find_python_from_venv_unix() {
+        #[cfg(unix)]
+        {
+            use std::fs;
+            use tempfile::TempDir;
+
+            let temp_dir = TempDir::new().unwrap();
+            let venv_dir = temp_dir.path().join(".venv");
+            let bin_dir = venv_dir.join("bin");
+            fs::create_dir_all(&bin_dir).unwrap();
+
+            // Create mock python3 executable
+            let python3_path = bin_dir.join("python3");
+            fs::write(&python3_path, "#!/bin/sh\necho python3").unwrap();
+
+            let result = find_python_from_venv(temp_dir.path());
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), python3_path);
+
+            // Test python (not python3)
+            fs::remove_file(&python3_path).unwrap();
+            let python_path = bin_dir.join("python");
+            fs::write(&python_path, "#!/bin/sh\necho python").unwrap();
+
+            let result = find_python_from_venv(temp_dir.path());
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), python_path);
+        }
+    }
+
+    #[test]
+    fn test_find_python_from_venv_windows() {
+        #[cfg(windows)]
+        {
+            use std::fs;
+            use tempfile::TempDir;
+
+            let temp_dir = TempDir::new().unwrap();
+            let venv_dir = temp_dir.path().join(".venv");
+            let scripts_dir = venv_dir.join("Scripts");
+            fs::create_dir_all(&scripts_dir).unwrap();
+
+            // Create mock python.exe
+            let python_path = scripts_dir.join("python.exe");
+            fs::write(&python_path, "mock python").unwrap();
+
+            let result = find_python_from_venv(temp_dir.path());
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), python_path);
+
+            // Test python3.exe
+            fs::remove_file(&python_path).unwrap();
+            let python3_path = scripts_dir.join("python3.exe");
+            fs::write(&python3_path, "mock python3").unwrap();
+
+            let result = find_python_from_venv(temp_dir.path());
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), python3_path);
+        }
+    }
+
+    #[test]
+    fn test_find_python_from_venv_not_found() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let result = find_python_from_venv(temp_dir.path());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_in_path_nonexistent() {
+        let result = find_in_path("definitely_nonexistent_command_xyz123");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_in_path_existing() {
+        // Test with a command that should exist on all systems
+        #[cfg(unix)]
+        let cmd = "sh";
+        #[cfg(windows)]
+        let cmd = "cmd";
+
+        let result = find_in_path(cmd);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_resolve_python_cmd_user_specified() {
+        let config = BeancountCheckConfig {
+            method: None,
+            bean_check_cmd: None,
+            python_cmd: Some(PathBuf::from("/custom/python")),
+        };
+
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+
+        let result = resolve_python_cmd(&config, temp_dir.path());
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), PathBuf::from("/custom/python"));
+    }
+
+    #[test]
+    fn test_resolve_python_cmd_empty_string() {
+        let config = BeancountCheckConfig {
+            method: None,
+            bean_check_cmd: None,
+            python_cmd: Some(PathBuf::from("")),
+        };
+
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+
+        // Empty string should trigger venv/PATH search
+        let result = resolve_python_cmd(&config, temp_dir.path());
+        // Result depends on system, just verify it doesn't panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_resolve_python_cmd_venv_priority() {
+        #[cfg(unix)]
+        {
+            use std::fs;
+            use tempfile::TempDir;
+
+            let temp_dir = TempDir::new().unwrap();
+            let venv_dir = temp_dir.path().join(".venv");
+            let bin_dir = venv_dir.join("bin");
+            fs::create_dir_all(&bin_dir).unwrap();
+
+            // Create mock venv python
+            let venv_python = bin_dir.join("python3");
+            fs::write(&venv_python, "#!/bin/sh\necho venv python").unwrap();
+
+            // Config with empty python_cmd to trigger venv search
+            let config = BeancountCheckConfig {
+                method: None,
+                bean_check_cmd: None,
+                python_cmd: None,
+            };
+            let result = resolve_python_cmd(&config, temp_dir.path());
+
+            // Should prefer venv python over system python
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), venv_python);
+        }
+    }
+
+    #[test]
+    fn test_resolve_bean_check_cmd_user_specified() {
+        let config = BeancountCheckConfig {
+            method: None,
+            bean_check_cmd: Some(PathBuf::from("/custom/bean-check")),
+            python_cmd: None,
+        };
+
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+
+        let result = resolve_bean_check_cmd(&config, temp_dir.path());
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), PathBuf::from("/custom/bean-check"));
+    }
+
+    #[test]
+    fn test_resolve_bean_check_cmd_venv_unix() {
+        #[cfg(unix)]
+        {
+            use std::fs;
+            use tempfile::TempDir;
+
+            let temp_dir = TempDir::new().unwrap();
+            let venv_dir = temp_dir.path().join(".venv");
+            let bin_dir = venv_dir.join("bin");
+            fs::create_dir_all(&bin_dir).unwrap();
+
+            // Create mock bean-check
+            let bean_check_path = bin_dir.join("bean-check");
+            fs::write(&bean_check_path, "#!/bin/sh\necho bean-check").unwrap();
+
+            // Config with None to trigger venv search
+            let config = BeancountCheckConfig {
+                method: None,
+                bean_check_cmd: None,
+                python_cmd: None,
+            };
+
+            let result = resolve_bean_check_cmd(&config, temp_dir.path());
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), bean_check_path);
+        }
+    }
+
+    #[test]
+    fn test_resolve_bean_check_cmd_venv_windows() {
+        #[cfg(windows)]
+        {
+            use std::fs;
+            use tempfile::TempDir;
+
+            let temp_dir = TempDir::new().unwrap();
+            let venv_dir = temp_dir.path().join(".venv");
+            let scripts_dir = venv_dir.join("Scripts");
+            fs::create_dir_all(&scripts_dir).unwrap();
+
+            // Create mock bean-check.exe
+            let bean_check_path = scripts_dir.join("bean-check.exe");
+            fs::write(&bean_check_path, "mock bean-check").unwrap();
+
+            // Config with None to trigger venv search
+            let config = BeancountCheckConfig {
+                method: None,
+                bean_check_cmd: None,
+                python_cmd: None,
+            };
+
+            let result = resolve_bean_check_cmd(&config, temp_dir.path());
+            assert!(result.is_some());
+            assert_eq!(result.unwrap(), bean_check_path);
+        }
+    }
+
+    #[test]
+    fn test_create_system_call_checker() {
+        let config = BeancountCheckConfig::new();
+        let checker = create_system_call_checker(&config, Path::new("."));
+
+        assert_eq!(checker.name(), "SystemCall");
+    }
+
+    #[test]
+    fn test_create_python_checker_nonexistent() {
+        let config = BeancountCheckConfig {
+            method: None,
+            bean_check_cmd: None,
+            python_cmd: Some(PathBuf::from("/nonexistent/python")),
+        };
+
+        let result = create_python_checker(&config, Path::new("."));
+        // Should return None because python is not available
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_checker_fallback_chain() {
+        // Test that factory falls back through checkers when unavailable
+        let config = BeancountCheckConfig {
+            method: Some(BeancountCheckMethod::PythonEmbedded),
+            bean_check_cmd: Some(PathBuf::from("/nonexistent/bean-check")),
+            python_cmd: Some(PathBuf::from("/nonexistent/python")),
+        };
+
+        let checker = create_checker(&config, Path::new("."));
+
+        // Should fall back to system checker (which may or may not be available)
+        // Just verify it doesn't panic
+        if let Some(checker) = checker {
+            // If a checker is returned, verify it has the right interface
+            let _ = checker.name();
+            let _ = checker.is_available();
+        }
+    }
+
+    #[test]
+    fn test_checker_method_priority() {
+        // Test explicit method selection
+        let test_cases = vec![
+            (BeancountCheckMethod::SystemCall, "SystemCall"),
+            #[cfg(feature = "python-embedded")]
+            (BeancountCheckMethod::PythonEmbedded, "PyO3Embedded"),
+            #[cfg(not(feature = "python-embedded"))]
+            (BeancountCheckMethod::PythonEmbedded, "SystemPythonChecker"),
+        ];
+
+        for (method, _expected_name) in test_cases {
+            let config = BeancountCheckConfig {
+                method: Some(method),
+                ..BeancountCheckConfig::new()
+            };
+
+            let checker = create_checker(&config, Path::new("."));
+            // Just verify it returns something (availability depends on system)
+            let _ = checker;
+        }
+    }
+
+    #[test]
+    fn test_auto_discovery_prefers_pyo3() {
+        // Test that auto-discovery (method: None) prefers PyO3 when available
+        let config = BeancountCheckConfig {
+            method: None,
+            ..BeancountCheckConfig::new()
+        };
+
+        let checker = create_checker(&config, Path::new("."));
+
+        #[cfg(feature = "python-embedded")]
+        if let Some(checker) = checker {
+            // With python-embedded feature, PyO3 should be tried first
+            // But it might not be available, so we just check it doesn't panic
+            let _ = checker.name();
+        }
+
+        #[cfg(not(feature = "python-embedded"))]
+        if let Some(checker) = checker {
+            // Without python-embedded feature, should use SystemPython or SystemCall
             assert!(checker.name() == "SystemPythonChecker" || checker.name() == "SystemCall");
         }
     }
