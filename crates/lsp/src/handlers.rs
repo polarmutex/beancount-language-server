@@ -229,6 +229,7 @@ pub mod text_document {
         use std::str::FromStr;
         use std::sync::Arc;
         use tree_sitter_beancount::tree_sitter;
+        use url::Url;
 
         struct TestState {
             snapshot: LspServerStateSnapshot,
@@ -281,7 +282,7 @@ pub mod text_document {
             let content = "2024-01-01 open Assets:Checking\n2024-01-02 * \"Test\"\n  Assets:Checking  100.00 USD\n";
             let state = TestState::new(content).unwrap();
 
-            let uri = lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy()))
+            let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
                 .unwrap();
             let params = lsp_types::DocumentFormattingParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri },
@@ -303,7 +304,7 @@ pub mod text_document {
                 "2024-01-01 open Assets:Checking\n2024-01-02 * \"Test\" \"Test\"\n  Assets:Che";
             let state = TestState::new(content).unwrap();
 
-            let uri = lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy()))
+            let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
                 .unwrap();
             let params = lsp_types::CompletionParams {
                 text_document_position: lsp_types::TextDocumentPositionParams {
@@ -324,7 +325,7 @@ pub mod text_document {
             let content = "2024-01-01 open Assets:Checking\n";
             let state = TestState::new(content).unwrap();
 
-            let uri = lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy()))
+            let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
                 .unwrap();
             let params = lsp_types::CompletionParams {
                 text_document_position: lsp_types::TextDocumentPositionParams {
@@ -348,7 +349,7 @@ pub mod text_document {
             let content = "2024-01-01 open Assets:Checking\n2024-01-02 * \"Test\"\n  Assets:Checking  100.00 USD\n";
             let state = TestState::new(content).unwrap();
 
-            let uri = lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy()))
+            let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
                 .unwrap();
             let params = lsp_types::ReferenceParams {
                 text_document_position: lsp_types::TextDocumentPositionParams {
@@ -372,7 +373,7 @@ pub mod text_document {
             let content = "2024-01-01 open Assets:Checking\n2024-01-02 * \"Test\"\n  Assets:Checking  100.00 USD\n";
             let state = TestState::new(content).unwrap();
 
-            let uri = lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy()))
+            let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
                 .unwrap();
             let params = lsp_types::RenameParams {
                 text_document_position: lsp_types::TextDocumentPositionParams {
@@ -396,7 +397,7 @@ pub mod text_document {
             let content = "2024-01-01 open Assets:Checking\n";
             let state = TestState::new(content).unwrap();
 
-            let uri = lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy()))
+            let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
                 .unwrap();
             let params = lsp_types::SemanticTokensParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri },
