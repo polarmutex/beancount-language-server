@@ -137,7 +137,7 @@ impl LspServerState {
             let file = self.config.journal_root.as_ref().unwrap();
 
             let journal_root = if file.is_relative() {
-                self.config.root_file.join(file)
+                self.config.root_dir.join(file)
             } else {
                 file.clone()
             };
@@ -462,7 +462,7 @@ impl LspServerState {
             None,
         );
 
-        let checker = create_checker(&self.config.bean_check, &self.config.root_file);
+        let checker = create_checker(&self.config.bean_check, &self.config.root_dir);
         let checker = checker.map(|checker| {
             let checker_name = checker.name().to_string();
             let checker: Arc<dyn BeancountChecker> = Arc::from(checker);
