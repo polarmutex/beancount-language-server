@@ -424,6 +424,31 @@ fn handle_diagnostics(
     Ok(())
 }
 
+fn normalize_path_for_diagnostics(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let normalized = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        strip_verbatim_prefix(normalized)
+    }
+
+    #[cfg(not(windows))]
+    {
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    }
+}
+
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let path_str = path.to_string_lossy();
+    if let Some(stripped) = path_str.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{}", stripped))
+    } else if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::document::Document;
@@ -653,30 +678,5 @@ mod tests {
             "Should preserve '中文测试', got: {}",
             result
         );
-    }
-}
-
-fn normalize_path_for_diagnostics(path: &Path) -> PathBuf {
-    #[cfg(windows)]
-    {
-        let normalized = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        strip_verbatim_prefix(normalized)
-    }
-
-    #[cfg(not(windows))]
-    {
-        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-    }
-}
-
-#[cfg(windows)]
-fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
-    let path_str = path.to_string_lossy();
-    if let Some(stripped) = path_str.strip_prefix(r"\\?\UNC\") {
-        PathBuf::from(format!(r"\\{}", stripped))
-    } else if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
-        PathBuf::from(stripped)
-    } else {
-        path
     }
 }

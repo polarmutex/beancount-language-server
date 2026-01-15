@@ -343,7 +343,10 @@ mod tests {
         config
             .update(serde_json::from_str(r#"{"bean_check": {"method": "system"}}"#).unwrap())
             .unwrap();
-        assert_eq!(config.bean_check.method, BeancountCheckMethod::SystemCall);
+        assert_eq!(
+            config.bean_check.method,
+            Some(BeancountCheckMethod::SystemCall)
+        );
     }
 
     #[test]
@@ -356,7 +359,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             config.bean_check.method,
-            BeancountCheckMethod::PythonEmbedded
+            Some(BeancountCheckMethod::PythonEmbedded)
         );
     }
 
@@ -368,7 +371,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             config.bean_check.method,
-            BeancountCheckMethod::PythonEmbedded
+            Some(BeancountCheckMethod::PythonEmbedded)
         );
     }
 
@@ -378,7 +381,7 @@ mod tests {
         // Check default first
         assert_eq!(
             config.bean_check.bean_check_cmd,
-            PathBuf::from("bean-check")
+            Some(PathBuf::from("bean-check"))
         );
     }
 
@@ -386,7 +389,7 @@ mod tests {
     fn test_bean_check_python_cmd() {
         let config = Config::new(PathBuf::new());
         // Check default first
-        assert_eq!(config.bean_check.python_cmd, PathBuf::from("python3"));
+        assert_eq!(config.bean_check.python_cmd, Some(PathBuf::from("python3")));
     }
 
     #[test]
@@ -394,8 +397,8 @@ mod tests {
         let config = Config::new(PathBuf::new());
         // Check default first
         assert_eq!(
-            config.bean_check.python_script_path,
-            PathBuf::from("python/bean_check.py")
+            config.bean_check.python_cmd,
+            Some(PathBuf::from("python/bean_check.py"))
         );
     }
 
@@ -405,7 +408,10 @@ mod tests {
         assert_eq!(config.root_file, PathBuf::from("/path/to/file.bean"));
         assert_eq!(config.journal_root, None);
         assert_eq!(config.formatting.prefix_width, None);
-        assert_eq!(config.bean_check.method, BeancountCheckMethod::SystemCall);
+        assert_eq!(
+            config.bean_check.method,
+            Some(BeancountCheckMethod::SystemCall)
+        );
     }
 
     #[test]
@@ -427,7 +433,10 @@ mod tests {
             )
             .unwrap();
         // Should keep default method
-        assert_eq!(config.bean_check.method, BeancountCheckMethod::SystemCall);
+        assert_eq!(
+            config.bean_check.method,
+            Some(BeancountCheckMethod::SystemCall)
+        );
     }
 
     #[test]
@@ -482,11 +491,11 @@ mod tests {
         assert_eq!(config.formatting.prefix_width, Some(60));
         assert_eq!(
             config.bean_check.method,
-            BeancountCheckMethod::PythonEmbedded
+            Some(BeancountCheckMethod::PythonEmbedded)
         );
         assert_eq!(
             config.bean_check.python_cmd,
-            PathBuf::from("/usr/bin/python3")
+            Some(PathBuf::from("/usr/bin/python3"))
         );
     }
 }

@@ -206,6 +206,7 @@ mod tests {
             config: Config::new(PathBuf::from("/tmp/test.bean")),
             forest: HashMap::new(),
             open_docs: HashMap::new(),
+            checker: None,
         }
     }
 

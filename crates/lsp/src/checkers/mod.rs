@@ -302,8 +302,17 @@ mod tests {
     fn test_factory_system_call() {
         let config = BeancountCheckConfig::new();
         let checker = create_checker(&config, Path::new("."));
+        // When no method is specified, auto-discovery tries PyO3 -> SystemPython -> SystemCall
         if let Some(checker) = checker {
-            assert!(checker.name() == "SystemCall" || checker.name() == "SystemPythonChecker");
+            #[cfg(feature = "python-embedded")]
+            assert!(
+                checker.name() == "PyO3Embedded"
+                    || checker.name() == "SystemPythonChecker"
+                    || checker.name() == "SystemCall"
+            );
+
+            #[cfg(not(feature = "python-embedded"))]
+            assert!(checker.name() == "SystemPythonChecker" || checker.name() == "SystemCall");
         }
     }
 
