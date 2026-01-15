@@ -273,4 +273,218 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_legend() {
+        let legend = legend();
+        assert_eq!(legend.token_types.len(), TokenKind::iter().count());
+        assert_eq!(legend.token_modifiers.len(), 0);
+    }
+
+    #[test]
+    fn test_classify_node_operators() {
+        assert_eq!(classify_node(NodeKind::Asterisk), Some(TokenKind::Operator));
+        assert_eq!(classify_node(NodeKind::At), Some(TokenKind::Operator));
+        assert_eq!(classify_node(NodeKind::Atat), Some(TokenKind::Operator));
+        assert_eq!(classify_node(NodeKind::Plus), Some(TokenKind::Operator));
+        assert_eq!(classify_node(NodeKind::Minus), Some(TokenKind::Operator));
+        assert_eq!(classify_node(NodeKind::Slash), Some(TokenKind::Operator));
+    }
+
+    #[test]
+    fn test_classify_node_keywords() {
+        assert_eq!(classify_node(NodeKind::Flag), Some(TokenKind::Keyword));
+        assert_eq!(classify_node(NodeKind::Bool), Some(TokenKind::Keyword));
+        assert_eq!(classify_node(NodeKind::Item), Some(TokenKind::Keyword));
+        assert_eq!(classify_node(NodeKind::Key), Some(TokenKind::Keyword));
+    }
+
+    #[test]
+    fn test_classify_node_strings() {
+        assert_eq!(classify_node(NodeKind::Narration), Some(TokenKind::String));
+        assert_eq!(classify_node(NodeKind::Payee), Some(TokenKind::String));
+        assert_eq!(classify_node(NodeKind::String), Some(TokenKind::String));
+    }
+
+    #[test]
+    fn test_classify_node_numbers() {
+        assert_eq!(classify_node(NodeKind::Date), Some(TokenKind::Number));
+        assert_eq!(classify_node(NodeKind::Number), Some(TokenKind::Number));
+    }
+
+    #[test]
+    fn test_classify_node_other_types() {
+        assert_eq!(classify_node(NodeKind::Comment), Some(TokenKind::Comment));
+        assert_eq!(classify_node(NodeKind::Currency), Some(TokenKind::Class));
+        assert_eq!(classify_node(NodeKind::Link), Some(TokenKind::Parameter));
+        assert_eq!(classify_node(NodeKind::Tag), Some(TokenKind::Parameter));
+    }
+
+    #[test]
+    fn test_classify_node_none_cases() {
+        // Test node kinds that explicitly return None
+        assert_eq!(classify_node(NodeKind::Account), None);
+        assert_eq!(classify_node(NodeKind::Unknown), None);
+        // Test other node kinds that fall through to the _ => None case
+        assert_eq!(classify_node(NodeKind::Directive), None);
+        assert_eq!(classify_node(NodeKind::Posting), None);
+        assert_eq!(classify_node(NodeKind::Transaction), None);
+    }
+
+    #[test]
+    fn test_to_semantic_token_basic() {
+        // Create a simple beancount content
+        let content = ropey::Rope::from_str("2024-01-01 open Assets:Checking");
+
+        // Parse with tree-sitter
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser
+            .parse("2024-01-01 open Assets:Checking", None)
+            .unwrap();
+
+        // Find the date node
+        let root = tree.root_node();
+        let mut cursor = root.walk();
+        let open_directive = root.children(&mut cursor).next().unwrap();
+        let mut open_cursor = open_directive.walk();
+        let date_node = open_directive
+            .children(&mut open_cursor)
+            .find(|n| n.kind() == "date")
+            .unwrap();
+
+        // Convert to semantic token
+        let token = to_semantic_token(&date_node, &content, TokenKind::Number).unwrap();
+
+        assert_eq!(token.line, 0);
+        assert_eq!(token.start, 0); // Date starts at column 0
+        assert_eq!(token.length, 10); // "2024-01-01" is 10 characters
+        assert_eq!(token.token_type, token_index(TokenKind::Number));
+        assert_eq!(token.modifiers_bitset, 0);
+    }
+
+    #[test]
+    fn test_to_semantic_token_with_utf8() {
+        // Test with multi-byte UTF-8 content
+        let content = ropey::Rope::from_str("2024-01-01 * \"Café ☕\"");
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse("2024-01-01 * \"Café ☕\"", None).unwrap();
+
+        // Find the narration node
+        let root = tree.root_node();
+        let mut cursor = root.walk();
+        let txn = root.children(&mut cursor).next().unwrap();
+        let mut txn_cursor = txn.walk();
+        let narration_node = txn
+            .children(&mut txn_cursor)
+            .find(|n| n.kind() == "narration")
+            .unwrap();
+
+        // Convert to semantic token
+        let token = to_semantic_token(&narration_node, &content, TokenKind::String).unwrap();
+
+        assert_eq!(token.line, 0);
+        // UTF-16 length should account for multi-byte characters
+        assert!(token.length > 0);
+        assert_eq!(token.token_type, token_index(TokenKind::String));
+    }
+
+    #[test]
+    fn test_collect_tokens_simple() {
+        let content = ropey::Rope::from_str("2024-01-01 open Assets:Checking");
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser
+            .parse("2024-01-01 open Assets:Checking", None)
+            .unwrap();
+
+        let mut tokens = Vec::new();
+        collect_tokens(tree.root_node(), &content, &mut tokens);
+
+        // Should collect at least the date token
+        assert!(!tokens.is_empty());
+        // Verify we collected a date token (should be first)
+        assert_eq!(tokens[0].token_type, token_index(TokenKind::Number));
+    }
+
+    #[test]
+    fn test_collect_tokens_transaction() {
+        let content = ropey::Rope::from_str(
+            "2024-01-01 * \"Payee\" \"Narration\"\n  Assets:Cash  100.00 USD",
+        );
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser
+            .parse(
+                "2024-01-01 * \"Payee\" \"Narration\"\n  Assets:Cash  100.00 USD",
+                None,
+            )
+            .unwrap();
+
+        let mut tokens = Vec::new();
+        collect_tokens(tree.root_node(), &content, &mut tokens);
+
+        // Should collect multiple tokens: date, payee, narration, numbers, currency
+        assert!(tokens.len() >= 4, "Should collect at least 4 tokens");
+
+        // Verify we have different token types
+        let mut has_number = false;
+        let mut has_string = false;
+        let mut has_class = false;
+
+        for token in &tokens {
+            if token.token_type == token_index(TokenKind::Number) {
+                has_number = true;
+            }
+            if token.token_type == token_index(TokenKind::String) {
+                has_string = true;
+            }
+            if token.token_type == token_index(TokenKind::Class) {
+                has_class = true;
+            }
+        }
+
+        assert!(has_number, "Should have number token (date or amount)");
+        assert!(has_string, "Should have string token (payee/narration)");
+        assert!(has_class, "Should have class token (currency)");
+    }
+
+    #[test]
+    fn test_collect_tokens_with_comments() {
+        let content = ropey::Rope::from_str("; Comment\n2024-01-01 open Assets:Checking");
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser
+            .parse("; Comment\n2024-01-01 open Assets:Checking", None)
+            .unwrap();
+
+        let mut tokens = Vec::new();
+        collect_tokens(tree.root_node(), &content, &mut tokens);
+
+        // Should have both comment and date tokens
+        let has_comment = tokens
+            .iter()
+            .any(|t| t.token_type == token_index(TokenKind::Comment));
+        let has_date = tokens
+            .iter()
+            .any(|t| t.token_type == token_index(TokenKind::Number));
+
+        assert!(has_comment, "Should have comment token");
+        assert!(has_date, "Should have date token");
+    }
 }

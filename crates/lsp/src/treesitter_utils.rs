@@ -121,3 +121,231 @@ pub fn text_for_tree_sitter_node(
     let slice = source.slice(start..end);
     slice.into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lsp_types::{Position, Range, TextDocumentContentChangeEvent};
+    use ropey::Rope;
+    use tree_sitter::Point;
+
+    #[test]
+    fn test_lsp_textdocchange_simple_insertion() {
+        let source = Rope::from("Hello World");
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position::new(0, 5),
+                end: Position::new(0, 5),
+            }),
+            range_length: None,
+            text: " Beautiful".to_string(),
+        };
+
+        let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
+        assert_eq!(edit.start_byte, 5);
+        assert_eq!(edit.old_end_byte, 5);
+        assert_eq!(edit.new_end_byte, 15); // Added 10 bytes
+        assert_eq!(edit.start_position, Point::new(0, 5));
+        assert_eq!(edit.old_end_position, Point::new(0, 5));
+    }
+
+    #[test]
+    fn test_lsp_textdocchange_simple_deletion() {
+        let source = Rope::from("Hello World");
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position::new(0, 0),
+                end: Position::new(0, 6),
+            }),
+            range_length: None,
+            text: String::new(),
+        };
+
+        let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
+        assert_eq!(edit.start_byte, 0);
+        assert_eq!(edit.old_end_byte, 6);
+        assert_eq!(edit.new_end_byte, 0);
+        assert_eq!(edit.start_position, Point::new(0, 0));
+        assert_eq!(edit.old_end_position, Point::new(0, 6));
+        assert_eq!(edit.new_end_position, Point::new(0, 0));
+    }
+
+    #[test]
+    fn test_lsp_textdocchange_replacement() {
+        let source = Rope::from("Hello World");
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position::new(0, 6),
+                end: Position::new(0, 11),
+            }),
+            range_length: None,
+            text: "Rust".to_string(),
+        };
+
+        let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
+        assert_eq!(edit.start_byte, 6);
+        assert_eq!(edit.old_end_byte, 11);
+        assert_eq!(edit.new_end_byte, 10); // "Rust" is 4 bytes
+        assert_eq!(edit.start_position, Point::new(0, 6));
+    }
+
+    #[test]
+    fn test_lsp_textdocchange_full_document_replacement() {
+        let source = Rope::from("Old content");
+        let change = TextDocumentContentChangeEvent {
+            range: None,
+            range_length: None,
+            text: "New content".to_string(),
+        };
+
+        let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
+        assert_eq!(edit.start_byte, 0);
+        assert_eq!(edit.old_end_byte, 11);
+        assert_eq!(edit.new_end_byte, 11);
+        assert_eq!(edit.start_position, Point::new(0, 0));
+    }
+
+    #[test]
+    fn test_lsp_textdocchange_multiline_insertion() {
+        let source = Rope::from("Line 1\nLine 2");
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position::new(1, 0),
+                end: Position::new(1, 0),
+            }),
+            range_length: None,
+            text: "New line\n".to_string(),
+        };
+
+        let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
+        assert_eq!(edit.start_byte, 7); // After "Line 1\n"
+        assert_eq!(edit.old_end_byte, 7);
+        assert_eq!(edit.new_end_byte, 16); // Added "New line\n" (9 bytes)
+    }
+
+    #[test]
+    fn test_lsp_textdocchange_with_multibyte_utf8() {
+        let source = Rope::from("Hello 世界");
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position::new(0, 6),
+                end: Position::new(0, 8),
+            }),
+            range_length: None,
+            text: "🌍".to_string(),
+        };
+
+        let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
+        assert_eq!(edit.start_byte, 6);
+        // 世界 is 6 bytes (3 bytes each), but we're replacing it with 🌍 (4 bytes)
+        assert_eq!(edit.old_end_byte, 12);
+        assert_eq!(edit.new_end_byte, 10); // 6 + 4
+    }
+
+    #[test]
+    fn test_lsp_textdocchange_empty_document() {
+        let source = Rope::from("");
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position::new(0, 0),
+                end: Position::new(0, 0),
+            }),
+            range_length: None,
+            text: "New content".to_string(),
+        };
+
+        let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
+        assert_eq!(edit.start_byte, 0);
+        assert_eq!(edit.old_end_byte, 0);
+        assert_eq!(edit.new_end_byte, 11);
+        assert_eq!(edit.start_position, Point::new(0, 0));
+        assert_eq!(edit.old_end_position, Point::new(0, 0));
+    }
+
+    #[test]
+    fn test_lsp_textdocchange_to_empty() {
+        let source = Rope::from("Content to delete");
+        let change = TextDocumentContentChangeEvent {
+            range: None,
+            range_length: None,
+            text: String::new(),
+        };
+
+        let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
+        assert_eq!(edit.start_byte, 0);
+        assert_eq!(edit.old_end_byte, 17);
+        assert_eq!(edit.new_end_byte, 0);
+    }
+
+    #[test]
+    fn test_byte_to_lsp_position_simple() {
+        let text = Rope::from("Hello\nWorld");
+        let pos = byte_to_lsp_position(&text, 0);
+        assert_eq!(pos.line, 0);
+        assert_eq!(pos.character, 0);
+
+        let pos = byte_to_lsp_position(&text, 6);
+        assert_eq!(pos.line, 1);
+        assert_eq!(pos.character, 0);
+    }
+
+    #[test]
+    fn test_lsp_position_to_core_simple() {
+        let source = Rope::from("Hello\nWorld");
+        let pos = Position::new(0, 5);
+        let core_pos = lsp_position_to_core(&source, pos).unwrap();
+        assert_eq!(core_pos.byte, 5);
+        assert_eq!(core_pos.point, Point::new(0, 5));
+    }
+
+    #[test]
+    fn test_lsp_position_to_core_second_line() {
+        let source = Rope::from("Hello\nWorld");
+        let pos = Position::new(1, 3);
+        let core_pos = lsp_position_to_core(&source, pos).unwrap();
+        assert_eq!(core_pos.byte, 9); // "Hello\n" is 6 bytes + 3
+        assert_eq!(core_pos.point, Point::new(1, 3)); // Point column is byte offset from line start
+    }
+
+    #[test]
+    fn test_byte_to_tree_sitter_point_simple() {
+        let source = Rope::from("Hello\nWorld\nTest");
+        let point = byte_to_tree_sitter_point(&source, 6).unwrap();
+        assert_eq!(point, Point::new(1, 0));
+
+        let point = byte_to_tree_sitter_point(&source, 12).unwrap();
+        assert_eq!(point, Point::new(2, 0));
+    }
+
+    #[test]
+    fn test_text_for_tree_sitter_node() {
+        let source = Rope::from("2024-01-01 open Assets:Checking");
+
+        // We need to parse the source to get a tree-sitter node
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(source.to_string(), None).unwrap();
+        let root = tree.root_node();
+
+        // Get the text for the entire tree
+        let text = text_for_tree_sitter_node(&source, &root);
+        assert_eq!(text, "2024-01-01 open Assets:Checking");
+    }
+
+    #[test]
+    fn test_text_for_tree_sitter_node_with_utf8() {
+        let source = Rope::from("2024-01-01 * \"Coffee ☕\"");
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(source.to_string(), None).unwrap();
+        let root = tree.root_node();
+
+        let text = text_for_tree_sitter_node(&source, &root);
+        assert_eq!(text, "2024-01-01 * \"Coffee ☕\"");
+    }
+}

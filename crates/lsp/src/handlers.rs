@@ -217,4 +217,195 @@ pub mod text_document {
         );
         semantic_tokens::semantic_tokens_full(snapshot, params)
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::beancount_data::BeancountData;
+        use crate::config::Config;
+        use crate::document::Document;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::str::FromStr;
+        use std::sync::Arc;
+        use tree_sitter_beancount::tree_sitter;
+
+        struct TestState {
+            snapshot: LspServerStateSnapshot,
+            path: PathBuf,
+        }
+
+        impl TestState {
+            fn new(content: &str) -> anyhow::Result<Self> {
+                let path = std::env::current_dir()?.join("test.beancount");
+                let rope_content = ropey::Rope::from_str(content);
+
+                let mut parser = tree_sitter::Parser::new();
+                parser.set_language(&tree_sitter_beancount::language())?;
+                let tree = parser.parse(content, None).unwrap();
+
+                let mut forest = HashMap::new();
+                forest.insert(path.clone(), Arc::new(tree.clone()));
+
+                let mut open_docs = HashMap::new();
+                open_docs.insert(
+                    path.clone(),
+                    Document {
+                        content: rope_content.clone(),
+                        version: 0,
+                    },
+                );
+
+                let mut beancount_data = HashMap::new();
+                beancount_data.insert(
+                    path.clone(),
+                    Arc::new(BeancountData::new(&tree, &rope_content)),
+                );
+
+                let config = Config::new(path.clone());
+
+                Ok(Self {
+                    snapshot: LspServerStateSnapshot {
+                        forest,
+                        open_docs,
+                        beancount_data,
+                        config,
+                    },
+                    path,
+                })
+            }
+        }
+
+        #[test]
+        fn test_formatting_handler() {
+            let content = "2024-01-01 open Assets:Checking\n2024-01-02 * \"Test\"\n  Assets:Checking  100.00 USD\n";
+            let state = TestState::new(content).unwrap();
+
+            let uri = lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy()))
+                .unwrap();
+            let params = lsp_types::DocumentFormattingParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                options: lsp_types::FormattingOptions {
+                    tab_size: 2,
+                    insert_spaces: true,
+                    ..Default::default()
+                },
+                work_done_progress_params: Default::default(),
+            };
+
+            let result = formatting(state.snapshot, params);
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn test_completion_handler() {
+            let content =
+                "2024-01-01 open Assets:Checking\n2024-01-02 * \"Test\" \"Test\"\n  Assets:Che";
+            let state = TestState::new(content).unwrap();
+
+            let uri = lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy()))
+                .unwrap();
+            let params = lsp_types::CompletionParams {
+                text_document_position: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: lsp_types::Position::new(2, 12),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            };
+
+            let result = completion(state.snapshot, params);
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn test_completion_handler_with_trigger() {
+            let content = "2024-01-01 open Assets:Checking\n";
+            let state = TestState::new(content).unwrap();
+
+            let uri = lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy()))
+                .unwrap();
+            let params = lsp_types::CompletionParams {
+                text_document_position: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: lsp_types::Position::new(1, 0),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: Some(lsp_types::CompletionContext {
+                    trigger_kind: lsp_types::CompletionTriggerKind::TRIGGER_CHARACTER,
+                    trigger_character: Some("2".to_string()),
+                }),
+            };
+
+            let result = completion(state.snapshot, params);
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn test_references_handler() {
+            let content = "2024-01-01 open Assets:Checking\n2024-01-02 * \"Test\"\n  Assets:Checking  100.00 USD\n";
+            let state = TestState::new(content).unwrap();
+
+            let uri = lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy()))
+                .unwrap();
+            let params = lsp_types::ReferenceParams {
+                text_document_position: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: lsp_types::Position::new(0, 20),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: lsp_types::ReferenceContext {
+                    include_declaration: true,
+                },
+            };
+
+            let result = handle_references(state.snapshot, params);
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_some());
+        }
+
+        #[test]
+        fn test_rename_handler() {
+            let content = "2024-01-01 open Assets:Checking\n2024-01-02 * \"Test\"\n  Assets:Checking  100.00 USD\n";
+            let state = TestState::new(content).unwrap();
+
+            let uri = lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy()))
+                .unwrap();
+            let params = lsp_types::RenameParams {
+                text_document_position: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: lsp_types::Position::new(0, 20),
+                },
+                new_name: "Assets:Bank".to_string(),
+                work_done_progress_params: Default::default(),
+            };
+
+            let result = handle_rename(state.snapshot, params);
+            assert!(result.is_ok());
+            let edit = result.unwrap();
+            assert!(edit.is_some());
+            let changes = edit.unwrap().changes;
+            assert!(changes.is_some());
+        }
+
+        #[test]
+        fn test_semantic_tokens_handler() {
+            let content = "2024-01-01 open Assets:Checking\n";
+            let state = TestState::new(content).unwrap();
+
+            let uri = lsp_types::Uri::from_str(&format!("file://{}", state.path.to_string_lossy()))
+                .unwrap();
+            let params = lsp_types::SemanticTokensParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+
+            let result = semantic_tokens_full(state.snapshot, params);
+            assert!(result.is_ok());
+        }
+    }
 }

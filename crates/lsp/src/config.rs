@@ -242,4 +242,254 @@ mod tests {
             .unwrap();
         assert_eq!(config.journal_root, None);
     }
+
+    #[test]
+    fn test_formatting_config_defaults() {
+        let config = FormattingConfig::default();
+        assert_eq!(config.prefix_width, None);
+        assert_eq!(config.num_width, None);
+        assert_eq!(config.currency_column, None);
+        assert_eq!(config.account_amount_spacing, 2);
+        assert_eq!(config.number_currency_spacing, 1);
+        assert_eq!(config.indent_width, None);
+    }
+
+    #[test]
+    fn test_formatting_prefix_width() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(serde_json::from_str("{\"formatting\": {\"prefix_width\": 60}}").unwrap())
+            .unwrap();
+        assert_eq!(config.formatting.prefix_width, Some(60));
+    }
+
+    #[test]
+    fn test_formatting_num_width() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(serde_json::from_str("{\"formatting\": {\"num_width\": 15}}").unwrap())
+            .unwrap();
+        assert_eq!(config.formatting.num_width, Some(15));
+    }
+
+    #[test]
+    fn test_formatting_currency_column() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(serde_json::from_str("{\"formatting\": {\"currency_column\": 80}}").unwrap())
+            .unwrap();
+        assert_eq!(config.formatting.currency_column, Some(80));
+    }
+
+    #[test]
+    fn test_formatting_account_amount_spacing() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(
+                serde_json::from_str("{\"formatting\": {\"account_amount_spacing\": 4}}").unwrap(),
+            )
+            .unwrap();
+        assert_eq!(config.formatting.account_amount_spacing, 4);
+    }
+
+    #[test]
+    fn test_formatting_number_currency_spacing() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(
+                serde_json::from_str("{\"formatting\": {\"number_currency_spacing\": 2}}").unwrap(),
+            )
+            .unwrap();
+        assert_eq!(config.formatting.number_currency_spacing, 2);
+    }
+
+    #[test]
+    fn test_formatting_indent_width() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(serde_json::from_str("{\"formatting\": {\"indent_width\": 4}}").unwrap())
+            .unwrap();
+        assert_eq!(config.formatting.indent_width, Some(4));
+    }
+
+    #[test]
+    fn test_formatting_multiple_options() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(
+                serde_json::from_str(
+                    r#"{
+                        "formatting": {
+                            "prefix_width": 50,
+                            "num_width": 12,
+                            "currency_column": 70,
+                            "account_amount_spacing": 3,
+                            "number_currency_spacing": 1,
+                            "indent_width": 2
+                        }
+                    }"#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(config.formatting.prefix_width, Some(50));
+        assert_eq!(config.formatting.num_width, Some(12));
+        assert_eq!(config.formatting.currency_column, Some(70));
+        assert_eq!(config.formatting.account_amount_spacing, 3);
+        assert_eq!(config.formatting.number_currency_spacing, 1);
+        assert_eq!(config.formatting.indent_width, Some(2));
+    }
+
+    #[test]
+    fn test_bean_check_method_system() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(serde_json::from_str(r#"{"bean_check": {"method": "system"}}"#).unwrap())
+            .unwrap();
+        assert_eq!(config.bean_check.method, BeancountCheckMethod::SystemCall);
+    }
+
+    #[test]
+    fn test_bean_check_method_python_embedded() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(
+                serde_json::from_str(r#"{"bean_check": {"method": "python-embedded"}}"#).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            config.bean_check.method,
+            BeancountCheckMethod::PythonEmbedded
+        );
+    }
+
+    #[test]
+    fn test_bean_check_method_pyo3_alias() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(serde_json::from_str(r#"{"bean_check": {"method": "pyo3"}}"#).unwrap())
+            .unwrap();
+        assert_eq!(
+            config.bean_check.method,
+            BeancountCheckMethod::PythonEmbedded
+        );
+    }
+
+    #[test]
+    fn test_bean_check_cmd_path() {
+        let config = Config::new(PathBuf::new());
+        // Check default first
+        assert_eq!(
+            config.bean_check.bean_check_cmd,
+            PathBuf::from("bean-check")
+        );
+    }
+
+    #[test]
+    fn test_bean_check_python_cmd() {
+        let config = Config::new(PathBuf::new());
+        // Check default first
+        assert_eq!(config.bean_check.python_cmd, PathBuf::from("python3"));
+    }
+
+    #[test]
+    fn test_bean_check_python_script_path() {
+        let config = Config::new(PathBuf::new());
+        // Check default first
+        assert_eq!(
+            config.bean_check.python_script_path,
+            PathBuf::from("python/bean_check.py")
+        );
+    }
+
+    #[test]
+    fn test_config_new() {
+        let config = Config::new(PathBuf::from("/path/to/file.bean"));
+        assert_eq!(config.root_file, PathBuf::from("/path/to/file.bean"));
+        assert_eq!(config.journal_root, None);
+        assert_eq!(config.formatting.prefix_width, None);
+        assert_eq!(config.bean_check.method, BeancountCheckMethod::SystemCall);
+    }
+
+    #[test]
+    fn test_update_with_invalid_json() {
+        let mut config = Config::new(PathBuf::new());
+        // Invalid JSON should be ignored gracefully
+        let result = config.update(serde_json::from_str("[]").unwrap());
+        assert!(result.is_ok());
+        assert_eq!(config.journal_root, None);
+    }
+
+    #[test]
+    fn test_update_with_invalid_method() {
+        let mut config = Config::new(PathBuf::new());
+        // Invalid bean_check method should be ignored
+        config
+            .update(
+                serde_json::from_str(r#"{"bean_check": {"method": "invalid-method"}}"#).unwrap(),
+            )
+            .unwrap();
+        // Should keep default method
+        assert_eq!(config.bean_check.method, BeancountCheckMethod::SystemCall);
+    }
+
+    #[test]
+    fn test_combined_journal_and_formatting() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(
+                serde_json::from_str(
+                    r#"{
+                        "journal_file": "/path/to/journal.bean",
+                        "formatting": {
+                            "prefix_width": 60,
+                            "indent_width": 4
+                        }
+                    }"#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            config.journal_root,
+            Some(PathBuf::from("/path/to/journal.bean"))
+        );
+        assert_eq!(config.formatting.prefix_width, Some(60));
+        assert_eq!(config.formatting.indent_width, Some(4));
+    }
+
+    #[test]
+    fn test_combined_all_options() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(
+                serde_json::from_str(
+                    r#"{
+                        "journal_file": "/path/to/journal.bean",
+                        "formatting": {
+                            "prefix_width": 60
+                        },
+                        "bean_check": {
+                            "method": "python-embedded",
+                            "python_cmd": "/usr/bin/python3"
+                        }
+                    }"#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            config.journal_root,
+            Some(PathBuf::from("/path/to/journal.bean"))
+        );
+        assert_eq!(config.formatting.prefix_width, Some(60));
+        assert_eq!(
+            config.bean_check.method,
+            BeancountCheckMethod::PythonEmbedded
+        );
+        assert_eq!(
+            config.bean_check.python_cmd,
+            PathBuf::from("/usr/bin/python3")
+        );
+    }
 }
