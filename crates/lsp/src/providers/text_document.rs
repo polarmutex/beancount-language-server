@@ -355,7 +355,11 @@ fn handle_diagnostics(
     );
 
     sender
-        .send(Task::Progress(ProgressMsg::BeanCheck { done: 0, total: 1 }))
+        .send(Task::Progress(ProgressMsg::BeanCheck {
+            done: 0,
+            total: 1,
+            checker_name: checker.name().to_string(),
+        }))
         .unwrap();
 
     let root_journal_path = match snapshot.config.journal_root.clone() {
@@ -373,7 +377,11 @@ fn handle_diagnostics(
     );
 
     sender
-        .send(Task::Progress(ProgressMsg::BeanCheck { done: 1, total: 1 }))
+        .send(Task::Progress(ProgressMsg::BeanCheck {
+            done: 1,
+            total: 1,
+            checker_name: checker.name().to_string(),
+        }))
         .unwrap();
 
     let mut normalized_diags: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
