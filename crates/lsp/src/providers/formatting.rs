@@ -638,6 +638,7 @@ mod tests {
                 config: Config::new(std::env::current_dir()?),
                 forest,
                 open_docs,
+                checker: None,
             };
 
             Ok(TestState { snapshot })
@@ -683,6 +684,7 @@ mod tests {
                 config,
                 forest,
                 open_docs,
+                checker: None,
             };
 
             Ok(TestState { snapshot })
@@ -717,6 +719,7 @@ mod tests {
                 config: self.snapshot.config.clone(),
                 forest: self.snapshot.forest.clone(),
                 open_docs: self.snapshot.open_docs.clone(),
+                checker: self.snapshot.checker.clone(),
             };
 
             formatting(snapshot, params)

@@ -45,6 +45,7 @@ itertools = "0.14"
 shellexpand = "3.1"
 glob = "0.3"
 url = "2.5"
+which = "6.0"
 
 # Data structures
 dashmap = "6.1"
@@ -52,7 +53,10 @@ bytes = "1.11"
 linked-list = "0.1"
 
 # Python integration (optional)
-pyo3 = { version = "0.27", features = ["auto-initialize"], optional = true }
+pyo3 = { version = "0.27", features = [
+    "auto-initialize",
+    "generate-import-lib"
+], optional = true }
 
 # Logging
 tracing-subscriber = { version = "0.3", default-features = false, features = [
