@@ -27,8 +27,13 @@ export async function activate(
 
   log.info("use lsp executable", server_path);
 
+  const config = vscode.workspace.getConfiguration("beancountLangServer");
+
+  const serverArgs: string[] = [];
+
   const server_executable: Executable = {
     command: server_path,
+    args: serverArgs,
   };
 
   const server_options: ServerOptions = {
@@ -36,13 +41,16 @@ export async function activate(
     debug: server_executable,
   };
 
-  const config = vscode.workspace.getConfiguration("beancountLangServer");
+  type InitializationOptions = {
+    journal_file?: string;
+    formatting?: unknown;
+    bean_check?: unknown;
+  };
 
-  // Build initialization options - only include journal_file if it's valid and non-empty
-  const initializationOptions: { journal_file?: string; formatting?: unknown } =
-    {
-      formatting: config.get("formatting"),
-    };
+  const initializationOptions: InitializationOptions = {
+    formatting: config.get("formatting"),
+    bean_check: config.get("beanCheck"),
+  };
 
   const journalFile = config.get<string>("journalFile");
   if (journalFile && journalFile.trim() !== "") {
