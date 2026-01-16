@@ -194,6 +194,11 @@ pub(crate) fn did_save(
 ) -> Result<()> {
     tracing::debug!("text_document::did_save");
 
+    // Lazy extraction: Ensure BeancountData is extracted before diagnostics
+    if let Ok(uri) = params.text_document.uri.to_file_path() {
+        state.ensure_beancount_data(&uri);
+    }
+
     let snapshot = state.snapshot();
     let task_sender = state.task_sender.clone();
     state.thread_pool.execute(move || {
@@ -333,8 +338,9 @@ pub(crate) fn did_change(
     if let Some(tree) = result {
         let tree_arc = Arc::new(tree);
         *state.forest.get_mut(uri).unwrap() = tree_arc.clone();
-        *state.beancount_data.get_mut(uri).unwrap() =
-            Arc::new(BeancountData::new(&tree_arc, &doc.content));
+        // Lazy extraction: Don't extract BeancountData on every keystroke
+        // It will be extracted on-demand when needed (e.g., for completion)
+        state.beancount_data.remove(uri);
     }
 
     // Update document version after successfully applying changes

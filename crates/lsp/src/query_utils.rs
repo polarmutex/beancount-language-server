@@ -197,55 +197,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    fn test_debug_tree_structure() {
-        let source = r#"2024-01-01 * "Grocery Store" "Weekly shopping""#;
-        let (tree, _content) = parse_beancount(source);
-
-        // Print the tree structure to understand the node types
-        fn print_node(node: tree_sitter::Node, depth: usize) {
-            let indent = "  ".repeat(depth);
-            println!(
-                "{}kind: {}, field_name: {:?}",
-                indent,
-                node.kind(),
-                node.grammar_name()
-            );
-
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                print_node(child, depth + 1);
-            }
-        }
-
-        print_node(tree.root_node(), 0);
-        panic!("Debug tree structure - check output above");
-    }
-
-    #[test]
-    #[ignore]
-    fn test_debug_flag_structure() {
-        let source = r#"
-2024-01-01 ! "Flagged"
-2024-01-02 * "Normal"
-        "#;
-        let (tree, _content) = parse_beancount(source);
-
-        fn print_node(node: tree_sitter::Node, depth: usize) {
-            let indent = "  ".repeat(depth);
-            println!("{}kind: {}", indent, node.kind());
-
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                print_node(child, depth + 1);
-            }
-        }
-
-        print_node(tree.root_node(), 0);
-        panic!("Debug flag structure - check output above");
-    }
-
-    #[test]
     fn test_query_and_collect_payees() {
         let source = r#"
 2024-01-01 * "Grocery Store" "Weekly shopping"
