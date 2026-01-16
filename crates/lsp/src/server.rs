@@ -378,6 +378,7 @@ impl LspServerState {
             .on::<lsp_types::request::SemanticTokensFullRequest>(
                 handlers::text_document::semantic_tokens_full,
             )?
+            .on::<lsp_types::request::InlayHintRequest>(handlers::text_document::inlay_hint)?
             .finish();
         Ok(())
     }

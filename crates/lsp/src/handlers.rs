@@ -1,6 +1,7 @@
 pub mod text_document {
     use crate::providers::completion;
     use crate::providers::formatting;
+    use crate::providers::inlay_hints;
     use crate::providers::references;
     use crate::providers::semantic_tokens;
     use crate::providers::text_document;
@@ -216,6 +217,17 @@ pub mod text_document {
             params.text_document.uri.as_str()
         );
         semantic_tokens::semantic_tokens_full(snapshot, params)
+    }
+
+    pub(crate) fn inlay_hint(
+        snapshot: LspServerStateSnapshot,
+        params: lsp_types::InlayHintParams,
+    ) -> Result<Option<Vec<lsp_types::InlayHint>>> {
+        tracing::debug!(
+            "Inlay hints requested for: {}",
+            params.text_document.uri.as_str()
+        );
+        inlay_hints::inlay_hints(snapshot, params)
     }
 
     #[cfg(test)]
