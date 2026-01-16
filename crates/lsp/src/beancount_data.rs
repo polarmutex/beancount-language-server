@@ -41,7 +41,7 @@
 /// - Field queries are more efficient than manual field access
 /// - StreamingIterator avoids allocating a Vec of all matches
 use crate::treesitter_utils::text_for_tree_sitter_node;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::tree_sitter;
 
@@ -92,13 +92,13 @@ pub struct FlaggedEntry {
 
 #[derive(Clone, Debug)]
 pub struct BeancountData {
-    accounts: Vec<String>,
-    payees: Vec<String>,
-    narration: Vec<String>,
+    accounts: Arc<Vec<String>>,
+    payees: Arc<Vec<String>>,
+    narration: Arc<Vec<String>>,
     pub flagged_entries: Vec<FlaggedEntry>,
-    tags: Vec<String>,
-    links: Vec<String>,
-    commodities: Vec<String>,
+    tags: Arc<Vec<String>>,
+    links: Arc<Vec<String>>,
+    commodities: Arc<Vec<String>>,
 }
 
 impl BeancountData {
@@ -247,38 +247,38 @@ impl BeancountData {
         let commodities: Vec<String> = commodities.into_iter().map(|(name, _)| name).collect();
 
         Self {
-            accounts,
-            payees,
-            narration,
+            accounts: Arc::new(accounts),
+            payees: Arc::new(payees),
+            narration: Arc::new(narration),
             flagged_entries,
-            tags,
-            links,
-            commodities,
+            tags: Arc::new(tags),
+            links: Arc::new(links),
+            commodities: Arc::new(commodities),
         }
     }
 
-    pub fn get_accounts(&self) -> Vec<String> {
-        self.accounts.clone()
+    pub fn get_accounts(&self) -> Arc<Vec<String>> {
+        Arc::clone(&self.accounts)
     }
 
-    pub fn get_payees(&self) -> Vec<String> {
-        self.payees.clone()
+    pub fn get_payees(&self) -> Arc<Vec<String>> {
+        Arc::clone(&self.payees)
     }
 
-    pub fn get_narration(&self) -> Vec<String> {
-        self.narration.clone()
+    pub fn get_narration(&self) -> Arc<Vec<String>> {
+        Arc::clone(&self.narration)
     }
 
-    pub fn get_tags(&self) -> Vec<String> {
-        self.tags.clone()
+    pub fn get_tags(&self) -> Arc<Vec<String>> {
+        Arc::clone(&self.tags)
     }
 
-    pub fn get_links(&self) -> Vec<String> {
-        self.links.clone()
+    pub fn get_links(&self) -> Arc<Vec<String>> {
+        Arc::clone(&self.links)
     }
 
-    pub fn get_commodities(&self) -> Vec<String> {
-        self.commodities.clone()
+    pub fn get_commodities(&self) -> Arc<Vec<String>> {
+        Arc::clone(&self.commodities)
     }
 }
 
@@ -420,5 +420,76 @@ mod tests {
                 || narrations.contains(&"\"Important transaction\"".to_string()),
             "Should extract narrations"
         );
+    }
+
+    #[test]
+    fn test_arc_sharing() {
+        // Verify that Arc::clone returns the same underlying data (pointer equality)
+        let sample = r#"
+2024-01-01 open Assets:Checking USD
+2024-01-02 * "Payee" "Narration" #tag ^link
+    Assets:Checking  100.00 USD
+        "#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(sample, None).unwrap();
+        let content = ropey::Rope::from_str(sample);
+
+        let data = BeancountData::new(&tree, &content);
+
+        // Get the same data twice
+        let accounts1 = data.get_accounts();
+        let accounts2 = data.get_accounts();
+
+        // Verify Arc pointer equality (same underlying data, no clone)
+        assert!(
+            Arc::ptr_eq(&accounts1, &accounts2),
+            "Arc::clone should return the same underlying data (zero-copy)"
+        );
+
+        // Verify the data is correct
+        assert_eq!(*accounts1, *accounts2, "Data should be identical");
+    }
+
+    #[test]
+    fn test_all_getters_return_arc() {
+        // Verify all getters work with Arc
+        let sample = r#"
+2024-01-01 open Assets:Checking USD
+2024-01-02 * "Payee" "Narration" #tag ^link
+    Assets:Checking  100.00 USD
+2024-01-03 commodity EUR
+        "#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(sample, None).unwrap();
+        let content = ropey::Rope::from_str(sample);
+
+        let data = BeancountData::new(&tree, &content);
+
+        // Verify all getters return Arc and can be dereferenced
+        let accounts = data.get_accounts();
+        assert!(!accounts.is_empty(), "Accounts should not be empty");
+
+        let payees = data.get_payees();
+        assert!(!payees.is_empty(), "Payees should not be empty");
+
+        let narrations = data.get_narration();
+        assert!(!narrations.is_empty(), "Narrations should not be empty");
+
+        let tags = data.get_tags();
+        assert!(!tags.is_empty(), "Tags should not be empty");
+
+        let links = data.get_links();
+        assert!(!links.is_empty(), "Links should not be empty");
+
+        let commodities = data.get_commodities();
+        assert!(!commodities.is_empty(), "Commodities should not be empty");
     }
 }
