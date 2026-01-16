@@ -1,4 +1,4 @@
-mod beancount_data;
+pub mod beancount_data;
 mod capabilities;
 pub mod checkers;
 mod config;
