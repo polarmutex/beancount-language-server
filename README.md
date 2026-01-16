@@ -87,37 +87,55 @@ nix develop
 git clone https://github.com/polarmutex/beancount-language-server.git
 cd beancount-language-server
 
-# Standard build
+# Standard build (includes PyO3 embedded Python support by default)
 cargo build --release
 
-# Build with PyO3 embedded Python support (experimental)
-cargo build --release --features python-embedded
+# Build without PyO3 (minimal binary, requires external bean-check/python)
+cargo build --release --no-default-features
 ```
 
 The binary will be available at `target/release/beancount-language-server`.
 
 ## 🔧 Requirements
 
-### Required
+### For Diagnostics (Bean-check)
 
-- **Beancount**: Install the Python beancount package for diagnostics
+The language server requires **one** of the following for validation and diagnostics:
+
+**Option 1: PyO3 Embedded (Default - Recommended)**
+
+- **Python 3.8+** installed on your system
+- **beancount** Python package
   ```bash
   pip install beancount
   ```
+- **Pre-built binaries** from GitHub releases include PyO3 support by default
+- **Performance**: 60-66x faster than subprocess-based methods (~838μs vs ~50ms per check)
+- **Note**: If beancount is not available, automatically falls back to other methods
 
-### Optional
+**Option 2: System Python (Fallback)**
 
-- **Bean-format**: The language server includes built-in formatting that's fully compatible with bean-format. Installing bean-format is optional for comparison or standalone use
-  ```bash
-  pip install bean-format
-  ```
+- **Python** with beancount library
+- Used automatically if PyO3 checker is unavailable
+- Invokes Python via subprocess for validation
 
-### Experimental Features
+**Option 3: Bean-check Binary (Fallback)**
 
-- **PyO3 Embedded Python**: For improved performance, build with embedded Python support
-  ```bash
-  cargo build --features python-embedded
-  ```
+- Traditional `bean-check` command-line tool
+- Install via: `pip install beancount` (includes bean-check)
+- Used if Python methods are unavailable
+
+### Performance Comparison
+
+Based on comprehensive benchmarks with a 30-line beancount file:
+
+| Method                      | Average Time | Relative Speed    | Availability                     |
+| --------------------------- | ------------ | ----------------- | -------------------------------- |
+| **PyO3 Embedded** (default) | **~838μs**   | **1x (baseline)** | Requires Python 3.8+ + beancount |
+| System Python               | ~50.1ms      | 60x slower        | Requires Python + beancount      |
+| Bean-check Binary           | ~55.2ms      | 66x slower        | Requires bean-check binary       |
+
+**Recommendation**: Use PyO3 embedded checker (default in pre-built binaries) for optimal performance.
 
 ## ⚙️ Configuration
 
@@ -125,11 +143,8 @@ The language server accepts configuration via LSP initialization options:
 
 ```json
 {
+  // Optional: Only needed for multi-file projects with include directives
   "journal_file": "/path/to/main.beancount",
-  "bean_check": {
-    "method": "system",
-    "bean_check_cmd": "bean-check"
-  },
   "formatting": {
     "prefix_width": 30,
     "num_width": 10,
@@ -140,19 +155,21 @@ The language server accepts configuration via LSP initialization options:
 }
 ```
 
+**Note**: All configuration is optional. The language server will auto-detect the best checker method (PyO3 → System Python → Bean-check).
+
 ### Configuration Options
 
-| Option         | Type   | Description                                                         | Default |
-| -------------- | ------ | ------------------------------------------------------------------- | ------- |
-| `journal_file` | string | Path to the main beancount journal file (required for diagnostics)  | None    |
+| Option         | Type   | Description                                                                                                                                                                                   | Default |
+| -------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `journal_file` | string | Path to the main beancount journal file. **Optional**: Only required if your beancount files use `include` directives to span multiple files. Single-file projects work without this setting. | None    |
 
 ### Bean-check Configuration
 
-| Option                      | Type   | Description                                                         | Default      |
-| --------------------------- | ------ | ------------------------------------------------------------------- | ------------ |
+| Option                      | Type   | Description                                                        | Default |
+| --------------------------- | ------ | ------------------------------------------------------------------ | ------- |
 | `bean_check.method`         | string | Validation method: "system", "python-system", or "python-embedded" | None    |
-| `bean_check.bean_check_cmd` | string | Path to bean-check binary (for "system" method)                     | "bean-check" from virtualenv of path |
-| `bean_check.python_cmd`     | string | Path to Python executable (for Python methods)                      | "python"/"python3"  from virtualenv of PATH    |
+| `bean_check.bean_check_cmd` | string | Path to bean-check binary (for "system" method)                    | None    |
+| `bean_check.python_cmd`     | string | Path to Python executable (for Python methods)                     | None    |
 
 **Preferred checker order (when `bean_check.method` is not set):**
 
@@ -160,65 +177,89 @@ The language server accepts configuration via LSP initialization options:
 2. `python-system` (if a compatible Python with beancount is available)
 3. `system` (if bean-check is available)
 
-#### Bean-check Methods
-
-The language server supports three different methods for validating beancount files:
-
-**System Method** (default):
-
-- Uses the traditional `bean-check` binary via subprocess
-- Fastest startup time, lower memory usage
-- Requires `bean-check` binary to be installed and available in PATH
-- Compatible with all existing bean-check installations
-
-**Python System Method** (experimental):
-
-- Executes embedded Python code via `python -c` that uses the beancount library directly
-- Provides structured JSON output for better error handling
-- Supports both validation errors and flagged entry detection
-- Requires Python with beancount library installed
-
-**Python Embedded Method** (experimental):
-
-- Uses PyO3 to embed Python directly in the Rust process
-- Highest performance with no subprocess overhead
-- Best error handling and flagged entry support
-- Requires compilation with `python-embedded` feature
-- Must have beancount library available to embedded Python
-
 #### Configuration Examples
 
-**Traditional system call approach:**
+**Default (no configuration needed):**
+
+The language server automatically selects the best available checker method:
+
+1. PyO3 Embedded (if Python 3.8+ with beancount is available)
+2. System Python (if Python with beancount is available)
+3. System Call (if bean-check binary is available)
+
+No configuration required! Just install Python and beancount.
+
+**Override to force a specific method:**
+
+Only configure `bean_check.method` if you need to override auto-detection:
 
 ```json
 {
   "bean_check": {
-    "method": "system",
+    "method": "system", // Force bean-check binary
     "bean_check_cmd": "/usr/local/bin/bean-check"
   }
 }
 ```
 
-**Python system method with custom paths:**
-
 ```json
 {
   "bean_check": {
-    "method": "python-system",
+    "method": "python-system", // Force Python subprocess
     "python_cmd": "/usr/bin/python3"
   }
 }
 ```
 
-**Embedded Python (requires python-embedded feature):**
-
 ```json
 {
   "bean_check": {
-    "method": "python-embedded"
+    "method": "python-embedded" // Force PyO3 (already default)
   }
 }
 ```
+
+#### Troubleshooting PyO3 Checker
+
+If the PyO3 embedded checker is not working:
+
+1. **Verify Python installation**:
+
+   ```bash
+   python3 --version  # Should be 3.8 or higher
+   ```
+
+2. **Verify beancount installation**:
+
+   ```bash
+   python3 -c "import beancount.loader; print('Beancount OK')"
+   ```
+
+3. **Check language server logs** for PyO3-related messages:
+   - VSCode: View → Output → Select "Beancount Language Server"
+   - Neovim: `:LspLog`
+   - Look for messages like "PyO3EmbeddedChecker: failed to import beancount.loader"
+
+4. **Install beancount if missing**:
+
+   ```bash
+   # System-wide
+   pip3 install beancount
+
+   # User installation (no sudo required)
+   pip3 install --user beancount
+
+   # Virtual environment (recommended)
+   python3 -m venv ~/.beancount-env
+   source ~/.beancount-env/bin/activate
+   pip install beancount
+   ```
+
+5. **Fallback methods**: If PyO3 checker fails, the language server automatically tries:
+   - System Python method (python -c with beancount)
+   - System Call method (bean-check binary)
+
+   Check your configuration if you need to explicitly set a method.
 
 ### Formatting Options
 
@@ -308,9 +349,10 @@ This controls the whitespace between numbers and currency codes:
 ### Visual Studio Code
 
 1. Install the [Beancount extension](https://marketplace.visualstudio.com/items?itemName=polarmutex.beancount-langserver) from the marketplace
-2. Configure in `settings.json`:
+2. Configure in `settings.json` (optional):
    ```json
    {
+     // Optional: Only needed for multi-file projects with include directives
      "beancountLangServer.journalFile": "/path/to/main.beancount",
      "beancountLangServer.formatting": {
        "prefix_width": 30,
@@ -325,13 +367,16 @@ This controls the whitespace between numbers and currency codes:
 Using `nvim.lsp` (nvim > 0.11)
 
 `lsp/beancount.lua`
+
 ```lua
 return {
     commands = { "beancount-language-server", "--stdio" },
     root_markers = { "main.bean", ".git" },
+    -- init_options are optional
     init_options = {
+        -- Optional: Only needed for multi-file projects with include directives
         journal_file = "main.bean",
-    }
+    },
     settings = {
         beancount = {
             formatting = {
@@ -344,20 +389,16 @@ return {
 }
 ```
 
-
 Using [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig):
 
 ```lua
 local lspconfig = require('lspconfig')
 
 lspconfig.beancount.setup({
+  -- All init_options are optional
   init_options = {
-    journal_file = "/path/to/main.beancount",
-    bean_check = {
-      method = "python-script",
-      python_cmd = "python3",
-      python_script = "./python/bean_check.py",
-    },
+    -- Optional: Only needed for multi-file projects with include directives
+    -- journal_file = "/path/to/main.beancount",
     formatting = {
       prefix_width = 30,
       currency_column = 60,
@@ -365,6 +406,15 @@ lspconfig.beancount.setup({
     },
   },
 })
+
+-- To override auto-detected checker method:
+-- lspconfig.beancount.setup({
+--   init_options = {
+--     bean_check = {
+--       method = "system",  -- Force specific method: "python-embedded", "python-system", or "system"
+--     },
+--   },
+-- })
 ```
 
 **File type detection**: Ensure beancount files are detected. Add to your config:
@@ -387,13 +437,16 @@ Add to your `languages.toml`:
 command = "beancount-language-server"
 args = ["--stdio"]
 
+# Configuration is optional
 [language-server.beancount-language-server.config]
-journal_file = "/path/to/main.beancount"
+# Optional: Only needed for multi-file projects with include directives
+# journal_file = "/path/to/main.beancount"
 
-[language-server.beancount-language-server.config.bean_check]
-method = "system"
-bean_check_cmd = "bean-check"
+# Optional: bean_check config (uses python-embedded by default)
+# [language-server.beancount-language-server.config.bean_check]
+# method = "python-embedded"  # or "python-system" or "system"
 
+# Optional: formatting configuration
 [language-server.beancount-language-server.config.formatting]
 prefix_width = 30
 currency_column = 60
@@ -418,9 +471,13 @@ Using [lsp-mode](https://github.com/emacs-lsp/lsp-mode):
     :major-modes '(beancount-mode)
     :server-id 'beancount-language-server
     :initialization-options
-    (lambda () (list :journal_file "/path/to/main.beancount"
-                     :bean_check '(:method "python-embedded")
-                     :formatting '(:prefix_width 30 :currency_column 60 :number_currency_spacing 1))))))
+    ;; All options are optional
+    (lambda () (list
+                ;; Optional: Only needed for multi-file projects with include directives
+                ;; :journal_file "/path/to/main.beancount"
+                ;; Optional: bean_check config (uses python-embedded by default)
+                ;; :bean_check '(:method "python-embedded")
+                :formatting '(:prefix_width 30 :currency_column 60 :number_currency_spacing 1))))))
 ```
 
 ### Vim
@@ -434,11 +491,6 @@ if executable('beancount-language-server')
         \ 'cmd': {server_info->['beancount-language-server']},
         \ 'allowlist': ['beancount'],
         \ 'initialization_options': {
-        \   'journal_file': '/path/to/main.beancount',
-        \   'bean_check': {
-        \     'method': 'system',
-        \     'bean_check_cmd': 'bean-check'
-        \   },
         \   'formatting': {
         \     'prefix_width': 30,
         \     'currency_column': 60,
@@ -446,6 +498,10 @@ if executable('beancount-language-server')
         \   }
         \ }
     \ })
+    " Optional: For multi-file projects with include directives, add:
+    " \   'journal_file': '/path/to/main.beancount',
+    " Optional: To override default checker method, add:
+    " \   'bean_check': {'method': 'python-embedded'},
 endif
 ```
 
@@ -462,8 +518,10 @@ Add to LSP settings:
       "enabled": true,
       "command": ["beancount-language-server"],
       "selector": "source.beancount",
+      // All initializationOptions are optional
       "initializationOptions": {
-        "journal_file": "/path/to/main.beancount",
+        // Optional: Only needed for multi-file projects with include directives
+        // "journal_file": "/path/to/main.beancount",
         "formatting": {
           "prefix_width": 30,
           "currency_column": 60,
