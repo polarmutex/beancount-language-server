@@ -764,7 +764,7 @@ fn complete_account(
     let mut all_accounts: Vec<String> = Vec::new();
 
     for bean_data in data.values() {
-        all_accounts.extend(bean_data.get_accounts().into_iter());
+        all_accounts.extend(bean_data.get_accounts().iter().cloned());
     }
 
     // Remove duplicates
@@ -803,7 +803,7 @@ fn complete_subaccounts(
     let mut subaccounts: Vec<String> = Vec::new();
 
     for bean_data in data.values() {
-        for account in bean_data.get_accounts() {
+        for account in bean_data.get_accounts().iter() {
             if let Some(suffix) = account.strip_prefix(parent_path) {
                 let suffix = suffix.strip_prefix(':').unwrap_or(suffix);
 
@@ -847,8 +847,8 @@ fn complete_currency(
     // Collect commodities from all beancount files
     let mut commodities_set: HashSet<String> = HashSet::new();
     for bean_data in data.values() {
-        for commodity in bean_data.get_commodities() {
-            commodities_set.insert(commodity);
+        for commodity in bean_data.get_commodities().iter() {
+            commodities_set.insert(commodity.clone());
         }
     }
 
@@ -901,7 +901,7 @@ fn complete_payee(
     let mut payees: Vec<String> = Vec::new();
 
     for bean_data in data.values() {
-        for payee in bean_data.get_payees() {
+        for payee in bean_data.get_payees().iter() {
             let clean = payee.trim_matches('"');
             if !clean.is_empty() {
                 payees.push(clean.to_string());
@@ -951,7 +951,7 @@ fn complete_narration(
     let mut narrations: Vec<String> = Vec::new();
 
     for bean_data in data.values() {
-        for narration in bean_data.get_narration() {
+        for narration in bean_data.get_narration().iter() {
             narrations.push(narration.trim_matches('"').to_string());
         }
     }
@@ -998,7 +998,7 @@ fn complete_tag(
         tags.extend(
             bean_data
                 .get_tags()
-                .into_iter()
+                .iter()
                 .map(|t| t.trim_start_matches('#').to_string()),
         );
     }
@@ -1030,7 +1030,7 @@ fn complete_link(
         links.extend(
             bean_data
                 .get_links()
-                .into_iter()
+                .iter()
                 .map(|l| l.trim_start_matches('^').to_string()),
         );
     }
