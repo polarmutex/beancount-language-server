@@ -44,13 +44,19 @@ impl SystemCallChecker {
             }
         };
 
-        let mut errors = Vec::new();
+        // Pre-allocate capacity for typical error counts
+        let mut errors = Vec::with_capacity(32);
         let regex = get_error_line_regex();
 
         for line in stderr_str.lines() {
+            // Skip empty lines early
+            if line.is_empty() {
+                continue;
+            }
+
             debug!("Processing error line: {}", line);
 
-            // Primary parse path: regex for most outputs
+            // Primary parse path: regex for most outputs (fast path)
             if let Some(caps) = regex.captures(line) {
                 if let Some(err) =
                     Self::build_error(&caps[1], &caps[2], &caps[3], root_journal_file)
@@ -69,6 +75,8 @@ impl SystemCallChecker {
             }
         }
 
+        // Release excess capacity
+        errors.shrink_to_fit();
         errors
     }
 }
