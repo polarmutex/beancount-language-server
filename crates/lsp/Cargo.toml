@@ -52,6 +52,7 @@ which = "6.0"
 dashmap = "6.1"
 bytes = "1.11"
 linked-list = "0.1"
+rust_decimal = "1.37"
 
 # Python integration (optional)
 pyo3 = { version = "0.27", features = [

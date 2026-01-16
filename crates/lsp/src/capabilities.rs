@@ -1,4 +1,6 @@
 use crate::providers::semantic_tokens;
+use lsp_types::InlayHintOptions;
+use lsp_types::InlayHintServerCapabilities;
 use lsp_types::RenameOptions;
 use lsp_types::SemanticTokensFullOptions;
 use lsp_types::SemanticTokensOptions;
@@ -50,6 +52,14 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
                 ..Default::default()
             },
         )),
+        inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
+            InlayHintOptions {
+                resolve_provider: Some(false),
+                work_done_progress_options: WorkDoneProgressOptions {
+                    work_done_progress: None,
+                },
+            },
+        ))),
         ..Default::default()
     }
 }
@@ -266,6 +276,10 @@ mod tests {
             caps.semantic_tokens_provider.is_some(),
             "semantic_tokens is implemented"
         );
+        assert!(
+            caps.inlay_hint_provider.is_some(),
+            "inlay_hint is implemented"
+        );
 
         // Verify NOT implemented capabilities are disabled
         assert_eq!(caps.hover_provider, None, "hover is not implemented");
@@ -397,6 +411,15 @@ mod tests {
             )
                 -> anyhow::Result<Option<lsp_types::SemanticTokensResult>> =
                 handlers::text_document::semantic_tokens_full;
+        }
+
+        // Inlay hint capability -> handlers::text_document::inlay_hint
+        if caps.inlay_hint_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::InlayHintParams,
+            ) -> anyhow::Result<Option<Vec<lsp_types::InlayHint>>> =
+                handlers::text_document::inlay_hint;
         }
 
         // Text document sync notifications (these don't return responses)

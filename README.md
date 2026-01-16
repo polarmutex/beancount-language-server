@@ -20,6 +20,7 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 | **Rename**                | Rename symbols across files                                                                                              | ✅     |
 | **References**            | Find all references to accounts, payees, etc.                                                                            | ✅     |
 | **Semantic Highlighting** | Advanced syntax highlighting with semantic information                                                                   | ✅     |
+| **Inlay Hints**           | Show calculated balancing amounts and unbalanced transaction warnings                                                    | ✅     |
 
 ### 📋 Completion Types
 
@@ -31,6 +32,25 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 - **Links**: Complete links (`^receipt-123`)
 - **Transaction Types**: `txn`, `balance`, `open`, `close`, etc.
 
+### 💡 Inlay Hints
+
+Non-intrusive inline annotations that help visualize implicit information:
+
+- **Calculated Balancing Amounts**: When a posting omits an amount, shows the implicit balancing amount at the end of that posting line, aligned with other amounts
+- **Unbalanced Transaction Warnings**: When all postings have explicit amounts but don't balance to zero, shows a warning with the unbalanced total on the transaction line
+
+**Examples:**
+
+```beancount
+2024-01-15 * "Grocery Store"
+  Expenses:Food:Groceries              45.23 USD
+  Assets:Bank:Checking                         -45.23 USD  ; ← Shown as inlay hint
+
+2024-01-15 * "Unbalanced Transfer"  /* = 500.00 USD ⚠ */  ; ← Warning shown
+  Assets:Savings                     1000.00 USD
+  Assets:Checking                    -500.00 USD
+```
+
 ### 🔮 Planned Features
 
 | LSP Feature           | Description                                                    | Priority |
@@ -40,7 +60,6 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 | **Document Symbols**  | Outline view showing accounts, transactions, and structure     | High     |
 | **Folding Ranges**    | Fold transactions, account hierarchies, and multi-line entries | Medium   |
 | **Code Actions**      | Quick fixes, refactoring, auto-balance transactions            | Medium   |
-| **Inlay Hints**       | Show computed balances, exchange rates, running totals         | Low      |
 | **Signature Help**    | Help with transaction syntax and directive parameters          | Low      |
 | **Workspace Symbols** | Find accounts, payees, commodities across all files            | Low      |
 
