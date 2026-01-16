@@ -54,6 +54,35 @@ pub enum BeancountCheckMethod {
     PythonSystem,
 }
 
+impl BeancountCheckMethod {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BeancountCheckMethod::SystemCall => "system",
+            BeancountCheckMethod::PythonEmbedded => "python-embedded",
+            BeancountCheckMethod::PythonSystem => "python-system",
+        }
+    }
+}
+
+impl std::str::FromStr for BeancountCheckMethod {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "system" => Ok(BeancountCheckMethod::SystemCall),
+            "python-embedded" | "pyo3" => Ok(BeancountCheckMethod::PythonEmbedded),
+            "python-system" => Ok(BeancountCheckMethod::PythonSystem),
+            _ => Err(format!("invalid BeancountCheckMethod: {:?}", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for BeancountCheckMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Configuration options for bean-check execution.
 #[derive(Debug, Clone)]
 pub struct BeancountCheckConfig {

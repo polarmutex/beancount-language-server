@@ -79,7 +79,7 @@ pub fn run_server() -> Result<()> {
 
         let mut config = Config::new(root_file);
         if let Some(json) = initialize_params.initialization_options {
-            tracing::debug!("Applying initialization options: {}", json);
+            tracing::info!("Applying initialization options: {}", json);
             match config.update(json) {
                 Ok(()) => tracing::debug!("Configuration updated successfully"),
                 Err(e) => {

@@ -1,6 +1,7 @@
 use crate::checkers::{BeancountCheckConfig, BeancountCheckMethod};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_with::{DisplayFromStr, serde_as};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -64,54 +65,64 @@ impl Config {
         }
     }
     pub fn update(&mut self, json: serde_json::Value) -> Result<()> {
-        // Check explicitly for Ok() here to avoid panicking on invalid input.
-        // Gracefully ignore non-BeancountLspOptions inputs here.
+        let result = serde_json::from_value::<BeancountLspOptions>(json.clone());
+
+        let beancount_lsp_settings = match result {
+            Ok(c) => c,
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to parse BeancountLspOptions from initialization options: {:?}; errors: {}",
+                    json,
+                    err,
+                );
+                return Ok(());
+            }
+        };
+
+        // Ignore non-BeancountLspOptions inputs here.
         // Example: "[]" is sent by nvim-lspconfig if no initialization options are specified in
         // Lua.
-        if let Ok(beancount_lsp_settings) = serde_json::from_value::<BeancountLspOptions>(json) {
-            // Only set journal_root if journal_file is present and non-empty
-            if let Some(journal_file) = beancount_lsp_settings.journal_file {
-                if !journal_file.trim().is_empty() {
-                    self.journal_root =
-                        Some(PathBuf::from(shellexpand::tilde(&journal_file).as_ref()));
-                } else {
-                    tracing::debug!("Journal file is empty string, treating as None");
-                }
+        // Only set journal_root if journal_file is present and non-empty
+        if let Some(journal_file) = beancount_lsp_settings.journal_file {
+            if !journal_file.trim().is_empty() {
+                self.journal_root = Some(PathBuf::from(shellexpand::tilde(&journal_file).as_ref()));
+            } else {
+                tracing::info!("Journal file is empty string, treating as None");
             }
+        }
 
-            // Update formatting configuration
-            if let Some(formatting) = beancount_lsp_settings.formatting {
-                if let Some(prefix_width) = formatting.prefix_width {
-                    self.formatting.prefix_width = Some(prefix_width);
-                }
-                if let Some(num_width) = formatting.num_width {
-                    self.formatting.num_width = Some(num_width);
-                }
-                if let Some(currency_column) = formatting.currency_column {
-                    self.formatting.currency_column = Some(currency_column);
-                }
-                if let Some(spacing) = formatting.account_amount_spacing {
-                    self.formatting.account_amount_spacing = spacing;
-                }
-                if let Some(spacing) = formatting.number_currency_spacing {
-                    self.formatting.number_currency_spacing = spacing;
-                }
-                if let Some(indent_width) = formatting.indent_width {
-                    self.formatting.indent_width = Some(indent_width);
-                }
+        // Update formatting configuration
+        if let Some(formatting) = beancount_lsp_settings.formatting {
+            if let Some(prefix_width) = formatting.prefix_width {
+                self.formatting.prefix_width = Some(prefix_width);
             }
+            if let Some(num_width) = formatting.num_width {
+                self.formatting.num_width = Some(num_width);
+            }
+            if let Some(currency_column) = formatting.currency_column {
+                self.formatting.currency_column = Some(currency_column);
+            }
+            if let Some(spacing) = formatting.account_amount_spacing {
+                self.formatting.account_amount_spacing = spacing;
+            }
+            if let Some(spacing) = formatting.number_currency_spacing {
+                self.formatting.number_currency_spacing = spacing;
+            }
+            if let Some(indent_width) = formatting.indent_width {
+                self.formatting.indent_width = Some(indent_width);
+            }
+        }
 
-            // Update bean-check configuration
-            if let Some(bean_check) = beancount_lsp_settings.bean_check {
-                if let Some(method) = bean_check.method {
-                    self.bean_check.method = Some(method);
-                }
-                if let Some(bean_check_cmd) = bean_check.bean_check_cmd {
-                    self.bean_check.bean_check_cmd = Some(PathBuf::from(bean_check_cmd));
-                }
-                if let Some(python_cmd) = bean_check.python_cmd {
-                    self.bean_check.python_cmd = Some(PathBuf::from(python_cmd));
-                }
+        // Update bean-check configuration
+        if let Some(bean_check) = beancount_lsp_settings.bean_check {
+            if let Some(method) = bean_check.method {
+                self.bean_check.method = Some(method);
+            }
+            if let Some(bean_check_cmd) = bean_check.bean_check_cmd {
+                self.bean_check.bean_check_cmd = Some(PathBuf::from(bean_check_cmd));
+            }
+            if let Some(python_cmd) = bean_check.python_cmd {
+                self.bean_check.python_cmd = Some(PathBuf::from(python_cmd));
             }
         }
 
@@ -147,52 +158,16 @@ pub struct FormattingOptions {
     pub indent_width: Option<usize>,
 }
 
+#[serde_as]
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct BeancountCheckOptions {
     /// Method for bean-check execution: "system", "python-system", or "python-embedded"
-    #[serde(with = "bean_check_method_serde")]
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub method: Option<BeancountCheckMethod>,
     /// Path to bean-check executable (for system method)
     pub bean_check_cmd: Option<String>,
     /// Path to Python executable (for python method)
     pub python_cmd: Option<String>,
-}
-
-// Custom serde module for BeancountCheckMethod
-mod bean_check_method_serde {
-    use super::BeancountCheckMethod;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(
-        value: &Option<BeancountCheckMethod>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match value {
-            Some(BeancountCheckMethod::SystemCall) => "system".serialize(serializer),
-            Some(BeancountCheckMethod::PythonEmbedded) => "python-embedded".serialize(serializer),
-            Some(BeancountCheckMethod::PythonSystem) => "python-system".serialize(serializer),
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<BeancountCheckMethod>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value: Option<String> = Option::deserialize(deserializer)?;
-        match value.as_deref() {
-            Some("system") => Ok(Some(BeancountCheckMethod::SystemCall)),
-            Some("python-embedded") | Some("pyo3") => {
-                Ok(Some(BeancountCheckMethod::PythonEmbedded))
-            }
-            Some("python-system") => Ok(Some(BeancountCheckMethod::PythonSystem)),
-            Some(_) => Ok(None), // Invalid method, ignore gracefully
-            None => Ok(None),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -420,6 +395,39 @@ mod tests {
             .unwrap();
         // Should keep default method (None)
         assert_eq!(config.bean_check.method, None);
+    }
+
+    #[test]
+    fn test_update_with_valid_method() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(serde_json::from_str(r#"{"bean_check": {"method": "python-system"}}"#).unwrap())
+            .unwrap();
+        assert_eq!(
+            config.bean_check.method,
+            Some(BeancountCheckMethod::PythonSystem)
+        );
+    }
+
+    #[test]
+    fn test_init_options_with_empty_objects() {
+        let mut config = Config::new(PathBuf::from("/workspace"));
+        config
+            .update(
+                serde_json::from_str(
+                    r#"{
+                        "bean_check": {},
+                        "formatting": {},
+                        "journal_file": "./main.bean"
+                    }"#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(config.journal_root, Some(PathBuf::from("./main.bean")));
+        assert_eq!(config.bean_check.method, None);
+        assert_eq!(config.formatting.prefix_width, None);
     }
 
     #[test]
