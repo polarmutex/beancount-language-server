@@ -1,7 +1,7 @@
 use beancount_language_server::checkers::{
-    create_checker, BeancountCheckConfig, BeancountCheckMethod,
+    BeancountCheckConfig, BeancountCheckMethod, create_checker,
 };
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;

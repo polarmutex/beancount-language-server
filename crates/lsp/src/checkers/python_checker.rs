@@ -62,14 +62,14 @@ impl SystemPythonChecker {
         let errors_line = lines.next().unwrap_or("[]");
         let flagged_line = lines.next().unwrap_or("[]");
 
-        let errors_json: Vec<PythonCheckError> =
-            serde_json::from_str(errors_line).unwrap_or_default();
-        let flagged_json: Vec<PythonFlaggedEntry> =
-            serde_json::from_str(flagged_line).unwrap_or_default();
+        // Pre-allocate with estimated capacity for better performance
+        let mut errors = Vec::with_capacity(16);
+        let mut flagged_entries = Vec::with_capacity(4);
 
-        let errors = errors_json
-            .into_iter()
-            .map(|err| {
+        // Parse errors JSON
+        if let Ok(errors_json) = serde_json::from_str::<Vec<PythonCheckError>>(errors_line) {
+            errors.reserve(errors_json.len());
+            for err in errors_json {
                 let line_number = err.line.unwrap_or(0);
                 let file_path = if line_number == 0 {
                     root_journal_file.to_path_buf()
@@ -83,13 +83,14 @@ impl SystemPythonChecker {
                 };
 
                 let message = err.message.unwrap_or_default();
-                BeancountError::new(file_path, line_number, message)
-            })
-            .collect();
+                errors.push(BeancountError::new(file_path, line_number, message));
+            }
+        }
 
-        let flagged_entries = flagged_json
-            .into_iter()
-            .map(|entry| {
+        // Parse flagged entries JSON
+        if let Ok(flagged_json) = serde_json::from_str::<Vec<PythonFlaggedEntry>>(flagged_line) {
+            flagged_entries.reserve(flagged_json.len());
+            for entry in flagged_json {
                 let line_number = entry.line.unwrap_or(0);
                 let file_path = if line_number == 0 {
                     root_journal_file.to_path_buf()
@@ -103,9 +104,13 @@ impl SystemPythonChecker {
                 };
 
                 let message = entry.message.unwrap_or_else(|| "Flagged Entry".to_string());
-                FlaggedEntry::new(file_path, line_number, message)
-            })
-            .collect();
+                flagged_entries.push(FlaggedEntry::new(file_path, line_number, message));
+            }
+        }
+
+        // Shrink to fit to release excess capacity
+        errors.shrink_to_fit();
+        flagged_entries.shrink_to_fit();
 
         (errors, flagged_entries)
     }
