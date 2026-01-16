@@ -55,6 +55,20 @@
   ],
   "main": "./out/extension",
   "contributes": {
+    "commands": [
+      {
+        "command": "beancountLangServer.reloadServer",
+        "title": "Beancount: Reload Language Server"
+      },
+      {
+        "command": "beancountLangServer.startServer",
+        "title": "Beancount: Start Language Server"
+      },
+      {
+        "command": "beancountLangServer.stopServer",
+        "title": "Beancount: Stop Language Server"
+      }
+    ],
     "configuration": {
       "type": "object",
       "title": "Beancount Language Server Configuration",
