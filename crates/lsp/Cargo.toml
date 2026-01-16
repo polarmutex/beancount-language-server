@@ -75,6 +75,13 @@ insta.workspace = true
 test-log = { version = "0.2", features = ["trace"] }
 tempfile = "3.0"
 
+# Benchmarking
+criterion = "0.5"
+
+[[bench]]
+name = "beancount_data"
+harness = false
+
 [package.metadata.dist]
 dist = true
 
