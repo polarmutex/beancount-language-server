@@ -90,6 +90,10 @@ harness = false
 name = "didchange_performance"
 harness = false
 
+[[bench]]
+name = "checker_performance"
+harness = false
+
 [package.metadata.dist]
 dist = true
 
@@ -97,6 +101,6 @@ dist = true
 tag = true
 
 [features]
-default = []
+default = ["python-embedded"]
 python-embedded = ["pyo3"]
 integration-tests = []
