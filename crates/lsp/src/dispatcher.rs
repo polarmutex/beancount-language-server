@@ -47,7 +47,10 @@ impl<'a> RequestDispatcher<'a> {
         R::Params: DeserializeOwned + 'static,
     {
         let req = match &self.request {
-            Some(req) if req.method == R::METHOD => self.request.take().unwrap(),
+            Some(req) if req.method == R::METHOD => self
+                .request
+                .take()
+                .expect("request should exist after check"),
             _ => return None,
         };
 
@@ -106,9 +109,9 @@ impl<'a> RequestDispatcher<'a> {
 
             move || {
                 let result = f(snapshot, params);
-                sender
-                    .send(Task::Response(result_to_response::<R>(id, result)))
-                    .unwrap();
+                if let Err(e) = sender.send(Task::Response(result_to_response::<R>(id, result))) {
+                    tracing::error!("Failed to send response: {}", e);
+                }
             }
         });
 

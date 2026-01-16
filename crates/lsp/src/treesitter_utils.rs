@@ -26,7 +26,7 @@ pub fn lsp_textdocchange_to_ts_inputedit(
         if new_end_byte >= source.len_bytes() {
             let line_idx = text.lines().count();
             let line_byte_idx = ropey::str_utils::line_to_byte_idx(text, line_idx);
-            let row = u32::try_from(source.len_lines() + line_idx).unwrap() as usize;
+            let row = u32::try_from(source.len_lines() + line_idx)? as usize;
             let column = u32::try_from(text_end_byte_idx - line_byte_idx)? as usize;
             Ok(tree_sitter::Point::new(row, column))
         } else {
@@ -107,7 +107,7 @@ fn byte_to_tree_sitter_point(
 ) -> anyhow::Result<tree_sitter::Point> {
     let line_idx = source.byte_to_line(byte_idx);
     let line_byte_idx = source.line_to_byte(line_idx);
-    let row = u32::try_from(line_idx).unwrap() as usize;
+    let row = u32::try_from(line_idx)? as usize;
     let column = u32::try_from(byte_idx - line_byte_idx)? as usize;
     Ok(tree_sitter::Point::new(row, column))
 }

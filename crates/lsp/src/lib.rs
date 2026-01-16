@@ -105,7 +105,8 @@ pub fn run_server() -> Result<()> {
         }),
     };
 
-    let initialize_result = serde_json::to_value(initialize_result).unwrap();
+    let initialize_result =
+        serde_json::to_value(initialize_result).expect("Failed to serialize InitializeResult");
 
     connection.initialize_finish(request_id, initialize_result)?;
     tracing::info!("Initialization completed successfully");

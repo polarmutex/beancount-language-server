@@ -74,13 +74,13 @@ pub(crate) fn parse_initial_forest(
     let mut processed = 0;
     let mut total = 1;
 
-    sender
-        .send(Task::Progress(ProgressMsg::ForestInit {
-            done: processed,
-            total,
-            data: Box::new(None),
-        }))
-        .unwrap();
+    if let Err(e) = sender.send(Task::Progress(ProgressMsg::ForestInit {
+        done: processed,
+        total,
+        data: Box::new(None),
+    })) {
+        tracing::error!("Failed to send initial forest progress: {}", e);
+    }
 
     while let Some(file) = to_process.pop_front() {
         tracing::info!("processing {:#?}", file);
@@ -106,17 +106,17 @@ pub(crate) fn parse_initial_forest(
 
         // Always send data for the parsed file (server needs it)
         // But we could batch progress updates in the future if needed
-        sender
-            .send(Task::Progress(ProgressMsg::ForestInit {
-                done: processed,
-                total,
-                data: Box::new(Some((
-                    file.clone(),
-                    tree_arc.clone(),
-                    Arc::new(beancount_data),
-                ))),
-            }))
-            .unwrap();
+        if let Err(e) = sender.send(Task::Progress(ProgressMsg::ForestInit {
+            done: processed,
+            total,
+            data: Box::new(Some((
+                file.clone(),
+                tree_arc.clone(),
+                Arc::new(beancount_data),
+            ))),
+        })) {
+            tracing::error!("Failed to send forest init progress with data: {}", e);
+        }
 
         // Extract include patterns using tree-sitter query
         let include_query_string = r#"
@@ -134,19 +134,26 @@ pub(crate) fn parse_initial_forest(
 
             while let Some(qmatch) = include_matches.next() {
                 for capture in qmatch.captures {
-                    let filename = capture
-                        .node
-                        .utf8_text(bytes)
-                        .unwrap()
-                        .trim_start_matches('"')
-                        .trim_end_matches('"');
+                    let filename = match capture.node.utf8_text(bytes) {
+                        Ok(text) => text.trim_start_matches('"').trim_end_matches('"'),
+                        Err(e) => {
+                            tracing::warn!("Failed to extract include filename: {}", e);
+                            continue;
+                        }
+                    };
 
                     let path = path::Path::new(filename);
 
                     let path = if path.is_absolute() {
                         path.to_path_buf()
                     } else if file.is_absolute() {
-                        file.parent().unwrap().join(path)
+                        match file.parent() {
+                            Some(parent) => parent.join(path),
+                            None => {
+                                tracing::warn!("File has no parent directory: {:?}", file);
+                                path.to_path_buf()
+                            }
+                        }
                     } else {
                         path.to_path_buf()
                     };
@@ -203,13 +210,13 @@ pub(crate) fn parse_initial_forest(
         }
     }
 
-    sender
-        .send(Task::Progress(ProgressMsg::ForestInit {
-            done: processed,
-            total,
-            data: Box::new(None),
-        }))
-        .unwrap();
+    if let Err(e) = sender.send(Task::Progress(ProgressMsg::ForestInit {
+        done: processed,
+        total,
+        data: Box::new(None),
+    })) {
+        tracing::error!("Failed to send final forest progress: {}", e);
+    }
 
     Ok(true)
 }
