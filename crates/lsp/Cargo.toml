@@ -82,6 +82,10 @@ criterion = "0.5"
 name = "beancount_data"
 harness = false
 
+[[bench]]
+name = "completion_performance"
+harness = false
+
 [package.metadata.dist]
 dist = true
 
