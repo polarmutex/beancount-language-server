@@ -199,30 +199,40 @@ impl PyO3EmbeddedChecker {
             .getattr("source")
             .context("Error object missing 'source' attribute")?;
 
-        let (filename, line_number) = if source.is_none() {
-            // No source information, use defaults
-            (default_file.to_path_buf(), 0)
+        // Extract Python data quickly while holding GIL
+        let (filename_str, line_number, message) = if source.is_none() {
+            // No source information, extract message and use defaults
+            let message = error_obj
+                .getattr("message")
+                .and_then(|m| m.extract::<String>())
+                .or_else(|_| error_obj.str().map(|s| s.to_string()))
+                .unwrap_or_else(|_| "Unknown beancount error".to_string());
+            (None, 0u32, message)
         } else {
-            // Source is a dictionary, not an object with attributes
-            let filename_attr = source
+            // Source is a dictionary, extract all data at once
+            let filename_str = source
                 .get_item("filename")
                 .and_then(|f| f.extract::<String>())
-                .unwrap_or_else(|_| default_file.to_string_lossy().to_string());
+                .ok();
 
             let line_number = source
                 .get_item("lineno")
                 .and_then(|l| l.extract::<u32>())
                 .unwrap_or(0);
 
-            (PathBuf::from(filename_attr), line_number)
+            let message = error_obj
+                .getattr("message")
+                .and_then(|m| m.extract::<String>())
+                .or_else(|_| error_obj.str().map(|s| s.to_string()))
+                .unwrap_or_else(|_| "Unknown beancount error".to_string());
+
+            (filename_str, line_number, message)
         };
 
-        // Get the error message
-        let message = error_obj
-            .getattr("message")
-            .and_then(|m| m.extract::<String>())
-            .or_else(|_| error_obj.str().map(|s| s.to_string()))
-            .unwrap_or_else(|_| "Unknown beancount error".to_string());
+        // Perform Rust-side processing (PathBuf operations don't require GIL)
+        let filename = filename_str
+            .map(PathBuf::from)
+            .unwrap_or_else(|| default_file.to_path_buf());
 
         Ok(BeancountError::new(filename, line_number, message))
     }
@@ -243,13 +253,13 @@ impl PyO3EmbeddedChecker {
         };
 
         // Only process entries with review flags (fast filter)
-        let flag_str = match flag.as_deref() {
+        let flag_constant = match flag.as_deref() {
             Some("!") => "Transaction flagged for review",
             Some(_) => return Ok(None), // Fast exit for non-review flags
             None => return Ok(None),    // Fast exit for no flag
         };
 
-        // Get metadata for file and line information
+        // Get metadata for file and line information - extract quickly while holding GIL
         let meta = entry_obj
             .getattr("meta")
             .context("Entry missing 'meta' attribute")?;
@@ -264,16 +274,19 @@ impl PyO3EmbeddedChecker {
             .and_then(|l| l.extract::<u32>())
             .unwrap_or(0);
 
+        // Perform Rust-side processing (PathBuf creation, logging don't require GIL)
         debug!(
             "PyO3EmbeddedChecker: creating flagged entry for {}:{} - {}",
-            filename, line_number, flag_str
+            filename, line_number, flag_constant
         );
 
-        Ok(Some(FlaggedEntry::new(
+        let flagged_entry = FlaggedEntry::new(
             PathBuf::from(filename),
             line_number,
-            flag_str.to_string(),
-        )))
+            flag_constant.to_string(),
+        );
+
+        Ok(Some(flagged_entry))
     }
 }
 
