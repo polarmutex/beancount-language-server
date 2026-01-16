@@ -91,7 +91,10 @@ fn process_includes(
                     &include_path.to_string_lossy(),
                     glob::MatchOptions::default(),
                 )
-                .unwrap_or(glob("").unwrap())
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to create glob pattern: {}", e);
+                    glob("").expect("empty glob pattern should always work")
+                })
             })
             .flatten()
         {
@@ -154,15 +157,21 @@ pub(crate) fn did_open(
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&tree_sitter_beancount::language())
-            .unwrap();
+            .expect("Failed to set language for tree-sitter parser");
         parser
     });
-    let parser = state.parsers.get_mut(&uri).unwrap();
+    let parser = state
+        .parsers
+        .get_mut(&uri)
+        .expect("parser should exist after insertion");
 
-    state
-        .forest
-        .entry(uri.clone())
-        .or_insert_with(|| Arc::new(parser.parse(&params.text_document.text, None).unwrap()));
+    state.forest.entry(uri.clone()).or_insert_with(|| {
+        Arc::new(
+            parser
+                .parse(&params.text_document.text, None)
+                .expect("Failed to parse document"),
+        )
+    });
 
     state.beancount_data.entry(uri.clone()).or_insert_with(|| {
         let content = ropey::Rope::from_str(&params.text_document.text);
@@ -214,7 +223,16 @@ pub(crate) fn did_close(
     params: lsp_types::DidCloseTextDocumentParams,
 ) -> Result<()> {
     tracing::debug!("text_document::did_close");
-    let uri = params.text_document.uri.to_file_path().unwrap();
+    let uri = match params.text_document.uri.to_file_path() {
+        Ok(path) => path,
+        Err(_) => {
+            debug!(
+                "Failed to convert URI to file path: {:?}",
+                params.text_document.uri
+            );
+            return Ok(());
+        }
+    };
     state.open_docs.remove(&uri);
     Ok(())
 }
@@ -225,9 +243,24 @@ pub(crate) fn did_change(
     params: lsp_types::DidChangeTextDocumentParams,
 ) -> Result<()> {
     tracing::debug!("text_document::did_change");
-    let uri = &params.text_document.uri.to_file_path().unwrap();
+    let uri = match params.text_document.uri.to_file_path() {
+        Ok(path) => path,
+        Err(_) => {
+            debug!(
+                "Failed to convert URI to file path: {:?}",
+                params.text_document.uri
+            );
+            return Ok(());
+        }
+    };
     tracing::debug!("text_document::did_change - requesting {:#?}", uri);
-    let doc = state.open_docs.get_mut(uri).unwrap();
+    let doc = match state.open_docs.get_mut(&uri) {
+        Some(doc) => doc,
+        None => {
+            tracing::warn!("Document not found in open_docs: {:?}", uri);
+            return Ok(());
+        }
+    };
 
     // Version tracking for synchronization validation
     let new_version = params.text_document.version;
@@ -315,8 +348,20 @@ pub(crate) fn did_change(
 
     debug!("text_document::did_change - incremental tree parse");
     let result = {
-        let parser = state.parsers.get_mut(uri).unwrap();
-        let old_tree_arc = state.forest.get(uri).unwrap();
+        let parser = match state.parsers.get_mut(&uri) {
+            Some(p) => p,
+            None => {
+                tracing::warn!("Parser not found for document: {:?}", uri);
+                return Ok(());
+            }
+        };
+        let old_tree_arc = match state.forest.get(&uri) {
+            Some(t) => t,
+            None => {
+                tracing::warn!("Tree not found in forest: {:?}", uri);
+                return Ok(());
+            }
+        };
 
         // Avoid cloning the tree when possible - tree-sitter's edit() takes &mut
         // We clone here because we need to preserve the old tree in the Arc
@@ -337,10 +382,13 @@ pub(crate) fn did_change(
     debug!("text_document::did_change - save tree");
     if let Some(tree) = result {
         let tree_arc = Arc::new(tree);
-        *state.forest.get_mut(uri).unwrap() = tree_arc.clone();
+        *state
+            .forest
+            .get_mut(&uri)
+            .expect("tree should exist in forest") = tree_arc.clone();
         // Lazy extraction: Don't extract BeancountData on every keystroke
         // It will be extracted on-demand when needed (e.g., for completion)
-        state.beancount_data.remove(uri);
+        state.beancount_data.remove(&uri);
     }
 
     // Update document version after successfully applying changes

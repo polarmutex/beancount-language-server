@@ -18,12 +18,18 @@ pub(crate) fn references(
     snapshot: LspServerStateSnapshot,
     params: lsp_types::ReferenceParams,
 ) -> Result<Option<Vec<lsp_types::Location>>> {
-    let uri = params
+    let uri = match params
         .text_document_position
         .text_document
         .uri
         .to_file_path()
-        .unwrap();
+    {
+        Ok(path) => path,
+        Err(_) => {
+            debug!("Failed to convert URI to file path");
+            return Ok(None);
+        }
+    };
     let line = params.text_document_position.position.line;
     let char = params.text_document_position.position.character;
     let forest = snapshot.forest;
@@ -47,7 +53,13 @@ pub(crate) fn references(
     else {
         return Ok(None);
     };
-    let content = snapshot.open_docs.get(&uri).unwrap().content.clone();
+    let content = match snapshot.open_docs.get(&uri) {
+        Some(doc) => doc.content.clone(),
+        None => {
+            debug!("Document not found in open_docs: {:?}", uri);
+            return Ok(None);
+        }
+    };
     let node_text = text_for_tree_sitter_node(&content, &node);
     let open_docs = snapshot.open_docs;
     let locs = find_references(&forest, &open_docs, node_text);
@@ -60,18 +72,36 @@ pub(crate) fn rename(
     snapshot: LspServerStateSnapshot,
     params: lsp_types::RenameParams,
 ) -> Result<Option<lsp_types::WorkspaceEdit>> {
-    let uri = &params
+    let uri = match params
         .text_document_position
         .text_document
         .uri
         .to_file_path()
-        .unwrap();
+    {
+        Ok(path) => path,
+        Err(_) => {
+            debug!("Failed to convert URI to file path");
+            return Ok(None);
+        }
+    };
     let line = &params.text_document_position.position.line;
     let char = &params.text_document_position.position.character;
     let forest = snapshot.forest;
-    let _tree = forest.get(uri).unwrap();
+    let _tree = match forest.get(&uri) {
+        Some(tree) => tree,
+        None => {
+            debug!("Tree not found in forest: {:?}", uri);
+            return Ok(None);
+        }
+    };
     let open_docs = snapshot.open_docs;
-    let doc = open_docs.get(uri).unwrap();
+    let doc = match open_docs.get(&uri) {
+        Some(doc) => doc,
+        None => {
+            debug!("Document not found in open_docs: {:?}", uri);
+            return Ok(None);
+        }
+    };
     let content = doc.clone().content;
     let start = tree_sitter::Point {
         row: *line as usize,
@@ -86,7 +116,7 @@ pub(crate) fn rename(
         column: *char as usize,
     };
     let Some(node) = forest
-        .get(uri)
+        .get(&uri)
         .expect("to have tree found")
         .root_node()
         .named_descendant_for_point_range(start, end)
@@ -110,7 +140,13 @@ pub(crate) fn rename(
     let mut changes: std::collections::HashMap<lsp_types::Uri, Vec<lsp_types::TextEdit>> =
         std::collections::HashMap::new();
     for (uri_str, locations) in grouped_locs {
-        let uri = lsp_types::Uri::from_str(&uri_str).unwrap();
+        let uri = match lsp_types::Uri::from_str(&uri_str) {
+            Ok(uri) => uri,
+            Err(e) => {
+                debug!("Failed to parse URI string {}: {}", uri_str, e);
+                continue;
+            }
+        };
         let mut edits: Vec<_> = locations
             .into_iter()
             .map(|l| lsp_types::TextEdit::new(l.range, new_name.clone()))
@@ -142,8 +178,8 @@ fn find_references(
             let capture_account = query
                 .capture_index_for_name("account")
                 .expect("account should be captured");
-            let text = if open_docs.get(url).is_some() {
-                open_docs.get(url).unwrap().text().to_string()
+            let text = if let Some(doc) = open_docs.get(url) {
+                doc.text().to_string()
             } else {
                 match std::fs::read_to_string(url) {
                     Ok(content) => content,
@@ -170,10 +206,12 @@ fn find_references(
                 results
             }
         })
-        .map(|(url, node): (PathBuf, tree_sitter::Node)| {
+        .filter_map(|(url, node): (PathBuf, tree_sitter::Node)| {
             let range = node.range();
-            Location::new(
-                lsp_types::Uri::from_str(Url::from_file_path(&url).unwrap().as_ref()).unwrap(),
+            let file_url = Url::from_file_path(&url).ok()?;
+            let uri = lsp_types::Uri::from_str(file_url.as_ref()).ok()?;
+            Some(Location::new(
+                uri,
                 lsp_types::Range {
                     start: lsp_types::Position {
                         line: range.start_point.row as u32,
@@ -184,7 +222,7 @@ fn find_references(
                         character: range.end_point.column as u32,
                     },
                 },
-            )
+            ))
         })
         .collect::<Vec<_>>()
 }

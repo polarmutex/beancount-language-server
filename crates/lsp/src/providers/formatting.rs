@@ -211,11 +211,11 @@ fn extract_formateable_lines(
     };
 
     let mut query_cursor = tree_sitter::QueryCursor::new();
-    let mut matches = query_cursor.matches(
-        &query,
-        tree.root_node(),
-        RopeProvider(doc.content.get_slice(..).unwrap()),
-    );
+    let rope_slice = doc
+        .content
+        .get_slice(..)
+        .ok_or_else(|| anyhow::anyhow!("Failed to get rope slice for document"))?;
+    let mut matches = query_cursor.matches(&query, tree.root_node(), RopeProvider(rope_slice));
 
     let mut formateable_lines = Vec::new();
 

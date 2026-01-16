@@ -136,9 +136,7 @@ impl LspServerState {
         self.ensure_checker();
 
         // init forest
-        if self.config.journal_root.is_some() {
-            let file = self.config.journal_root.as_ref().unwrap();
-
+        if let Some(file) = self.config.journal_root.as_ref() {
             let journal_root = if file.is_relative() {
                 self.config.root_dir.join(file)
             } else {
@@ -199,7 +197,7 @@ impl LspServerState {
     pub fn next_event(&self, receiver: &Receiver<lsp_server::Message>) -> Option<Event> {
         crossbeam_channel::select! {
             recv(receiver) -> msg => msg.ok().map(Event::Lsp),
-            recv(self.task_receiver) -> task => Some(Event::Task(task.unwrap())),
+            recv(self.task_receiver) -> task => task.ok().map(Event::Task),
         }
     }
 

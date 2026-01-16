@@ -119,11 +119,21 @@ impl BeancountData {
         let mut matches = cursor_qry.matches(unified_query, tree.root_node(), content_bytes);
 
         // Get capture indices for efficient dispatch
-        let tag_idx = unified_query.capture_index_for_name("tag").unwrap();
-        let link_idx = unified_query.capture_index_for_name("link").unwrap();
-        let flag_idx = unified_query.capture_index_for_name("flag").unwrap();
-        let account_idx = unified_query.capture_index_for_name("account").unwrap();
-        let transaction_idx = unified_query.capture_index_for_name("transaction").unwrap();
+        let tag_idx = unified_query
+            .capture_index_for_name("tag")
+            .expect("query should have 'tag' capture");
+        let link_idx = unified_query
+            .capture_index_for_name("link")
+            .expect("query should have 'link' capture");
+        let flag_idx = unified_query
+            .capture_index_for_name("flag")
+            .expect("query should have 'flag' capture");
+        let account_idx = unified_query
+            .capture_index_for_name("account")
+            .expect("query should have 'account' capture");
+        let transaction_idx = unified_query
+            .capture_index_for_name("transaction")
+            .expect("query should have 'transaction' capture");
 
         // Collections for frequency tracking
         let mut tags_set = std::collections::HashSet::new();
