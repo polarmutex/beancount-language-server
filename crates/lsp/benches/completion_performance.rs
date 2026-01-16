@@ -1,5 +1,5 @@
 use beancount_language_server::beancount_data::BeancountData;
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use ropey::Rope;
 use std::collections::HashMap;
 use std::path::PathBuf;

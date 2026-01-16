@@ -8,9 +8,11 @@ use crate::document::Document;
 use crate::forest;
 use crate::handlers;
 use crate::progress::Progress;
+use crate::utils::ToFilePath;
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
 use lsp_types::notification::Notification;
+use lsp_types::request::Request;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -321,6 +323,50 @@ impl LspServerState {
 
         tracing::debug!("Processing request: method={}, id={}", req.method, req.id);
 
+        // Lazy extraction: Ensure BeancountData is extracted before handling requests that need it
+        // This allows us to defer extraction from didChange (which happens on every keystroke)
+        // until the data is actually needed (e.g., for completion, references, semantic tokens)
+        if req.method == lsp_types::request::Completion::METHOD {
+            if let Ok(params) =
+                serde_json::from_value::<lsp_types::CompletionParams>(req.params.clone())
+                && let Ok(path) = params
+                    .text_document_position
+                    .text_document
+                    .uri
+                    .to_file_path()
+            {
+                self.ensure_beancount_data(&path);
+            }
+        } else if req.method == lsp_types::request::References::METHOD {
+            if let Ok(params) =
+                serde_json::from_value::<lsp_types::ReferenceParams>(req.params.clone())
+                && let Ok(path) = params
+                    .text_document_position
+                    .text_document
+                    .uri
+                    .to_file_path()
+            {
+                self.ensure_beancount_data(&path);
+            }
+        } else if req.method == lsp_types::request::SemanticTokensFullRequest::METHOD {
+            if let Ok(params) =
+                serde_json::from_value::<lsp_types::SemanticTokensParams>(req.params.clone())
+                && let Ok(path) = params.text_document.uri.to_file_path()
+            {
+                self.ensure_beancount_data(&path);
+            }
+        } else if req.method == lsp_types::request::Rename::METHOD
+            && let Ok(params) =
+                serde_json::from_value::<lsp_types::RenameParams>(req.params.clone())
+            && let Ok(path) = params
+                .text_document_position
+                .text_document
+                .uri
+                .to_file_path()
+        {
+            self.ensure_beancount_data(&path);
+        }
+
         RequestDispatcher::new(self, req)
             .on_sync::<lsp_types::request::Shutdown>(|state, _request| {
                 tracing::info!("Received shutdown request");
@@ -493,5 +539,146 @@ impl LspServerState {
         }
 
         checker
+    }
+
+    /// Ensure BeancountData is extracted for the given URI.
+    /// Lazily extracts on first access after tree changes (lazy extraction for #757).
+    pub(crate) fn ensure_beancount_data(&mut self, uri: &PathBuf) {
+        // If data already exists, no need to extract
+        if self.beancount_data.contains_key(uri) {
+            return;
+        }
+
+        // Extract on-demand
+        if let (Some(tree), Some(doc)) = (self.forest.get(uri), self.open_docs.get(uri)) {
+            let beancount_data = BeancountData::new(tree, &doc.content);
+            self.beancount_data
+                .insert(uri.clone(), Arc::new(beancount_data));
+            tracing::debug!("Lazy extraction: BeancountData extracted for {:?}", uri);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::document::Document;
+    use ropey::Rope;
+    use std::path::PathBuf;
+    use tree_sitter::Parser;
+
+    fn create_test_state() -> LspServerState {
+        let (sender, _receiver) = crossbeam_channel::unbounded();
+        let config = Config::new(PathBuf::from("/test"));
+        LspServerState::new(sender, config)
+    }
+
+    fn create_test_tree(content: &str) -> tree_sitter::Tree {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .expect("Failed to set language");
+        parser.parse(content, None).expect("Failed to parse")
+    }
+
+    #[test]
+    fn test_lazy_extraction_skips_if_data_exists() {
+        let mut state = create_test_state();
+        let uri = PathBuf::from("/test/file.beancount");
+
+        // Create test data
+        let content = "2024-01-01 open Assets:Checking USD\n";
+        let tree = create_test_tree(content);
+        let doc = Document {
+            content: Rope::from_str(content),
+            version: 1,
+        };
+
+        // Setup state
+        state.forest.insert(uri.clone(), Arc::new(tree));
+        state.open_docs.insert(uri.clone(), doc);
+
+        // Extract once
+        state.ensure_beancount_data(&uri);
+        assert!(state.beancount_data.contains_key(&uri));
+
+        // Get pointer to the Arc
+        let first_ptr = Arc::as_ptr(state.beancount_data.get(&uri).unwrap());
+
+        // Call again - should skip extraction
+        state.ensure_beancount_data(&uri);
+
+        // Verify same Arc (pointer equality means no re-extraction)
+        let second_ptr = Arc::as_ptr(state.beancount_data.get(&uri).unwrap());
+        assert_eq!(first_ptr, second_ptr, "Data should not be re-extracted");
+    }
+
+    #[test]
+    fn test_lazy_extraction_extracts_if_missing() {
+        let mut state = create_test_state();
+        let uri = PathBuf::from("/test/file.beancount");
+
+        // Create test data
+        let content = "2024-01-01 open Assets:Checking USD\n";
+        let tree = create_test_tree(content);
+        let doc = Document {
+            content: Rope::from_str(content),
+            version: 1,
+        };
+
+        // Setup state without data
+        state.forest.insert(uri.clone(), Arc::new(tree));
+        state.open_docs.insert(uri.clone(), doc);
+
+        // Verify data doesn't exist yet
+        assert!(!state.beancount_data.contains_key(&uri));
+
+        // Extract on-demand
+        state.ensure_beancount_data(&uri);
+
+        // Verify data was extracted
+        assert!(state.beancount_data.contains_key(&uri));
+        let data = state.beancount_data.get(&uri).unwrap();
+        let accounts = data.get_accounts();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0], "Assets:Checking");
+    }
+
+    #[test]
+    fn test_lazy_extraction_handles_missing_tree() {
+        let mut state = create_test_state();
+        let uri = PathBuf::from("/test/file.beancount");
+
+        // Create doc but no tree
+        let content = "2024-01-01 open Assets:Checking USD\n";
+        let doc = Document {
+            content: Rope::from_str(content),
+            version: 1,
+        };
+        state.open_docs.insert(uri.clone(), doc);
+
+        // Try to extract - should not panic
+        state.ensure_beancount_data(&uri);
+
+        // Data should not be extracted
+        assert!(!state.beancount_data.contains_key(&uri));
+    }
+
+    #[test]
+    fn test_lazy_extraction_handles_missing_doc() {
+        let mut state = create_test_state();
+        let uri = PathBuf::from("/test/file.beancount");
+
+        // Create tree but no doc
+        let content = "2024-01-01 open Assets:Checking USD\n";
+        let tree = create_test_tree(content);
+        state.forest.insert(uri.clone(), Arc::new(tree));
+
+        // Try to extract - should not panic
+        state.ensure_beancount_data(&uri);
+
+        // Data should not be extracted
+        assert!(!state.beancount_data.contains_key(&uri));
     }
 }
