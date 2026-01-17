@@ -479,6 +479,13 @@ impl LspServerState {
                 handlers::text_document::handle_references,
             )
             .expect("Failed to register References handler")
+            .on_with::<lsp_types::request::GotoDefinition>(
+                |r, params| {
+                    r.ensure_beancount_data_for_position(&params.text_document_position_params);
+                },
+                handlers::text_document::handle_definition,
+            )
+            .expect("Failed to register GotoDefinition handler")
             .on_with::<lsp_types::request::SemanticTokensFullRequest>(
                 |r, params| {
                     r.ensure_beancount_data_for_text_document(&params.text_document);
