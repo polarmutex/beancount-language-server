@@ -38,6 +38,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         }),
         document_formatting_provider: Some(OneOf::Left(true)),
         definition_provider: Some(OneOf::Left(true)),
+        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
         references_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(false),
@@ -285,6 +286,7 @@ mod tests {
             caps.document_formatting_provider.is_some(),
             "formatting is implemented"
         );
+        assert!(caps.hover_provider.is_some(), "hover is implemented");
         assert!(
             caps.references_provider.is_some(),
             "references is implemented"
@@ -300,7 +302,6 @@ mod tests {
         );
 
         // Verify NOT implemented capabilities are disabled
-        assert_eq!(caps.hover_provider, None, "hover is not implemented");
         assert!(
             caps.definition_provider.is_some(),
             "definition is implemented"
@@ -420,6 +421,13 @@ mod tests {
             )
                 -> anyhow::Result<Option<lsp_types::GotoDefinitionResponse>> =
                 handlers::text_document::handle_definition;
+        }
+        // Hover capability -> handlers::text_document::hover
+        if caps.hover_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::HoverParams,
+            ) -> anyhow::Result<Option<lsp_types::Hover>> = handlers::text_document::hover;
         }
 
         // Rename capability -> handlers::text_document::handle_rename

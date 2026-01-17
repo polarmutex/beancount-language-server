@@ -2,6 +2,7 @@ pub mod text_document {
     use crate::providers::completion;
     use crate::providers::definition;
     use crate::providers::formatting;
+    use crate::providers::hover;
     use crate::providers::inlay_hints;
     use crate::providers::references;
     use crate::providers::semantic_tokens;
@@ -144,6 +145,33 @@ pub mod text_document {
             }
             Err(e) => {
                 tracing::error!("Formatting failed: {}", e);
+                Err(e)
+            }
+        }
+    }
+    pub(crate) fn hover(
+        snapshot: LspServerStateSnapshot,
+        params: lsp_types::HoverParams,
+    ) -> Result<Option<lsp_types::Hover>> {
+        tracing::trace!(
+            "Hover requested for: {} at {}:{}",
+            params
+                .text_document_position_params
+                .text_document
+                .uri
+                .as_str(),
+            params.text_document_position_params.position.line,
+            params.text_document_position_params.position.character
+        );
+
+        match hover::hover(snapshot, params) {
+            Ok(Some(hover)) => Ok(Some(hover)),
+            Ok(None) => {
+                tracing::debug!("No hover information available");
+                Ok(None)
+            }
+            Err(e) => {
+                tracing::error!("Hover failed: {}", e);
                 Err(e)
             }
         }

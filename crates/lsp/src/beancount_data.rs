@@ -49,6 +49,7 @@ use tree_sitter_beancount::tree_sitter;
 /// Compiled once on first use and reused for all subsequent parses.
 static UNIFIED_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
 static CURRENCY_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
+static NOTE_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
 
 /// Get or compile the unified query (tags, links, flags, accounts, transactions)
 pub(crate) fn get_unified_query() -> &'static tree_sitter::Query {
@@ -78,6 +79,18 @@ fn get_currency_query() -> &'static tree_sitter::Query {
     })
 }
 
+/// Get or compile the note query (note directives with account and string)
+fn get_note_query() -> &'static tree_sitter::Query {
+    NOTE_QUERY.get_or_init(|| {
+        let query_string = r#"
+            (note account: (account) @account (string) @note)
+            (note (account) @account (string) @note)
+        "#;
+        tree_sitter::Query::new(&tree_sitter_beancount::language(), query_string)
+            .expect("Failed to compile note query")
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct FlaggedEntry {
     _file: String,
@@ -96,6 +109,7 @@ pub struct BeancountData {
     payees: Arc<Vec<String>>,
     narration: Arc<Vec<String>>,
     pub flagged_entries: Vec<FlaggedEntry>,
+    account_notes: Arc<std::collections::HashMap<String, Vec<String>>>,
     tags: Arc<Vec<String>>,
     links: Arc<Vec<String>>,
     commodities: Arc<Vec<String>>,
@@ -107,6 +121,8 @@ impl BeancountData {
         let mut payees = vec![];
         let mut narration = vec![];
         let mut flagged_entries = vec![];
+        let mut account_notes: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
 
         // Optimize string allocation - convert content to string once and reuse
         let content_str = content.to_string();
@@ -256,11 +272,45 @@ impl BeancountData {
         commodities.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         let commodities: Vec<String> = commodities.into_iter().map(|(name, _)| name).collect();
 
+        // Extract notes associated with accounts
+        tracing::debug!("beancount_data:: get account notes");
+        let note_query = get_note_query();
+        let mut cursor_qry = tree_sitter::QueryCursor::new();
+        let mut matches = cursor_qry.matches(note_query, tree.root_node(), content_bytes);
+
+        let account_idx = note_query
+            .capture_index_for_name("account")
+            .expect("note query should have 'account' capture");
+        let note_idx = note_query
+            .capture_index_for_name("note")
+            .expect("note query should have 'note' capture");
+
+        while let Some(qmatch) = matches.next() {
+            let mut account: Option<String> = None;
+            let mut note: Option<String> = None;
+
+            for capture in qmatch.captures {
+                if capture.index == account_idx {
+                    account = Some(text_for_tree_sitter_node(content, &capture.node));
+                } else if capture.index == note_idx {
+                    let raw = text_for_tree_sitter_node(content, &capture.node);
+                    note = Some(clean_note_text(&raw));
+                }
+            }
+
+            if let (Some(account), Some(note)) = (account, note)
+                && !note.is_empty()
+            {
+                account_notes.entry(account).or_default().push(note);
+            }
+        }
+
         Self {
             accounts: Arc::new(accounts),
             payees: Arc::new(payees),
             narration: Arc::new(narration),
             flagged_entries,
+            account_notes: Arc::new(account_notes),
             tags: Arc::new(tags),
             links: Arc::new(links),
             commodities: Arc::new(commodities),
@@ -279,6 +329,10 @@ impl BeancountData {
         Arc::clone(&self.narration)
     }
 
+    pub fn get_account_notes(&self) -> Arc<std::collections::HashMap<String, Vec<String>>> {
+        Arc::clone(&self.account_notes)
+    }
+
     pub fn get_tags(&self) -> Arc<Vec<String>> {
         Arc::clone(&self.tags)
     }
@@ -290,6 +344,17 @@ impl BeancountData {
     pub fn get_commodities(&self) -> Arc<Vec<String>> {
         Arc::clone(&self.commodities)
     }
+}
+
+fn clean_note_text(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.len() >= 2
+        && ((trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\'')))
+    {
+        return trimmed[1..trimmed.len() - 1].to_string();
+    }
+    trimmed.to_string()
 }
 
 #[cfg(test)]

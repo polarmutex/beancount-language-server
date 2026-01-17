@@ -173,6 +173,17 @@ pub(crate) fn inlay_hints(
     Ok(if hints.is_empty() { None } else { Some(hints) })
 }
 
+/// Calculate inlay hints for a single transaction node.
+///
+/// This is shared with other features (e.g. hover) that want to surface
+/// the same information even when inline hints are disabled.
+pub(crate) fn transaction_inlay_hints(
+    txn_node: &tree_sitter::Node,
+    content: &ropey::Rope,
+) -> Option<Vec<InlayHint>> {
+    process_transaction(txn_node, content)
+}
+
 /// Process a single transaction and return hints
 fn process_transaction(
     txn_node: &tree_sitter::Node,
