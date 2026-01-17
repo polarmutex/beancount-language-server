@@ -4,6 +4,8 @@ pub mod definition;
 /// Provider definitions for LSP `textDocument/publishDiagnostics`.
 pub mod diagnostics;
 pub mod formatting;
+/// Provider definitions for LSP `textDocument/hover`.
+pub mod hover;
 /// Provider definitions for LSP `textDocument/inlayHint`.
 pub mod inlay_hints;
 /// Provider definitions for LSP `textDocument/references` and `textDocument/rename`.
