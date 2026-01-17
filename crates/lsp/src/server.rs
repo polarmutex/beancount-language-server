@@ -456,6 +456,13 @@ impl LspServerState {
                 Ok(())
             })
             .expect("Failed to register Shutdown handler")
+            .on_with::<lsp_types::request::HoverRequest>(
+                |r, params| {
+                    r.ensure_beancount_data_for_position(&params.text_document_position_params);
+                },
+                handlers::text_document::hover,
+            )
+            .expect("Failed to register Hover handler")
             .on_with::<lsp_types::request::Completion>(
                 |r, params| {
                     r.ensure_beancount_data_for_position(&params.text_document_position);
