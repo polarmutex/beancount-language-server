@@ -51,7 +51,7 @@ static UNIFIED_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
 static CURRENCY_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
 
 /// Get or compile the unified query (tags, links, flags, accounts, transactions)
-fn get_unified_query() -> &'static tree_sitter::Query {
+pub(crate) fn get_unified_query() -> &'static tree_sitter::Query {
     UNIFIED_QUERY.get_or_init(|| {
         let query_string = r#"
             (tag) @tag

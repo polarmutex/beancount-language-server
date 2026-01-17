@@ -2,7 +2,7 @@ use crate::document::Document;
 use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::text_for_tree_sitter_node;
 use crate::utils::ToFilePath;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use lsp_types::Location;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -47,7 +47,7 @@ pub(crate) fn references(
     };
     let Some(node) = forest
         .get(&uri)
-        .expect("to have tree found")
+        .with_context(|| format!("missing syntax tree for file: {}", uri.display()))?
         .root_node()
         .named_descendant_for_point_range(start, end)
     else {
