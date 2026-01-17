@@ -5,6 +5,7 @@ use crate::server::Task;
 use anyhow::Result;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 
 fn result_to_response<R>(
     id: lsp_server::RequestId,
@@ -25,47 +26,27 @@ where
     }
 }
 
-// A helper struct to  dispatch LSP requests to functions.
-#[must_use = "RequestDispatcher::finish not called"]
-pub(crate) struct RequestDispatcher<'a> {
-    state: &'a mut LspServerState,
-    request: Option<lsp_server::Request>,
+// A helper struct to dispatch LSP requests to functions.
+pub(crate) struct RequestRouter {
+    handlers: HashMap<String, DispatchHandler>,
 }
 
-impl<'a> RequestDispatcher<'a> {
-    pub fn new(state: &'a mut LspServerState, request: lsp_server::Request) -> Self {
-        RequestDispatcher {
-            state,
-            request: Some(request),
+type DispatchHandler =
+    Box<dyn Fn(&mut LspServerState, lsp_server::Request) + Send + Sync + 'static>;
+
+impl RequestRouter {
+    pub fn new() -> Self {
+        Self {
+            handlers: HashMap::new(),
         }
     }
 
-    // Tries to parse the request as the specified type.
-    fn parse<R>(&mut self) -> Option<(lsp_server::RequestId, R::Params)>
-    where
-        R: lsp_types::request::Request + 'static,
-        R::Params: DeserializeOwned + 'static,
-    {
-        let req = match &self.request {
-            Some(req) if req.method == R::METHOD => self
-                .request
-                .take()
-                .expect("request should exist after check"),
-            _ => return None,
-        };
-
-        match from_json(R::METHOD, req.params) {
-            Ok(params) => Some((req.id, params)),
-            Err(err) => {
-                let response = lsp_server::Response::new_err(
-                    req.id,
-                    lsp_server::ErrorCode::InvalidParams as i32,
-                    err.to_string(),
-                );
-                self.state.respond(response);
-                None
-            }
+    fn insert_handler(&mut self, method: &'static str, handler: DispatchHandler) -> Result<()> {
+        if self.handlers.contains_key(method) {
+            anyhow::bail!("duplicate handler registered for method: {method}");
         }
+        self.handlers.insert(method.to_string(), handler);
+        Ok(())
     }
 
     // Try to dispatch the event as the given Request type on the current thread.
@@ -78,13 +59,26 @@ impl<'a> RequestDispatcher<'a> {
         R::Params: DeserializeOwned + 'static,
         R::Result: Serialize + 'static,
     {
-        let (id, params) = match self.parse::<R>() {
-            Some(it) => it,
-            None => return Ok(self),
-        };
-        let result = f(self.state, params);
-        let response = result_to_response::<R>(id, result);
-        self.state.respond(response);
+        self.insert_handler(
+            R::METHOD,
+            Box::new(
+                move |state, req| match from_json::<R::Params>(R::METHOD, req.params) {
+                    Ok(params) => {
+                        let result = f(state, params);
+                        let response = result_to_response::<R>(req.id, result);
+                        state.respond(response);
+                    }
+                    Err(err) => {
+                        let response = lsp_server::Response::new_err(
+                            req.id,
+                            lsp_server::ErrorCode::InvalidParams as i32,
+                            err.to_string(),
+                        );
+                        state.respond(response);
+                    }
+                },
+            ),
+        )?;
         Ok(self)
     }
 
@@ -98,36 +92,94 @@ impl<'a> RequestDispatcher<'a> {
         R::Params: DeserializeOwned + 'static + Send,
         R::Result: Serialize + 'static,
     {
-        let (id, params) = match self.parse::<R>() {
-            Some(it) => it,
-            None => return Ok(self),
-        };
-
-        self.state.thread_pool.execute({
-            let snapshot = self.state.snapshot();
-            let sender = self.state.task_sender.clone();
-
-            move || {
-                let result = f(snapshot, params);
-                if let Err(e) = sender.send(Task::Response(result_to_response::<R>(id, result))) {
-                    tracing::error!("Failed to send response: {}", e);
-                }
-            }
-        });
-
+        self.insert_handler(
+            R::METHOD,
+            Box::new(
+                move |state, req| match from_json::<R::Params>(R::METHOD, req.params) {
+                    Ok(params) => {
+                        let id = req.id;
+                        let snapshot = state.snapshot();
+                        let sender = state.task_sender.clone();
+                        state.thread_pool.execute(move || {
+                            let result = f(snapshot, params);
+                            if let Err(e) =
+                                sender.send(Task::Response(result_to_response::<R>(id, result)))
+                            {
+                                tracing::error!("Failed to send response: {}", e);
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        let response = lsp_server::Response::new_err(
+                            req.id,
+                            lsp_server::ErrorCode::InvalidParams as i32,
+                            err.to_string(),
+                        );
+                        state.respond(response);
+                    }
+                },
+            ),
+        )?;
         Ok(self)
     }
 
-    // If the request was not handled, report back that this is an unknown request.
-    pub fn finish(&mut self) {
-        if let Some(req) = self.request.take() {
+    // Try to dispatch the event as the given Request type on the thread pool, with a pre-hook
+    // that can use the parsed params on the main thread before dispatch.
+    pub fn on_with<R>(
+        &mut self,
+        pre: fn(&mut LspServerState, &R::Params),
+        f: fn(LspServerStateSnapshot, R::Params) -> Result<R::Result>,
+    ) -> Result<&mut Self>
+    where
+        R: lsp_types::request::Request + 'static,
+        R::Params: DeserializeOwned + Send + 'static,
+        R::Result: Serialize + 'static,
+    {
+        self.insert_handler(
+            R::METHOD,
+            Box::new(
+                move |state, req| match from_json::<R::Params>(R::METHOD, req.params) {
+                    Ok(params) => {
+                        pre(state, &params);
+
+                        let id = req.id;
+                        let snapshot = state.snapshot();
+                        let sender = state.task_sender.clone();
+                        state.thread_pool.execute(move || {
+                            let result = f(snapshot, params);
+                            if let Err(e) =
+                                sender.send(Task::Response(result_to_response::<R>(id, result)))
+                            {
+                                tracing::error!("Failed to send response: {}", e);
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        let response = lsp_server::Response::new_err(
+                            req.id,
+                            lsp_server::ErrorCode::InvalidParams as i32,
+                            err.to_string(),
+                        );
+                        state.respond(response);
+                    }
+                },
+            ),
+        )?;
+        Ok(self)
+    }
+
+    // Dispatches a single request by method.
+    pub fn dispatch(&self, state: &mut LspServerState, req: lsp_server::Request) {
+        if let Some(handler) = self.handlers.get(req.method.as_str()) {
+            handler(state, req);
+        } else {
             tracing::error!("unknown request: {:?}", req);
             let response = lsp_server::Response::new_err(
                 req.id,
                 lsp_server::ErrorCode::MethodNotFound as i32,
                 "unknown request".to_string(),
             );
-            self.state.respond(response);
+            state.respond(response);
         }
     }
 }
@@ -182,5 +234,50 @@ impl<'a> NotificationDispatcher<'a> {
         {
             tracing::error!("unhandled notification: {:?}", notification);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use lsp_types::request::Request;
+    use serde_json::json;
+    use std::path::PathBuf;
+    use std::time::Instant;
+
+    #[test]
+    fn parse_mismatched_params_returns_invalid_params() {
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let mut state = LspServerState::new(sender, Config::new(PathBuf::from("/test")));
+
+        let request = lsp_server::Request {
+            id: lsp_server::RequestId::from(1),
+            method: lsp_types::request::Completion::METHOD.to_string(),
+            params: json!({"unexpected": "value"}),
+        };
+
+        state
+            .req_queue
+            .incoming
+            .register(request.id.clone(), (request.method.clone(), Instant::now()));
+
+        let mut router = RequestRouter::new();
+        router
+            .on::<lsp_types::request::Completion>(|_, _| Ok(None))
+            .unwrap();
+        router.dispatch(&mut state, request);
+
+        let response = match receiver.recv().expect("response should be sent") {
+            lsp_server::Message::Response(response) => response,
+            other => panic!("expected response, got {other:?}"),
+        };
+
+        let error = response.error.expect("expected error response");
+        assert_eq!(
+            error.code,
+            lsp_server::ErrorCode::InvalidParams as i32,
+            "mismatched params should return InvalidParams"
+        );
     }
 }
