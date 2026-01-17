@@ -3,7 +3,7 @@ use crate::checkers::BeancountChecker;
 use crate::checkers::create_checker;
 use crate::config::Config;
 use crate::dispatcher::NotificationDispatcher;
-use crate::dispatcher::RequestDispatcher;
+use crate::dispatcher::RequestRouter;
 use crate::document::Document;
 use crate::forest;
 use crate::handlers;
@@ -12,7 +12,6 @@ use crate::utils::ToFilePath;
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
 use lsp_types::notification::Notification;
-use lsp_types::request::Request;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -89,6 +88,9 @@ pub(crate) struct LspServerState {
 
     // Cached checker instance (created once and reused)
     pub checker: Option<Arc<dyn BeancountChecker>>,
+
+    // Request router with registered handlers
+    pub request_router: Arc<RequestRouter>,
 }
 
 /// A snapshot of the state of the language server
@@ -113,6 +115,7 @@ impl LspServerState {
     pub fn new(sender: Sender<lsp_server::Message>, config: Config) -> Self {
         let (task_sender, task_receiver) = crossbeam_channel::unbounded();
         //let (event_tx, event_rx) = crossbeam_channel::unbounded();
+        let request_router = Arc::new(Self::build_request_router());
         Self {
             beancount_data: HashMap::new(),
             config,
@@ -126,6 +129,7 @@ impl LspServerState {
             task_receiver,
             thread_pool: threadpool::ThreadPool::default(),
             checker: None,
+            request_router,
         }
     }
 
@@ -321,65 +325,8 @@ impl LspServerState {
 
         tracing::debug!("Processing request: method={}, id={}", req.method, req.id);
 
-        // Lazy extraction: Ensure BeancountData is extracted before handling requests that need it
-        // This allows us to defer extraction from didChange (which happens on every keystroke)
-        // until the data is actually needed (e.g., for completion, references, semantic tokens)
-        if req.method == lsp_types::request::Completion::METHOD {
-            if let Ok(params) =
-                serde_json::from_value::<lsp_types::CompletionParams>(req.params.clone())
-                && let Ok(path) = params
-                    .text_document_position
-                    .text_document
-                    .uri
-                    .to_file_path()
-            {
-                self.ensure_beancount_data(&path);
-            }
-        } else if req.method == lsp_types::request::References::METHOD {
-            if let Ok(params) =
-                serde_json::from_value::<lsp_types::ReferenceParams>(req.params.clone())
-                && let Ok(path) = params
-                    .text_document_position
-                    .text_document
-                    .uri
-                    .to_file_path()
-            {
-                self.ensure_beancount_data(&path);
-            }
-        } else if req.method == lsp_types::request::SemanticTokensFullRequest::METHOD {
-            if let Ok(params) =
-                serde_json::from_value::<lsp_types::SemanticTokensParams>(req.params.clone())
-                && let Ok(path) = params.text_document.uri.to_file_path()
-            {
-                self.ensure_beancount_data(&path);
-            }
-        } else if req.method == lsp_types::request::Rename::METHOD
-            && let Ok(params) =
-                serde_json::from_value::<lsp_types::RenameParams>(req.params.clone())
-            && let Ok(path) = params
-                .text_document_position
-                .text_document
-                .uri
-                .to_file_path()
-        {
-            self.ensure_beancount_data(&path);
-        }
+        self.request_router.clone().dispatch(self, req);
 
-        RequestDispatcher::new(self, req)
-            .on_sync::<lsp_types::request::Shutdown>(|state, _request| {
-                tracing::info!("Received shutdown request");
-                state.shutdown_requested = true;
-                Ok(())
-            })?
-            .on::<lsp_types::request::Completion>(handlers::text_document::completion)?
-            .on::<lsp_types::request::Formatting>(handlers::text_document::formatting)?
-            .on::<lsp_types::request::Rename>(handlers::text_document::handle_rename)?
-            .on::<lsp_types::request::References>(handlers::text_document::handle_references)?
-            .on::<lsp_types::request::SemanticTokensFullRequest>(
-                handlers::text_document::semantic_tokens_full,
-            )?
-            .on::<lsp_types::request::InlayHintRequest>(handlers::text_document::inlay_hint)?
-            .finish();
         Ok(())
     }
 
@@ -500,6 +447,43 @@ impl LspServerState {
         }
     }
 
+    fn build_request_router() -> RequestRouter {
+        let mut router = RequestRouter::new();
+        router
+            .on_sync::<lsp_types::request::Shutdown>(|state, _request| {
+                tracing::info!("Received shutdown request");
+                state.shutdown_requested = true;
+                Ok(())
+            })
+            .expect("Failed to register Shutdown handler")
+            .on_with::<lsp_types::request::Completion>(
+                LspServerState::ensure_beancount_data_for_completion,
+                handlers::text_document::completion,
+            )
+            .expect("Failed to register Completion handler")
+            .on::<lsp_types::request::Formatting>(handlers::text_document::formatting)
+            .expect("Failed to register Formatting handler")
+            .on_with::<lsp_types::request::Rename>(
+                LspServerState::ensure_beancount_data_for_rename,
+                handlers::text_document::handle_rename,
+            )
+            .expect("Failed to register Rename handler")
+            .on_with::<lsp_types::request::References>(
+                LspServerState::ensure_beancount_data_for_references,
+                handlers::text_document::handle_references,
+            )
+            .expect("Failed to register References handler")
+            .on_with::<lsp_types::request::SemanticTokensFullRequest>(
+                LspServerState::ensure_beancount_data_for_semantic_tokens,
+                handlers::text_document::semantic_tokens_full,
+            )
+            .expect("Failed to register SemanticTokens handler")
+            .on::<lsp_types::request::InlayHintRequest>(handlers::text_document::inlay_hint)
+            .expect("Failed to register InlayHint handler");
+
+        router
+    }
+
     fn ensure_checker(&mut self) -> Option<Arc<dyn BeancountChecker>> {
         if let Some(checker) = &self.checker {
             return Some(checker.clone());
@@ -555,6 +539,41 @@ impl LspServerState {
                 .insert(uri.clone(), Arc::new(beancount_data));
             tracing::debug!("Lazy extraction: BeancountData extracted for {:?}", uri);
         }
+    }
+
+    fn ensure_beancount_data_for_text_document(
+        &mut self,
+        text_document: &lsp_types::TextDocumentIdentifier,
+    ) {
+        if let Ok(path) = text_document.uri.to_file_path() {
+            self.ensure_beancount_data(&path);
+        }
+    }
+
+    fn ensure_beancount_data_for_position(
+        &mut self,
+        params: &lsp_types::TextDocumentPositionParams,
+    ) {
+        self.ensure_beancount_data_for_text_document(&params.text_document);
+    }
+
+    fn ensure_beancount_data_for_completion(&mut self, params: &lsp_types::CompletionParams) {
+        self.ensure_beancount_data_for_position(&params.text_document_position);
+    }
+
+    fn ensure_beancount_data_for_references(&mut self, params: &lsp_types::ReferenceParams) {
+        self.ensure_beancount_data_for_position(&params.text_document_position);
+    }
+
+    fn ensure_beancount_data_for_rename(&mut self, params: &lsp_types::RenameParams) {
+        self.ensure_beancount_data_for_position(&params.text_document_position);
+    }
+
+    fn ensure_beancount_data_for_semantic_tokens(
+        &mut self,
+        params: &lsp_types::SemanticTokensParams,
+    ) {
+        self.ensure_beancount_data_for_text_document(&params.text_document);
     }
 }
 
