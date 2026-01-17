@@ -1,5 +1,6 @@
 pub mod text_document {
     use crate::providers::completion;
+    use crate::providers::definition;
     use crate::providers::formatting;
     use crate::providers::inlay_hints;
     use crate::providers::references;
@@ -143,6 +144,34 @@ pub mod text_document {
             }
             Err(e) => {
                 tracing::error!("Formatting failed: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    pub(crate) fn handle_definition(
+        snapshot: LspServerStateSnapshot,
+        params: lsp_types::GotoDefinitionParams,
+    ) -> Result<Option<lsp_types::GotoDefinitionResponse>> {
+        tracing::trace!(
+            "Definition requested for: {} at {}:{}",
+            params
+                .text_document_position_params
+                .text_document
+                .uri
+                .as_str(),
+            params.text_document_position_params.position.line,
+            params.text_document_position_params.position.character
+        );
+
+        match definition::definition(snapshot, params) {
+            Ok(Some(location)) => Ok(Some(location)),
+            Ok(None) => {
+                tracing::debug!("No definition found");
+                Ok(None)
+            }
+            Err(e) => {
+                tracing::error!("Definition lookup failed: {}", e);
                 Err(e)
             }
         }
