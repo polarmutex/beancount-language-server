@@ -48,6 +48,16 @@ Key options:
 - Make sure Python and the `beancount` package are available in the same environment VS Code uses.
 - If diagnostics do not appear, ensure `beancountLangServer.journalFile` is set and run `bean-check` (or your configured command) in a VS Code terminal to confirm it works there.
 
+- VSCode has some trouble supporting inlay-hints, you can disable it in settings:
+
+```json
+{
+  "[beancount]": {
+    "editor.inlayHints.enabled": "off"
+  }
+}
+```
+
 ## Develop the extension
 
 ```bash
