@@ -456,6 +456,11 @@ impl LspServerState {
                 Ok(())
             })
             .expect("Failed to register Shutdown handler")
+            .on_with::<lsp_types::request::HoverRequest>(
+                LspServerState::ensure_beancount_data_for_hover,
+                handlers::text_document::hover,
+            )
+            .expect("Failed to register Hover handler")
             .on_with::<lsp_types::request::Completion>(
                 LspServerState::ensure_beancount_data_for_completion,
                 handlers::text_document::completion,
@@ -567,6 +572,10 @@ impl LspServerState {
 
     fn ensure_beancount_data_for_rename(&mut self, params: &lsp_types::RenameParams) {
         self.ensure_beancount_data_for_position(&params.text_document_position);
+    }
+
+    fn ensure_beancount_data_for_hover(&mut self, params: &lsp_types::HoverParams) {
+        self.ensure_beancount_data_for_position(&params.text_document_position_params);
     }
 
     fn ensure_beancount_data_for_semantic_tokens(
