@@ -1,11 +1,14 @@
 use crate::beancount_data::BeancountData;
+use crate::checkers::BeancountChecker;
+use crate::checkers::create_checker;
 use crate::config::Config;
 use crate::dispatcher::NotificationDispatcher;
-use crate::dispatcher::RequestDispatcher;
+use crate::dispatcher::RequestRouter;
 use crate::document::Document;
 use crate::forest;
 use crate::handlers;
 use crate::progress::Progress;
+use crate::utils::ToFilePath;
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
 use lsp_types::notification::Notification;
@@ -23,6 +26,7 @@ pub(crate) enum ProgressMsg {
     BeanCheck {
         total: usize,
         done: usize,
+        checker_name: String,
     },
     ForestInit {
         total: usize,
@@ -81,6 +85,12 @@ pub(crate) struct LspServerState {
 
     // Thread pool for async execution
     pub thread_pool: threadpool::ThreadPool,
+
+    // Cached checker instance (created once and reused)
+    pub checker: Option<Arc<dyn BeancountChecker>>,
+
+    // Request router with registered handlers
+    pub request_router: Arc<RequestRouter>,
 }
 
 /// A snapshot of the state of the language server
@@ -89,6 +99,7 @@ pub(crate) struct LspServerStateSnapshot {
     pub config: Config,
     pub forest: HashMap<PathBuf, Arc<tree_sitter::Tree>>,
     pub open_docs: HashMap<PathBuf, Document>,
+    pub checker: Option<Arc<dyn BeancountChecker>>,
 }
 
 /*
@@ -104,6 +115,7 @@ impl LspServerState {
     pub fn new(sender: Sender<lsp_server::Message>, config: Config) -> Self {
         let (task_sender, task_receiver) = crossbeam_channel::unbounded();
         //let (event_tx, event_rx) = crossbeam_channel::unbounded();
+        let request_router = Arc::new(Self::build_request_router());
         Self {
             beancount_data: HashMap::new(),
             config,
@@ -116,18 +128,21 @@ impl LspServerState {
             task_sender,
             task_receiver,
             thread_pool: threadpool::ThreadPool::default(),
+            checker: None,
+            request_router,
         }
     }
 
     pub fn run(&mut self, receiver: Receiver<lsp_server::Message>) -> Result<()> {
         tracing::info!("LSP server starting main event loop");
 
-        // init forest
-        if self.config.journal_root.is_some() {
-            let file = self.config.journal_root.as_ref().unwrap();
+        // Initialize checker once (can be slow); report progress to users.
+        self.ensure_checker();
 
+        // init forest
+        if let Some(file) = self.config.journal_root.as_ref() {
             let journal_root = if file.is_relative() {
-                self.config.root_file.join(file)
+                self.config.root_dir.join(file)
             } else {
                 file.clone()
             };
@@ -186,7 +201,7 @@ impl LspServerState {
     pub fn next_event(&self, receiver: &Receiver<lsp_server::Message>) -> Option<Event> {
         crossbeam_channel::select! {
             recv(receiver) -> msg => msg.ok().map(Event::Lsp),
-            recv(self.task_receiver) -> task => Some(Event::Task(task.unwrap())),
+            recv(self.task_receiver) -> task => task.ok().map(Event::Task),
         }
     }
 
@@ -244,7 +259,11 @@ impl LspServerState {
 
     fn handle_progress_task(&mut self, task: ProgressMsg) -> Result<()> {
         match task {
-            ProgressMsg::BeanCheck { total, done } => {
+            ProgressMsg::BeanCheck {
+                total,
+                done,
+                checker_name,
+            } => {
                 let progress_state = if done == 0 {
                     Progress::Begin
                 } else if done < total {
@@ -253,7 +272,7 @@ impl LspServerState {
                     Progress::End
                 };
                 self.report_progress(
-                    "bean check",
+                    &format!("bean check ({})", checker_name),
                     progress_state,
                     Some(format!("{done}/{total}")),
                     Some(Progress::fraction(done, total)),
@@ -306,23 +325,8 @@ impl LspServerState {
 
         tracing::debug!("Processing request: method={}, id={}", req.method, req.id);
 
-        RequestDispatcher::new(self, req)
-            .on_sync::<lsp_types::request::Shutdown>(|state, _request| {
-                tracing::info!("Received shutdown request");
-                state.shutdown_requested = true;
-                Ok(())
-            })?
-            .on::<lsp_types::request::Completion>(handlers::text_document::completion)?
-            .on::<lsp_types::request::Formatting>(handlers::text_document::formatting)?
-            .on::<lsp_types::request::WillSaveWaitUntil>(
-                handlers::text_document::will_save_wait_until,
-            )?
-            .on::<lsp_types::request::Rename>(handlers::text_document::handle_rename)?
-            .on::<lsp_types::request::References>(handlers::text_document::handle_references)?
-            .on::<lsp_types::request::SemanticTokensFullRequest>(
-                handlers::text_document::semantic_tokens_full,
-            )?
-            .finish();
+        self.request_router.clone().dispatch(self, req);
+
         Ok(())
     }
 
@@ -439,6 +443,260 @@ impl LspServerState {
             config: self.config.clone(),
             forest: self.forest.clone(),
             open_docs: self.open_docs.clone(),
+            checker: self.checker.clone(),
         }
+    }
+
+    fn build_request_router() -> RequestRouter {
+        let mut router = RequestRouter::new();
+        router
+            .on_sync::<lsp_types::request::Shutdown>(|state, _request| {
+                tracing::info!("Received shutdown request");
+                state.shutdown_requested = true;
+                Ok(())
+            })
+            .expect("Failed to register Shutdown handler")
+            .on_with::<lsp_types::request::Completion>(
+                LspServerState::ensure_beancount_data_for_completion,
+                handlers::text_document::completion,
+            )
+            .expect("Failed to register Completion handler")
+            .on::<lsp_types::request::Formatting>(handlers::text_document::formatting)
+            .expect("Failed to register Formatting handler")
+            .on_with::<lsp_types::request::Rename>(
+                LspServerState::ensure_beancount_data_for_rename,
+                handlers::text_document::handle_rename,
+            )
+            .expect("Failed to register Rename handler")
+            .on_with::<lsp_types::request::References>(
+                LspServerState::ensure_beancount_data_for_references,
+                handlers::text_document::handle_references,
+            )
+            .expect("Failed to register References handler")
+            .on_with::<lsp_types::request::SemanticTokensFullRequest>(
+                LspServerState::ensure_beancount_data_for_semantic_tokens,
+                handlers::text_document::semantic_tokens_full,
+            )
+            .expect("Failed to register SemanticTokens handler")
+            .on::<lsp_types::request::InlayHintRequest>(handlers::text_document::inlay_hint)
+            .expect("Failed to register InlayHint handler");
+
+        router
+    }
+
+    fn ensure_checker(&mut self) -> Option<Arc<dyn BeancountChecker>> {
+        if let Some(checker) = &self.checker {
+            return Some(checker.clone());
+        }
+
+        self.report_progress(
+            "checker auto",
+            Progress::Begin,
+            Some("discovering available checkers".to_string()),
+            None,
+        );
+
+        let checker = create_checker(&self.config.bean_check, &self.config.root_dir);
+        let checker = checker.map(|checker| {
+            let checker_name = checker.name().to_string();
+            let checker: Arc<dyn BeancountChecker> = Arc::from(checker);
+            self.checker = Some(checker.clone());
+
+            self.report_progress(
+                "checker auto",
+                Progress::End,
+                Some(format!("using {checker_name}")),
+                None,
+            );
+
+            checker
+        });
+
+        if checker.is_none() {
+            self.report_progress(
+                "checker auto",
+                Progress::End,
+                Some("no checker available".to_string()),
+                None,
+            );
+        }
+
+        checker
+    }
+
+    /// Ensure BeancountData is extracted for the given URI.
+    /// Lazily extracts on first access after tree changes (lazy extraction for #757).
+    pub(crate) fn ensure_beancount_data(&mut self, uri: &PathBuf) {
+        // If data already exists, no need to extract
+        if self.beancount_data.contains_key(uri) {
+            return;
+        }
+
+        // Extract on-demand
+        if let (Some(tree), Some(doc)) = (self.forest.get(uri), self.open_docs.get(uri)) {
+            let beancount_data = BeancountData::new(tree, &doc.content);
+            self.beancount_data
+                .insert(uri.clone(), Arc::new(beancount_data));
+            tracing::debug!("Lazy extraction: BeancountData extracted for {:?}", uri);
+        }
+    }
+
+    fn ensure_beancount_data_for_text_document(
+        &mut self,
+        text_document: &lsp_types::TextDocumentIdentifier,
+    ) {
+        if let Ok(path) = text_document.uri.to_file_path() {
+            self.ensure_beancount_data(&path);
+        }
+    }
+
+    fn ensure_beancount_data_for_position(
+        &mut self,
+        params: &lsp_types::TextDocumentPositionParams,
+    ) {
+        self.ensure_beancount_data_for_text_document(&params.text_document);
+    }
+
+    fn ensure_beancount_data_for_completion(&mut self, params: &lsp_types::CompletionParams) {
+        self.ensure_beancount_data_for_position(&params.text_document_position);
+    }
+
+    fn ensure_beancount_data_for_references(&mut self, params: &lsp_types::ReferenceParams) {
+        self.ensure_beancount_data_for_position(&params.text_document_position);
+    }
+
+    fn ensure_beancount_data_for_rename(&mut self, params: &lsp_types::RenameParams) {
+        self.ensure_beancount_data_for_position(&params.text_document_position);
+    }
+
+    fn ensure_beancount_data_for_semantic_tokens(
+        &mut self,
+        params: &lsp_types::SemanticTokensParams,
+    ) {
+        self.ensure_beancount_data_for_text_document(&params.text_document);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::document::Document;
+    use ropey::Rope;
+    use std::path::PathBuf;
+    use tree_sitter::Parser;
+
+    fn create_test_state() -> LspServerState {
+        let (sender, _receiver) = crossbeam_channel::unbounded();
+        let config = Config::new(PathBuf::from("/test"));
+        LspServerState::new(sender, config)
+    }
+
+    fn create_test_tree(content: &str) -> tree_sitter::Tree {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .expect("Failed to set language");
+        parser.parse(content, None).expect("Failed to parse")
+    }
+
+    #[test]
+    fn test_lazy_extraction_skips_if_data_exists() {
+        let mut state = create_test_state();
+        let uri = PathBuf::from("/test/file.beancount");
+
+        // Create test data
+        let content = "2024-01-01 open Assets:Checking USD\n";
+        let tree = create_test_tree(content);
+        let doc = Document {
+            content: Rope::from_str(content),
+            version: 1,
+        };
+
+        // Setup state
+        state.forest.insert(uri.clone(), Arc::new(tree));
+        state.open_docs.insert(uri.clone(), doc);
+
+        // Extract once
+        state.ensure_beancount_data(&uri);
+        assert!(state.beancount_data.contains_key(&uri));
+
+        // Get pointer to the Arc
+        let first_ptr = Arc::as_ptr(state.beancount_data.get(&uri).unwrap());
+
+        // Call again - should skip extraction
+        state.ensure_beancount_data(&uri);
+
+        // Verify same Arc (pointer equality means no re-extraction)
+        let second_ptr = Arc::as_ptr(state.beancount_data.get(&uri).unwrap());
+        assert_eq!(first_ptr, second_ptr, "Data should not be re-extracted");
+    }
+
+    #[test]
+    fn test_lazy_extraction_extracts_if_missing() {
+        let mut state = create_test_state();
+        let uri = PathBuf::from("/test/file.beancount");
+
+        // Create test data
+        let content = "2024-01-01 open Assets:Checking USD\n";
+        let tree = create_test_tree(content);
+        let doc = Document {
+            content: Rope::from_str(content),
+            version: 1,
+        };
+
+        // Setup state without data
+        state.forest.insert(uri.clone(), Arc::new(tree));
+        state.open_docs.insert(uri.clone(), doc);
+
+        // Verify data doesn't exist yet
+        assert!(!state.beancount_data.contains_key(&uri));
+
+        // Extract on-demand
+        state.ensure_beancount_data(&uri);
+
+        // Verify data was extracted
+        assert!(state.beancount_data.contains_key(&uri));
+        let data = state.beancount_data.get(&uri).unwrap();
+        let accounts = data.get_accounts();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0], "Assets:Checking");
+    }
+
+    #[test]
+    fn test_lazy_extraction_handles_missing_tree() {
+        let mut state = create_test_state();
+        let uri = PathBuf::from("/test/file.beancount");
+
+        // Create doc but no tree
+        let content = "2024-01-01 open Assets:Checking USD\n";
+        let doc = Document {
+            content: Rope::from_str(content),
+            version: 1,
+        };
+        state.open_docs.insert(uri.clone(), doc);
+
+        // Try to extract - should not panic
+        state.ensure_beancount_data(&uri);
+
+        // Data should not be extracted
+        assert!(!state.beancount_data.contains_key(&uri));
+    }
+
+    #[test]
+    fn test_lazy_extraction_handles_missing_doc() {
+        let mut state = create_test_state();
+        let uri = PathBuf::from("/test/file.beancount");
+
+        // Create tree but no doc
+        let content = "2024-01-01 open Assets:Checking USD\n";
+        let tree = create_test_tree(content);
+        state.forest.insert(uri.clone(), Arc::new(tree));
+
+        // Try to extract - should not panic
+        state.ensure_beancount_data(&uri);
+
+        // Data should not be extracted
+        assert!(!state.beancount_data.contains_key(&uri));
     }
 }

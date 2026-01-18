@@ -108,8 +108,8 @@ nix flake check
 
 The diagnostics system uses a Strategy pattern with three implementations:
 
-1. **SystemCallChecker** - Executes bean-check binary via subprocess and parses stderr
-2. **PythonChecker** - Runs Python script that outputs structured JSON
+1. **SystemCallChecker** - Executes bean-check binary via subprocess and parses stderr.
+2. **SystemPythonChecker** - Runs embedded python/bean_check.py via `python -c` and parses structed JSON output for errors and flags (prefers virtualenv, then python3/python from PATH)
 3. **PyO3EmbeddedChecker** - Calls beancount library directly via embedded Python
 
 Factory pattern in `checkers/mod.rs` handles creation based on configuration.

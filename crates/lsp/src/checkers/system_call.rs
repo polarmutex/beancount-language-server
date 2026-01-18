@@ -7,13 +7,14 @@ use std::sync::OnceLock;
 use tracing::debug;
 
 /// Static regex for parsing bean-check error output.
-/// Pattern: "file:line: error_message"
+/// Pattern: "file:line: error_message" with greedy path capture so embedded
+/// ':' in paths (e.g., Windows drive letters or unusual paths) still match.
 /// Compiled once at startup for optimal performance.
 static ERROR_LINE_REGEX: OnceLock<regex::Regex> = OnceLock::new();
 
 fn get_error_line_regex() -> &'static regex::Regex {
     ERROR_LINE_REGEX.get_or_init(|| {
-        regex::Regex::new(r"^([^:]+):(\d+):\s*(.*)$").expect("Failed to compile error line regex")
+        regex::Regex::new(r"^(.*):(\d+):\s*(.*)$").expect("Failed to compile error line regex")
     })
 }
 
@@ -43,51 +44,82 @@ impl SystemCallChecker {
             }
         };
 
-        let mut errors = Vec::new();
+        // Pre-allocate capacity for typical error counts
+        let mut errors = Vec::with_capacity(32);
         let regex = get_error_line_regex();
 
         for line in stderr_str.lines() {
+            // Skip empty lines early
+            if line.is_empty() {
+                continue;
+            }
+
             debug!("Processing error line: {}", line);
 
+            // Primary parse path: regex for most outputs (fast path)
             if let Some(caps) = regex.captures(line) {
-                debug!(
-                    "Parsed error: file={}, line={}, message={}",
-                    &caps[1], &caps[2], &caps[3]
-                );
+                if let Some(err) =
+                    Self::build_error(&caps[1], &caps[2], &caps[3], root_journal_file)
+                {
+                    errors.push(err);
+                }
+                continue;
+            }
 
-                // Parse line number (1-based) and handle special cases
-                let line_number = match caps[2].parse::<u32>() {
-                    Ok(0) => 0,       // Keep as 0 for file-level errors
-                    Ok(line) => line, // Keep 1-based for consistency
-                    Err(e) => {
-                        debug!("Failed to parse line number '{}': {}", &caps[2], e);
-                        continue;
-                    }
-                };
-
-                // Convert file path string to PathBuf
-                let file_path_str = &caps[1];
-                let parsed_line_number = caps[2].parse::<u32>().unwrap_or(1);
-                let file_path = if parsed_line_number == 0 {
-                    // File-level error: use root journal file
-                    root_journal_file.to_path_buf()
-                } else {
-                    // Line-specific error: use the file mentioned in the error
-                    match PathBuf::from(file_path_str).canonicalize() {
-                        Ok(path) => path,
-                        Err(_) => {
-                            // Fallback to raw path if canonicalization fails
-                            PathBuf::from(file_path_str)
-                        }
-                    }
-                };
-
-                let error = BeancountError::new(file_path, line_number, caps[3].trim().to_string());
-                errors.push(error);
+            // Fallback: split from the right to tolerate unexpected extra ':' in paths
+            if let Some((file_part, line_part, msg_part)) = Self::split_fallback(line)
+                && let Some(err) =
+                    Self::build_error(file_part, line_part, msg_part, root_journal_file)
+            {
+                errors.push(err);
             }
         }
 
+        // Release excess capacity
+        errors.shrink_to_fit();
         errors
+    }
+}
+
+impl SystemCallChecker {
+    /// Build an error from path/line/message pieces, handling canonicalization and line parsing.
+    fn build_error(
+        file_part: &str,
+        line_part: &str,
+        msg_part: &str,
+        root_journal_file: &Path,
+    ) -> Option<BeancountError> {
+        let line_number = match line_part.parse::<u32>() {
+            Ok(num) => num,
+            Err(e) => {
+                debug!("Failed to parse line number '{}': {}", line_part, e);
+                return None;
+            }
+        };
+
+        let file_path = if line_number == 0 {
+            root_journal_file.to_path_buf()
+        } else {
+            match PathBuf::from(file_part).canonicalize() {
+                Ok(path) => path,
+                Err(_) => PathBuf::from(file_part),
+            }
+        };
+
+        Some(BeancountError::new(
+            file_path,
+            line_number,
+            msg_part.trim().to_string(),
+        ))
+    }
+
+    /// Fallback splitter that rsplits on ':' to allow extra colons in the path portion.
+    fn split_fallback(line: &str) -> Option<(&str, &str, &str)> {
+        let mut parts = line.rsplitn(3, ':');
+        let msg_part = parts.next()?;
+        let line_part = parts.next()?;
+        let file_part = parts.next()?;
+        Some((file_part, line_part, msg_part))
     }
 }
 
@@ -269,6 +301,27 @@ mod tests {
         assert_eq!(errors[0].message, "Missing Commodity directive for 'USD'");
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn test_parse_windows_balance_error() {
+        let checker = SystemCallChecker::new(PathBuf::from("bean-check"));
+        let stderr = b"C:\\Users\\TestUser\\projects\\example\\2026\\main.bean:109: Balance failed for 'Liabilities:Card': expected -13954.35 CNY != accumulated -3954.35 CNY (10000.00 too much)\r\n\r\n   2026-01-10 balance Liabilities:Card                             -13954.35 CNY\r\n";
+        let root_file = PathBuf::from("C:/Users/TestUser/projects/example/2026/main.bean");
+
+        let errors = checker.parse_stderr_output(stderr, &root_file);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].line, 109);
+        assert_eq!(
+            errors[0].file,
+            PathBuf::from("C:/Users/TestUser/projects/example/2026/main.bean")
+        );
+        assert!(
+            errors[0]
+                .message
+                .starts_with("Balance failed for 'Liabilities:Card': expected -13954.35 CNY")
+        );
+    }
+
     #[test]
     fn test_error_line_regex() {
         let regex = get_error_line_regex();
@@ -277,6 +330,8 @@ mod tests {
         assert!(regex.is_match("/path/to/file.beancount:123: Error message"));
         assert!(regex.is_match("relative/path.beancount:1: Another error"));
         assert!(regex.is_match("file.beancount:0: File-level error"));
+        assert!(regex.is_match("C:/path/to/file.beancount:7: Windows drive"));
+        assert!(regex.is_match("C:\\path\\to\\file.beancount:9: Windows backslash"));
 
         // Invalid formats
         assert!(!regex.is_match("no colon separator"));
@@ -291,5 +346,160 @@ mod tests {
         } else {
             panic!("Regex should match valid error format");
         }
+
+        // Ensure backslash-separated paths are captured fully
+        if let Some(caps) = regex.captures("C:\\Users\\test\\file.beancount:13: Backslash path") {
+            assert_eq!(&caps[1], "C:\\Users\\test\\file.beancount");
+            assert_eq!(&caps[2], "13");
+            assert_eq!(&caps[3], "Backslash path");
+        } else {
+            panic!("Regex should match backslash-separated Windows paths");
+        }
+    }
+
+    #[test]
+    fn test_split_fallback_allows_extra_colon_in_path() {
+        let checker = SystemCallChecker::new(PathBuf::from("bean-check"));
+        let stderr = b"C:/weird:path/01.bean:12: extra colon path";
+        let root_file = PathBuf::from("C:/weird:path/01.bean");
+
+        let errors = checker.parse_stderr_output(stderr, &root_file);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].line, 12);
+        assert_eq!(errors[0].file, PathBuf::from("C:/weird:path/01.bean"));
+        assert_eq!(errors[0].message, "extra colon path");
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore)]
+    fn test_system_call_checker_integration_valid() {
+        // Try to find bean-check in PATH
+        let bean_check_cmd =
+            which::which("bean-check").unwrap_or_else(|_| PathBuf::from("bean-check"));
+        let checker = SystemCallChecker::new(bean_check_cmd);
+
+        // Skip if bean-check not available
+        if !checker.is_available() {
+            return;
+        }
+
+        let (_temp_dir, file_path) = create_temp_beancount_file(
+            "2023-01-01 open Assets:Cash\n\
+             2023-01-02 open Expenses:Food\n",
+        );
+
+        let result = checker.check(&file_path);
+        assert!(result.is_ok());
+        let check_result = result.unwrap();
+        // Valid file should have no errors
+        assert_eq!(check_result.errors.len(), 0);
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore)]
+    fn test_system_call_checker_integration_with_errors() {
+        let bean_check_cmd =
+            which::which("bean-check").unwrap_or_else(|_| PathBuf::from("bean-check"));
+        let checker = SystemCallChecker::new(bean_check_cmd);
+
+        if !checker.is_available() {
+            return;
+        }
+
+        // Create a file with unbalanced transaction
+        let content = concat!(
+            "2023-01-01 open Assets:Cash\n",
+            "2023-01-01 open Expenses:Food\n",
+            "\n",
+            "2023-01-02 * \"Test transaction\"\n",
+            "  Assets:Cash     100.00 USD\n",
+            "  Expenses:Food   -50.00 USD\n",
+        );
+        let (_temp_dir, file_path) = create_temp_beancount_file(content);
+
+        let result = checker.check(&file_path);
+        assert!(result.is_ok());
+        let check_result = result.unwrap();
+
+        // Should detect the unbalanced transaction
+        assert!(
+            !check_result.errors.is_empty(),
+            "Expected errors for unbalanced transaction"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore)]
+    fn test_system_call_checker_integration_balance_failure() {
+        let bean_check_cmd =
+            which::which("bean-check").unwrap_or_else(|_| PathBuf::from("bean-check"));
+        let checker = SystemCallChecker::new(bean_check_cmd);
+
+        if !checker.is_available() {
+            return;
+        }
+
+        let (_temp_dir, file_path) = create_temp_beancount_file(
+            "2023-01-01 open Assets:Cash\n\
+             2023-01-01 open Equity:Opening\n\
+             \n\
+             2023-01-02 * \"Opening balance\"\n\
+               Assets:Cash  100.00 USD\n\
+               Equity:Opening\n\
+             \n\
+             2023-01-03 balance Assets:Cash  200.00 USD\n",
+        );
+
+        let result = checker.check(&file_path);
+        assert!(result.is_ok());
+        let check_result = result.unwrap();
+
+        // Should detect balance assertion failure
+        assert!(
+            !check_result.errors.is_empty(),
+            "Expected balance assertion error"
+        );
+
+        // Verify error mentions balance
+        let has_balance_error = check_result
+            .errors
+            .iter()
+            .any(|err| err.message.to_lowercase().contains("balance"));
+        assert!(has_balance_error, "Expected balance error in diagnostics");
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore)]
+    fn test_system_call_checker_integration_line_numbers() {
+        let bean_check_cmd =
+            which::which("bean-check").unwrap_or_else(|_| PathBuf::from("bean-check"));
+        let checker = SystemCallChecker::new(bean_check_cmd);
+
+        if !checker.is_available() {
+            return;
+        }
+
+        // Create file with error on specific line
+        let (_temp_dir, file_path) = create_temp_beancount_file(
+            "2023-01-01 open Assets:Cash\n\
+             2023-01-01 open Equity:Opening\n\
+             \n\
+             2023-01-02 * \"Opening\"\n\
+               Assets:Cash  100.00 USD\n\
+               Equity:Opening\n\
+             \n\
+             2023-01-03 balance Assets:Cash  999.00 USD\n", // Line 8
+        );
+
+        let result = checker.check(&file_path);
+        assert!(result.is_ok());
+        let check_result = result.unwrap();
+
+        // Should have at least one error
+        assert!(!check_result.errors.is_empty());
+
+        // Verify at least one error has a valid line number > 0
+        let has_valid_line = check_result.errors.iter().any(|err| err.line > 0);
+        assert!(has_valid_line, "Expected errors with valid line numbers");
     }
 }

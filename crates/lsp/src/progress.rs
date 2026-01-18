@@ -114,3 +114,65 @@ pub async fn progress_end(client: &Client, token: ProgressToken) {
         .await;
 }
 */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_progress_fraction_basic() {
+        assert_eq!(Progress::fraction(0, 10), 0.0);
+        assert_eq!(Progress::fraction(5, 10), 0.5);
+        assert_eq!(Progress::fraction(10, 10), 1.0);
+    }
+
+    #[test]
+    fn test_progress_fraction_edge_cases() {
+        // When total is 0, should use max(1) to avoid division by zero
+        assert_eq!(Progress::fraction(0, 0), 0.0);
+
+        // Full progress
+        assert_eq!(Progress::fraction(100, 100), 1.0);
+
+        // Partial progress
+        assert_eq!(Progress::fraction(1, 3), 1.0 / 3.0);
+        assert_eq!(Progress::fraction(2, 3), 2.0 / 3.0);
+    }
+
+    #[test]
+    fn test_progress_fraction_large_numbers() {
+        assert_eq!(Progress::fraction(500, 1000), 0.5);
+        assert_eq!(Progress::fraction(999, 1000), 0.999);
+        assert_eq!(Progress::fraction(1, 1000), 0.001);
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed")]
+    fn test_progress_fraction_invalid_done_greater_than_total() {
+        // Should panic when done > total
+        Progress::fraction(11, 10);
+    }
+
+    #[test]
+    fn test_progress_enum_variants() {
+        let begin = Progress::Begin;
+        let report = Progress::Report;
+        let end = Progress::End;
+
+        // Just verify they exist and can be created
+        assert_eq!(begin, Progress::Begin);
+        assert_eq!(report, Progress::Report);
+        assert_eq!(end, Progress::End);
+    }
+
+    #[test]
+    fn test_progress_enum_equality() {
+        assert_eq!(Progress::Begin, Progress::Begin);
+        assert_eq!(Progress::Report, Progress::Report);
+        assert_eq!(Progress::End, Progress::End);
+
+        assert_ne!(Progress::Begin, Progress::Report);
+        assert_ne!(Progress::Report, Progress::End);
+        assert_ne!(Progress::Begin, Progress::End);
+    }
+}

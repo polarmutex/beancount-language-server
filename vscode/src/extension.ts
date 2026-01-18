@@ -10,10 +10,11 @@ import {
 
 import { log } from "./util";
 
-let client: LanguageClient;
+let client: LanguageClient | undefined;
 
-export async function activate(
+async function start_or_restart_client(
   context: vscode.ExtensionContext,
+  showRestartMessage: boolean,
 ): Promise<void> {
   const server_path = await get_server_path(context);
   if (!server_path) {
@@ -27,8 +28,13 @@ export async function activate(
 
   log.info("use lsp executable", server_path);
 
+  const config = vscode.workspace.getConfiguration("beancountLangServer");
+
+  const serverArgs: string[] = [];
+
   const server_executable: Executable = {
     command: server_path,
+    args: serverArgs,
   };
 
   const server_options: ServerOptions = {
@@ -36,13 +42,16 @@ export async function activate(
     debug: server_executable,
   };
 
-  const config = vscode.workspace.getConfiguration("beancountLangServer");
+  type InitializationOptions = {
+    journal_file?: string;
+    formatting?: unknown;
+    bean_check?: unknown;
+  };
 
-  // Build initialization options - only include journal_file if it's valid and non-empty
-  const initializationOptions: { journal_file?: string; formatting?: unknown } =
-    {
-      formatting: config.get("formatting"),
-    };
+  const initializationOptions: InitializationOptions = {
+    formatting: config.get("formatting"),
+    bean_check: config.get("beanCheck"),
+  };
 
   const journalFile = config.get<string>("journalFile");
   if (journalFile && journalFile.trim() !== "") {
@@ -52,7 +61,7 @@ export async function activate(
   const client_options: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "beancount" }],
     synchronize: {
-      //  // Notify the server about file changes to '.clientrc files contained in the workspace
+      // Notify the server about file changes to beancount files contained in the workspace
       fileEvents: vscode.workspace.createFileSystemWatcher(
         "**/.{bean,beancount}",
       ),
@@ -60,15 +69,102 @@ export async function activate(
     initializationOptions,
   };
 
-  client = new LanguageClient(
+  log.info(JSON.stringify(initializationOptions, null, 2));
+
+  const next = new LanguageClient(
     "beancount-language-server",
     "Beancount Language Server",
     server_options,
     client_options,
   );
 
-  // Start the client. This will also launch the server
+  if (client?.isRunning()) {
+    await client.stop();
+  }
+
+  client = next;
   await client.start();
+
+  if (showRestartMessage) {
+    void vscode.window.showInformationMessage(
+      "Beancount language server restarted with latest configuration.",
+    );
+  }
+}
+
+export async function activate(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "beancountLangServer.reloadServer",
+      async () => {
+        try {
+          await start_or_restart_client(context, true);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          void vscode.window.showErrorMessage(
+            `Failed to restart language server: ${message}`,
+          );
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "beancountLangServer.startServer",
+      async () => {
+        try {
+          if (client?.isRunning()) {
+            void vscode.window.showInformationMessage(
+              "Beancount language server is already running.",
+            );
+            return;
+          }
+          await start_or_restart_client(context, false);
+          void vscode.window.showInformationMessage(
+            "Beancount language server started.",
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          void vscode.window.showErrorMessage(
+            `Failed to start language server: ${message}`,
+          );
+        }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "beancountLangServer.stopServer",
+      async () => {
+        try {
+          if (!client?.isRunning()) {
+            void vscode.window.showInformationMessage(
+              "Beancount language server is not running.",
+            );
+            return;
+          }
+          await client.stop();
+          void vscode.window.showInformationMessage(
+            "Beancount language server stopped.",
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          void vscode.window.showErrorMessage(
+            `Failed to stop language server: ${message}`,
+          );
+        }
+      },
+    ),
+  );
+
+  await start_or_restart_client(context, false);
 }
 
 export function deactivate(): Thenable<void> | undefined {

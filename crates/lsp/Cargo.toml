@@ -37,6 +37,7 @@ strum_macros = "0.27.2"
 # Serialization and configuration
 serde.workspace = true
 serde_json.workspace = true
+serde_with = "3.11"
 
 # Utilities
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -45,14 +46,20 @@ itertools = "0.14"
 shellexpand = "3.1"
 glob = "0.3"
 url = "2.5"
+which = "6.0"
 
 # Data structures
 dashmap = "6.1"
 bytes = "1.11"
 linked-list = "0.1"
+rust_decimal = "1.37"
 
 # Python integration (optional)
-pyo3 = { version = "0.27", features = ["auto-initialize"], optional = true }
+pyo3 = { version = "0.27", features = [
+    "abi3-py38",
+    "auto-initialize",
+    "generate-import-lib"
+], optional = true }
 
 # Logging
 tracing-subscriber = { version = "0.3", default-features = false, features = [
@@ -70,6 +77,25 @@ insta.workspace = true
 test-log = { version = "0.2", features = ["trace"] }
 tempfile = "3.0"
 
+# Benchmarking
+criterion = "0.5"
+
+[[bench]]
+name = "beancount_data"
+harness = false
+
+[[bench]]
+name = "completion_performance"
+harness = false
+
+[[bench]]
+name = "didchange_performance"
+harness = false
+
+[[bench]]
+name = "checker_performance"
+harness = false
+
 [package.metadata.dist]
 dist = true
 
@@ -77,5 +103,6 @@ dist = true
 tag = true
 
 [features]
-default = []
+default = ["python-embedded"]
 python-embedded = ["pyo3"]
+integration-tests = []

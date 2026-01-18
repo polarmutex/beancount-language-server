@@ -55,6 +55,20 @@
   ],
   "main": "./out/extension",
   "contributes": {
+    "commands": [
+      {
+        "command": "beancountLangServer.reloadServer",
+        "title": "Beancount: Reload Language Server"
+      },
+      {
+        "command": "beancountLangServer.startServer",
+        "title": "Beancount: Start Language Server"
+      },
+      {
+        "command": "beancountLangServer.stopServer",
+        "title": "Beancount: Stop Language Server"
+      }
+    ],
     "configuration": {
       "type": "object",
       "title": "Beancount Language Server Configuration",
@@ -100,6 +114,33 @@
             },
             "indent_width": {
               "type": "number"
+            }
+          }
+        },
+        "beancountLangServer.beanCheck": {
+          "scope": "resource",
+          "description": "Bean-check execution options",
+          "type": "object",
+          "default": {},
+          "additionalProperties": true,
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": [
+                "system",
+                "python-system",
+                "python-embedded"
+              ],
+              "default": "python-system",
+              "description": "Execution method for bean-check (system, python-system, python-embedded)."
+            },
+            "bean_check_cmd": {
+              "type": "string",
+              "description": "Path to bean-check executable when using the system method."
+            },
+            "python_cmd": {
+              "type": "string",
+              "description": "Python executable to use for the python methods."
             }
           }
         },

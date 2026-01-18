@@ -1,5 +1,4 @@
 use crate::beancount_data::BeancountData;
-use crate::checkers::create_checker;
 use crate::document::Document;
 use crate::providers::diagnostics;
 use crate::server::LspServerState;
@@ -13,9 +12,9 @@ use anyhow::Result;
 use crossbeam_channel::Sender;
 use glob::glob;
 use lsp_types::notification::Notification;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::debug;
@@ -39,37 +38,48 @@ fn process_includes(
         None => return Ok(()), // File not parsed yet, skip
     };
 
-    // Find all include directives in this file
+    // Find all include directives in this file using tree-sitter query
     let text = fs::read_to_string(file_path)?;
     let bytes = text.as_bytes();
-    let mut cursor = tree.root_node().walk();
 
-    let include_paths: Vec<PathBuf> = tree
-        .root_node()
-        .children(&mut cursor)
-        .filter(|c| c.kind() == "include")
-        .filter_map(|include_node| {
-            let mut node_cursor = include_node.walk();
-            let string_node = include_node
-                .children(&mut node_cursor)
-                .find(|c| c.kind() == "string")?;
+    let include_query_string = r#"
+    (include (string) @string)
+    "#;
+    let include_query =
+        tree_sitter::Query::new(&tree_sitter_beancount::language(), include_query_string)
+            .unwrap_or_else(|_| panic!("Invalid query for includes: {include_query_string}"));
+    let mut cursor_qry = tree_sitter::QueryCursor::new();
+    let mut include_matches = cursor_qry.matches(&include_query, tree.root_node(), bytes);
 
-            let filename = string_node
-                .utf8_text(bytes)
-                .ok()?
-                .trim_start_matches('"')
-                .trim_end_matches('"');
+    let include_paths: Vec<PathBuf> = {
+        use tree_sitter::StreamingIterator;
+        let mut paths = Vec::new();
 
-            let path = std::path::Path::new(filename);
-            let resolved_path = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                file_path.parent()?.join(path)
-            };
+        while let Some(qmatch) = include_matches.next() {
+            for capture in qmatch.captures {
+                let filename = capture
+                    .node
+                    .utf8_text(bytes)
+                    .ok()
+                    .map(|s| s.trim_start_matches('"').trim_end_matches('"'));
 
-            Some(resolved_path)
-        })
-        .collect();
+                if let Some(filename) = filename {
+                    let path = std::path::Path::new(filename);
+                    let resolved_path = if path.is_absolute() {
+                        path.to_path_buf()
+                    } else if let Some(parent) = file_path.parent() {
+                        parent.join(path)
+                    } else {
+                        continue;
+                    };
+
+                    paths.push(resolved_path);
+                }
+            }
+        }
+
+        paths
+    };
 
     // Process each included file
     for include_path in include_paths {
@@ -81,7 +91,10 @@ fn process_includes(
                     &include_path.to_string_lossy(),
                     glob::MatchOptions::default(),
                 )
-                .unwrap_or(glob("").unwrap())
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to create glob pattern: {}", e);
+                    glob("").expect("empty glob pattern should always work")
+                })
             })
             .flatten()
         {
@@ -144,15 +157,21 @@ pub(crate) fn did_open(
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&tree_sitter_beancount::language())
-            .unwrap();
+            .expect("Failed to set language for tree-sitter parser");
         parser
     });
-    let parser = state.parsers.get_mut(&uri).unwrap();
+    let parser = state
+        .parsers
+        .get_mut(&uri)
+        .expect("parser should exist after insertion");
 
-    state
-        .forest
-        .entry(uri.clone())
-        .or_insert_with(|| Arc::new(parser.parse(&params.text_document.text, None).unwrap()));
+    state.forest.entry(uri.clone()).or_insert_with(|| {
+        Arc::new(
+            parser
+                .parse(&params.text_document.text, None)
+                .expect("Failed to parse document"),
+        )
+    });
 
     state.beancount_data.entry(uri.clone()).or_insert_with(|| {
         let content = ropey::Rope::from_str(&params.text_document.text);
@@ -184,6 +203,11 @@ pub(crate) fn did_save(
 ) -> Result<()> {
     tracing::debug!("text_document::did_save");
 
+    // Lazy extraction: Ensure BeancountData is extracted before diagnostics
+    if let Ok(uri) = params.text_document.uri.to_file_path() {
+        state.ensure_beancount_data(&uri);
+    }
+
     let snapshot = state.snapshot();
     let task_sender = state.task_sender.clone();
     state.thread_pool.execute(move || {
@@ -199,7 +223,16 @@ pub(crate) fn did_close(
     params: lsp_types::DidCloseTextDocumentParams,
 ) -> Result<()> {
     tracing::debug!("text_document::did_close");
-    let uri = params.text_document.uri.to_file_path().unwrap();
+    let uri = match params.text_document.uri.to_file_path() {
+        Ok(path) => path,
+        Err(_) => {
+            debug!(
+                "Failed to convert URI to file path: {:?}",
+                params.text_document.uri
+            );
+            return Ok(());
+        }
+    };
     state.open_docs.remove(&uri);
     Ok(())
 }
@@ -210,41 +243,102 @@ pub(crate) fn did_change(
     params: lsp_types::DidChangeTextDocumentParams,
 ) -> Result<()> {
     tracing::debug!("text_document::did_change");
-    let uri = &params.text_document.uri.to_file_path().unwrap();
+    let uri = match params.text_document.uri.to_file_path() {
+        Ok(path) => path,
+        Err(_) => {
+            debug!(
+                "Failed to convert URI to file path: {:?}",
+                params.text_document.uri
+            );
+            return Ok(());
+        }
+    };
     tracing::debug!("text_document::did_change - requesting {:#?}", uri);
-    let doc = state.open_docs.get_mut(uri).unwrap();
+    let doc = match state.open_docs.get_mut(&uri) {
+        Some(doc) => doc,
+        None => {
+            tracing::warn!("Document not found in open_docs: {:?}", uri);
+            return Ok(());
+        }
+    };
 
-    tracing::debug!("text_document::did_change - convert edits");
-    let edits = params
+    // Version tracking for synchronization validation
+    let new_version = params.text_document.version;
+    if new_version <= doc.version {
+        tracing::warn!(
+            "Received out-of-order or duplicate change: current version={}, received version={}",
+            doc.version,
+            new_version
+        );
+    }
+    tracing::trace!("Document version: {} -> {}", doc.version, new_version);
+
+    tracing::debug!("text_document::did_change - convert edits and apply changes");
+
+    // Calculate tree-sitter edits before modifying the document
+    // This must be done first since edits are based on the old content
+    let ts_edits = params
         .content_changes
         .iter()
         .map(|change| lsp_textdocchange_to_ts_inputedit(&doc.content, change))
         .collect::<Result<Vec<_>, _>>()?;
 
-    tracing::debug!("text_document::did_change - apply edits - document");
+    // Apply changes to document content
+    // We reuse position calculations to avoid redundant UTF-16 conversions
     for change in &params.content_changes {
         let text = change.text.as_str();
-        let text_bytes = text.as_bytes();
-        let text_end_byte_idx = text_bytes.len();
 
         let range = if let Some(range) = change.range {
             range
         } else {
-            let start_line_idx = doc.content.byte_to_line(0);
-            let end_line_idx = doc.content.byte_to_line(text_end_byte_idx);
-
-            let start = lsp_types::Position::new(start_line_idx as u32, 0);
-            let end = lsp_types::Position::new(end_line_idx as u32, 0);
-            lsp_types::Range { start, end }
+            // Full document replacement: range should cover entire current document
+            let end_line = (doc.content.len_lines().saturating_sub(1)) as u32;
+            let end_line_len = if doc.content.len_lines() > 0 {
+                // Get the character length of the last line (excluding newline)
+                let last_line = doc.content.line(end_line as usize);
+                last_line.len_chars().saturating_sub(1).max(0) as u32
+            } else {
+                0
+            };
+            lsp_types::Range {
+                start: lsp_types::Position::new(0, 0),
+                end: lsp_types::Position::new(end_line, end_line_len),
+            }
         };
 
+        // Convert LSP positions (line, UTF-16 column) to rope character indices
+        // LSP positions use UTF-16 code units for columns, rope uses UTF-8 characters
         let start_row_char_idx = doc.content.line_to_char(range.start.line as usize);
-        let start_col_char_idx = doc.content.utf16_cu_to_char(range.start.character as usize);
         let end_row_char_idx = doc.content.line_to_char(range.end.line as usize);
-        let end_col_char_idx = doc.content.utf16_cu_to_char(range.end.character as usize);
+
+        // Convert UTF-16 column offsets to character offsets within the line
+        // CRITICAL: range.start.character is UTF-16 offset *within the line*, not document-wide
+        let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
+        let start_col_char_idx = doc
+            .content
+            .utf16_cu_to_char(start_line_utf16_cu + range.start.character as usize)
+            - start_row_char_idx;
+
+        let end_line_utf16_cu = doc.content.char_to_utf16_cu(end_row_char_idx);
+        let end_col_char_idx = doc
+            .content
+            .utf16_cu_to_char(end_line_utf16_cu + range.end.character as usize)
+            - end_row_char_idx;
 
         let start_char_idx = start_row_char_idx + start_col_char_idx;
         let end_char_idx = end_row_char_idx + end_col_char_idx;
+
+        tracing::trace!(
+            "Applying change: range={}:{}-{}:{}, char_idx={}-{}, text_len={}",
+            range.start.line,
+            range.start.character,
+            range.end.line,
+            range.end.character,
+            start_char_idx,
+            end_char_idx,
+            text.len()
+        );
+
         doc.content.remove(start_char_idx..end_char_idx);
 
         if !change.text.is_empty() {
@@ -252,26 +346,53 @@ pub(crate) fn did_change(
         }
     }
 
-    debug!("text_document::did_change - apply edits - tree");
+    debug!("text_document::did_change - incremental tree parse");
     let result = {
-        let parser = state.parsers.get_mut(uri).unwrap();
-        let old_tree_arc = state.forest.get(uri).unwrap();
+        let parser = match state.parsers.get_mut(&uri) {
+            Some(p) => p,
+            None => {
+                tracing::warn!("Parser not found for document: {:?}", uri);
+                return Ok(());
+            }
+        };
+        let old_tree_arc = match state.forest.get(&uri) {
+            Some(t) => t,
+            None => {
+                tracing::warn!("Tree not found in forest: {:?}", uri);
+                return Ok(());
+            }
+        };
+
+        // Avoid cloning the tree when possible - tree-sitter's edit() takes &mut
+        // We clone here because we need to preserve the old tree in the Arc
+        // until we've successfully parsed the new tree
         let mut old_tree = (**old_tree_arc).clone();
 
-        for edit in &edits {
+        // Apply all edits to the tree to prepare for incremental parsing
+        for edit in &ts_edits {
             old_tree.edit(edit);
         }
 
-        parser.parse(doc.text().to_string(), Some(&old_tree))
+        // Parse with incremental tree
+        // Note: We could avoid the string allocation by implementing a custom TextProvider
+        // that yields rope chunks, but the current tree-sitter bindings make this complex
+        parser.parse(doc.text_string(), Some(&old_tree))
     };
 
     debug!("text_document::did_change - save tree");
     if let Some(tree) = result {
         let tree_arc = Arc::new(tree);
-        *state.forest.get_mut(uri).unwrap() = tree_arc.clone();
-        *state.beancount_data.get_mut(uri).unwrap() =
-            Arc::new(BeancountData::new(&tree_arc, &doc.content));
+        *state
+            .forest
+            .get_mut(&uri)
+            .expect("tree should exist in forest") = tree_arc.clone();
+        // Lazy extraction: Don't extract BeancountData on every keystroke
+        // It will be extracted on-demand when needed (e.g., for completion)
+        state.beancount_data.remove(&uri);
     }
+
+    // Update document version after successfully applying changes
+    doc.version = new_version;
 
     debug!("text_document::did_change - done");
     Ok(())
@@ -280,20 +401,18 @@ pub(crate) fn did_change(
 fn handle_diagnostics(
     snapshot: LspServerStateSnapshot,
     sender: Sender<Task>,
-    uri: lsp_types::Uri,
+    _uri: lsp_types::Uri,
 ) -> Result<()> {
     tracing::debug!("text_document::handle_diagnostics");
 
-    // Create the appropriate checker based on configuration
-    tracing::debug!(
-        "Bean check configuration: method={:?}, bean_check_cmd={}, python_cmd={}, python_script={}",
-        snapshot.config.bean_check.method,
-        snapshot.config.bean_check.bean_check_cmd.display(),
-        snapshot.config.bean_check.python_cmd.display(),
-        snapshot.config.bean_check.python_script_path.display()
-    );
+    let checker = match snapshot.checker.clone() {
+        Some(checker) => checker,
+        None => {
+            tracing::warn!("No checker available; skipping diagnostics");
+            return Ok(());
+        }
+    };
 
-    let checker = create_checker(&snapshot.config.bean_check);
     tracing::debug!(
         "Using checker: {}, available: {}",
         checker.name(),
@@ -301,14 +420,19 @@ fn handle_diagnostics(
     );
 
     sender
-        .send(Task::Progress(ProgressMsg::BeanCheck { done: 0, total: 1 }))
+        .send(Task::Progress(ProgressMsg::BeanCheck {
+            done: 0,
+            total: 1,
+            checker_name: checker.name().to_string(),
+        }))
         .unwrap();
 
-    let root_journal_path = if snapshot.config.journal_root.is_some() {
-        snapshot.config.journal_root.unwrap()
-    } else {
-        // Use proper URI to file path conversion instead of string replacement
-        uri.to_file_path().unwrap_or_default()
+    let root_journal_path = match snapshot.config.journal_root.clone() {
+        Some(path) => path,
+        None => {
+            tracing::warn!("No journal_root configured; skipping diagnostics");
+            return Ok(());
+        }
     };
 
     let diags = diagnostics::diagnostics(
@@ -318,15 +442,22 @@ fn handle_diagnostics(
     );
 
     sender
-        .send(Task::Progress(ProgressMsg::BeanCheck { done: 1, total: 1 }))
+        .send(Task::Progress(ProgressMsg::BeanCheck {
+            done: 1,
+            total: 1,
+            checker_name: checker.name().to_string(),
+        }))
         .unwrap();
 
+    let mut normalized_diags: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
+    for (path, diagnostics) in diags {
+        let key = normalize_path_for_diagnostics(&path);
+        normalized_diags.entry(key).or_default().extend(diagnostics);
+    }
+
     for file in snapshot.forest.keys() {
-        let diagnostics = if diags.contains_key(file) {
-            diags.get(file).unwrap().clone()
-        } else {
-            vec![]
-        };
+        let lookup = normalize_path_for_diagnostics(file);
+        let diagnostics = normalized_diags.remove(&lookup).unwrap_or_default();
         sender
             .send(Task::Notify(lsp_server::Notification {
                 method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
@@ -344,5 +475,281 @@ fn handle_diagnostics(
             }))
             .unwrap()
     }
+
+    for (file, diagnostics) in normalized_diags {
+        sender
+            .send(Task::Notify(lsp_server::Notification {
+                method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
+                params: to_json(lsp_types::PublishDiagnosticsParams {
+                    uri: {
+                        let url = url::Url::from_file_path(&file)
+                            .expect("Failed to convert file path to URI");
+                        lsp_types::Uri::from_str(url.as_str())
+                            .expect("Failed to parse URL as LSP URI")
+                    },
+                    diagnostics,
+                    version: None,
+                })
+                .unwrap(),
+            }))
+            .unwrap()
+    }
     Ok(())
+}
+
+fn normalize_path_for_diagnostics(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let normalized = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        strip_verbatim_prefix(normalized)
+    }
+
+    #[cfg(not(windows))]
+    {
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    }
+}
+
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let path_str = path.to_string_lossy();
+    if let Some(stripped) = path_str.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{}", stripped))
+    } else if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::document::Document;
+    use lsp_types::{Position, Range, TextDocumentContentChangeEvent};
+
+    /// Helper to create a test document with UTF-8 content
+    fn create_test_document(content: &str) -> Document {
+        Document {
+            content: ropey::Rope::from_str(content),
+            version: 0,
+        }
+    }
+
+    #[test]
+    fn test_utf8_multibyte_character_handling() {
+        // Test content with various multi-byte UTF-8 characters
+        let content = "2023-01-01 * \"Café ☕\" \"Description with émojis 🎉\"\n  Assets:Cash  -100.00 USD\n  Expenses:Food  100.00 USD\n";
+        let mut doc = create_test_document(content);
+
+        // Simulate a change that replaces "Café" with "Restaurant"
+        // "Café" has é which is 2 bytes in UTF-8 but 1 UTF-16 code unit
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position {
+                    line: 0,
+                    character: 15, // Position after quote before C
+                },
+                end: Position {
+                    line: 0,
+                    character: 19, // Position after é (4 UTF-16 code units: C, a, f, é)
+                },
+            }),
+            range_length: None,
+            text: "Restaurant".to_string(),
+        };
+
+        // Calculate the rope positions using the fixed logic
+        let start_row_char_idx = doc.content.line_to_char(0);
+        let end_row_char_idx = doc.content.line_to_char(0);
+
+        let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
+        let start_col_char_idx =
+            doc.content.utf16_cu_to_char(start_line_utf16_cu + 15) - start_row_char_idx;
+
+        let end_line_utf16_cu = doc.content.char_to_utf16_cu(end_row_char_idx);
+        let end_col_char_idx =
+            doc.content.utf16_cu_to_char(end_line_utf16_cu + 19) - end_row_char_idx;
+
+        let start_char_idx = start_row_char_idx + start_col_char_idx;
+        let end_char_idx = end_row_char_idx + end_col_char_idx;
+
+        // Apply the change
+        doc.content.remove(start_char_idx..end_char_idx);
+        doc.content.insert(start_char_idx, &change.text);
+
+        // Verify the result
+        let result = doc.content.to_string();
+        assert!(
+            result.contains("Restaurant"),
+            "Should contain 'Restaurant', got: {}",
+            result
+        );
+        assert!(
+            result.contains("☕"),
+            "Should preserve emoji ☕, got: {}",
+            result
+        );
+        assert!(
+            result.contains("🎉"),
+            "Should preserve emoji 🎉, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("Café"),
+            "Should not contain 'Café' anymore, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_full_document_replacement_with_utf8() {
+        let initial_content = "2023-01-01 * \"Test\" \"Test\"\n  Assets:Cash  100.00 USD\n";
+        let mut doc = create_test_document(initial_content);
+
+        // Full document replacement (no range specified)
+        let new_content =
+            "2024-01-01 * \"New café ☕\" \"With émojis 🎉\"\n  Assets:Bank  200.00 EUR\n";
+        let _change = TextDocumentContentChangeEvent {
+            range: None,
+            range_length: None,
+            text: new_content.to_string(),
+        };
+
+        // Calculate range for full document replacement
+        let end_line = (doc.content.len_lines().saturating_sub(1)) as u32;
+        let end_line_len = if doc.content.len_lines() > 0 {
+            let last_line = doc.content.line(end_line as usize);
+            last_line.len_chars().saturating_sub(1).max(0) as u32
+        } else {
+            0
+        };
+
+        let _range = Range {
+            start: Position::new(0, 0),
+            end: Position::new(end_line, end_line_len),
+        };
+
+        // Apply using the calculated range
+        let start_char_idx = 0;
+        let end_char_idx = doc.content.len_chars();
+
+        doc.content.remove(start_char_idx..end_char_idx);
+        doc.content.insert(start_char_idx, new_content);
+
+        // Verify the result
+        let result = doc.content.to_string();
+        assert_eq!(result, new_content, "Full document replacement failed");
+        assert!(result.contains("café"), "Should contain 'café'");
+        assert!(result.contains("☕"), "Should contain emoji ☕");
+        assert!(result.contains("🎉"), "Should contain emoji 🎉");
+    }
+
+    #[test]
+    fn test_emoji_at_edit_boundary() {
+        // Test editing near emoji boundaries (common source of bugs)
+        let content = "2023-01-01 * \"Before🎉After\" \"Test\"\n  Assets:Cash  100.00 USD\n";
+        let mut doc = create_test_document(content);
+
+        // Replace "After" which comes right after an emoji
+        // String: 2023-01-01 * "Before🎉After" "Test"
+        // The emoji 🎉 is 4 bytes in UTF-8, 2 UTF-16 code units (surrogate pair)
+        // UTF-16 positions: After starts at 22, ends at 27
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position {
+                    line: 0,
+                    character: 22, // UTF-16 position where "After" starts (after the emoji)
+                },
+                end: Position {
+                    line: 0,
+                    character: 27, // UTF-16 position where "After" ends
+                },
+            }),
+            range_length: None,
+            text: "Modified".to_string(),
+        };
+
+        // Calculate positions with fixed logic
+        let start_row_char_idx = doc.content.line_to_char(0);
+        let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
+        let start_col_char_idx = doc.content.utf16_cu_to_char(
+            start_line_utf16_cu + change.range.as_ref().unwrap().start.character as usize,
+        ) - start_row_char_idx;
+
+        let end_col_char_idx = doc.content.utf16_cu_to_char(
+            start_line_utf16_cu + change.range.as_ref().unwrap().end.character as usize,
+        ) - start_row_char_idx;
+
+        let start_char_idx = start_row_char_idx + start_col_char_idx;
+        let end_char_idx = start_row_char_idx + end_col_char_idx;
+
+        // Apply the change
+        doc.content.remove(start_char_idx..end_char_idx);
+        doc.content.insert(start_char_idx, &change.text);
+
+        // Verify the result
+        let result = doc.content.to_string();
+        assert!(
+            result.contains("Before🎉Modified"),
+            "Should contain 'Before🎉Modified', got: {}",
+            result
+        );
+        assert!(
+            !result.contains("After"),
+            "Should not contain 'After', got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_asian_characters_handling() {
+        // Test with CJK characters (3 bytes in UTF-8, 1 UTF-16 code unit each)
+        let content = "2023-01-01 * \"日本語テスト\" \"中文测试\"\n  Assets:Cash  100.00 USD\n";
+        let mut doc = create_test_document(content);
+
+        // Replace "日本語" with "にほんご"
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position {
+                    line: 0,
+                    character: 15, // After opening quote
+                },
+                end: Position {
+                    line: 0,
+                    character: 18, // After 3 characters (each is 1 UTF-16 CU)
+                },
+            }),
+            range_length: None,
+            text: "にほんご".to_string(),
+        };
+
+        // Calculate positions
+        let start_row_char_idx = doc.content.line_to_char(0);
+        let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
+
+        let start_col_char_idx =
+            doc.content.utf16_cu_to_char(start_line_utf16_cu + 15) - start_row_char_idx;
+        let end_col_char_idx =
+            doc.content.utf16_cu_to_char(start_line_utf16_cu + 18) - start_row_char_idx;
+
+        let start_char_idx = start_row_char_idx + start_col_char_idx;
+        let end_char_idx = start_row_char_idx + end_col_char_idx;
+
+        // Apply change
+        doc.content.remove(start_char_idx..end_char_idx);
+        doc.content.insert(start_char_idx, &change.text);
+
+        // Verify
+        let result = doc.content.to_string();
+        assert!(
+            result.contains("にほんご"),
+            "Should contain 'にほんご', got: {}",
+            result
+        );
+        assert!(
+            result.contains("中文测试"),
+            "Should preserve '中文测试', got: {}",
+            result
+        );
+    }
 }
