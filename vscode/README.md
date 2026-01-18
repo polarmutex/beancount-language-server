@@ -14,11 +14,27 @@ VS Code extension that ships the Beancount language server for fast, accurate ed
 
 ## Requirements
 
-- Python with the `beancount` package installed in the environment VS Code uses:
+- The extension needs a `beancount-language-server` executable. It ships bundled binaries for supported platforms.
+- If the extension doesn't include a bundled binary for your platform, it searches in this order:
+  1. `beancountLangServer.serverPath` (if configured)
+  2. Selected Python environment (if the VS Code Python extension is installed)
+  3. Workspace `.venv`
+  4. Global `PATH`
+  5. Bundled binary (if available for your platform)
+  If none is found, you need to install the server yourself.
 
-  ```bash
-  pip install beancount
-  ```
+Optional:
+
+- The `beancount` Python package is only required for diagnostics.
+
+```bash
+pip install beancount
+```
+
+Suggestion:
+```bash
+pip install beancount beancount-language-server
+```
 
 ## Install
 

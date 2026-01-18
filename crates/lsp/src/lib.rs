@@ -1,6 +1,7 @@
 pub mod beancount_data;
 mod capabilities;
 pub mod checkers;
+pub mod cli;
 mod config;
 mod dispatcher;
 pub mod document;
@@ -119,6 +120,14 @@ pub fn run_server() -> Result<()> {
     tracing::info!("Language server stopped");
 
     Ok(())
+}
+
+pub fn main<I, S>(args: I) -> i32
+where
+    I: IntoIterator<Item = S>,
+    S: Into<std::ffi::OsString> + Clone,
+{
+    cli::run_cli(args)
 }
 
 pub fn main_loop(connection: Connection, config: Config) -> Result<()> {

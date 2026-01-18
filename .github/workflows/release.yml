@@ -15,6 +15,9 @@ jobs:
         with:
             run-test: false
 
+  python-wrapper-build:
+    uses: ./.github/workflows/python-wrapper-build.yml
+
     release:
         name: Release Rust Binaries on GitHub
         runs-on: ubuntu-latest
@@ -61,6 +64,27 @@ jobs:
                   target/beancount-language-server-*.gz.sha256 \
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+        publish-pypi:
+          name: Publish Python Wheels to PyPI
+          runs-on: ubuntu-latest
+          needs:
+            - python-wrapper-build
+          permissions:
+            id-token: write
+            contents: read
+          steps:
+            - name: Download Python wheels
+              uses: actions/download-artifact@v4
+              with:
+                pattern: python-wheels-*
+                path: dist
+                merge-multiple: true
+
+            - name: Publish to PyPI
+              uses: pypa/gh-action-pypi-publish@v1
+              with:
+                packages-dir: dist
 
     crates_io:
         name: Publish packages to Crates.io

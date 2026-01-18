@@ -31,6 +31,7 @@
   },
   "packageManager": "pnpm@10.26.2",
   "dependencies": {
+    "@vscode/python-extension": "^1.0.6",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
