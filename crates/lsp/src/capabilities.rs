@@ -37,6 +37,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             ..Default::default()
         }),
         document_formatting_provider: Some(OneOf::Left(true)),
+        definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(false),
@@ -178,6 +179,23 @@ mod tests {
     }
 
     #[test]
+    fn test_definition_capability() {
+        let caps = server_capabilities();
+
+        assert!(
+            caps.definition_provider.is_some(),
+            "definition_provider should be enabled"
+        );
+
+        match caps.definition_provider {
+            Some(OneOf::Left(enabled)) => {
+                assert!(enabled, "definition should be enabled");
+            }
+            _ => panic!("Expected simple boolean for definition capability"),
+        }
+    }
+
+    #[test]
     fn test_references_capability() {
         let caps = server_capabilities();
 
@@ -283,9 +301,9 @@ mod tests {
 
         // Verify NOT implemented capabilities are disabled
         assert_eq!(caps.hover_provider, None, "hover is not implemented");
-        assert_eq!(
-            caps.definition_provider, None,
-            "definition is not implemented"
+        assert!(
+            caps.definition_provider.is_some(),
+            "definition is implemented"
         );
         assert_eq!(
             caps.type_definition_provider, None,
@@ -392,6 +410,16 @@ mod tests {
                 lsp_types::ReferenceParams,
             ) -> anyhow::Result<Option<Vec<lsp_types::Location>>> =
                 handlers::text_document::handle_references;
+        }
+
+        // Definition capability -> handlers::text_document::handle_definition
+        if caps.definition_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::GotoDefinitionParams,
+            )
+                -> anyhow::Result<Option<lsp_types::GotoDefinitionResponse>> =
+                handlers::text_document::handle_definition;
         }
 
         // Rename capability -> handlers::text_document::handle_rename

@@ -473,6 +473,11 @@ impl LspServerState {
                 handlers::text_document::handle_references,
             )
             .expect("Failed to register References handler")
+            .on_with::<lsp_types::request::GotoDefinition>(
+                LspServerState::ensure_beancount_data_for_go_to_def,
+                handlers::text_document::handle_definition,
+            )
+            .expect("Failed to register GotoDefinition handler")
             .on_with::<lsp_types::request::SemanticTokensFullRequest>(
                 LspServerState::ensure_beancount_data_for_semantic_tokens,
                 handlers::text_document::semantic_tokens_full,
@@ -567,6 +572,10 @@ impl LspServerState {
 
     fn ensure_beancount_data_for_rename(&mut self, params: &lsp_types::RenameParams) {
         self.ensure_beancount_data_for_position(&params.text_document_position);
+    }
+
+    fn ensure_beancount_data_for_go_to_def(&mut self, params: &lsp_types::GotoDefinitionParams) {
+        self.ensure_beancount_data_for_position(&params.text_document_position_params);
     }
 
     fn ensure_beancount_data_for_semantic_tokens(
