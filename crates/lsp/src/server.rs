@@ -457,24 +457,32 @@ impl LspServerState {
             })
             .expect("Failed to register Shutdown handler")
             .on_with::<lsp_types::request::Completion>(
-                LspServerState::ensure_beancount_data_for_completion,
+                |r, params| {
+                    r.ensure_beancount_data_for_position(&params.text_document_position);
+                },
                 handlers::text_document::completion,
             )
             .expect("Failed to register Completion handler")
             .on::<lsp_types::request::Formatting>(handlers::text_document::formatting)
             .expect("Failed to register Formatting handler")
             .on_with::<lsp_types::request::Rename>(
-                LspServerState::ensure_beancount_data_for_rename,
+                |r, params| {
+                    r.ensure_beancount_data_for_position(&params.text_document_position);
+                },
                 handlers::text_document::handle_rename,
             )
             .expect("Failed to register Rename handler")
             .on_with::<lsp_types::request::References>(
-                LspServerState::ensure_beancount_data_for_references,
+                |r, params| {
+                    r.ensure_beancount_data_for_position(&params.text_document_position);
+                },
                 handlers::text_document::handle_references,
             )
             .expect("Failed to register References handler")
             .on_with::<lsp_types::request::SemanticTokensFullRequest>(
-                LspServerState::ensure_beancount_data_for_semantic_tokens,
+                |r, params| {
+                    r.ensure_beancount_data_for_text_document(&params.text_document);
+                },
                 handlers::text_document::semantic_tokens_full,
             )
             .expect("Failed to register SemanticTokens handler")
@@ -553,25 +561,6 @@ impl LspServerState {
     fn ensure_beancount_data_for_position(
         &mut self,
         params: &lsp_types::TextDocumentPositionParams,
-    ) {
-        self.ensure_beancount_data_for_text_document(&params.text_document);
-    }
-
-    fn ensure_beancount_data_for_completion(&mut self, params: &lsp_types::CompletionParams) {
-        self.ensure_beancount_data_for_position(&params.text_document_position);
-    }
-
-    fn ensure_beancount_data_for_references(&mut self, params: &lsp_types::ReferenceParams) {
-        self.ensure_beancount_data_for_position(&params.text_document_position);
-    }
-
-    fn ensure_beancount_data_for_rename(&mut self, params: &lsp_types::RenameParams) {
-        self.ensure_beancount_data_for_position(&params.text_document_position);
-    }
-
-    fn ensure_beancount_data_for_semantic_tokens(
-        &mut self,
-        params: &lsp_types::SemanticTokensParams,
     ) {
         self.ensure_beancount_data_for_text_document(&params.text_document);
     }
