@@ -8,7 +8,7 @@ use crate::server::Task;
 use crate::to_json;
 use crate::treesitter_utils::lsp_textdocchange_to_ts_inputedit;
 use crate::utils::ToFilePath;
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow};
 use crossbeam_channel::Sender;
 use glob::glob;
 use lsp_types::notification::Notification;
@@ -17,7 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 use tree_sitter_beancount::tree_sitter;
 
 /// Process included files recursively from a given beancount file
@@ -419,14 +419,6 @@ fn handle_diagnostics(
         checker.is_available()
     );
 
-    sender
-        .send(Task::Progress(ProgressMsg::BeanCheck {
-            done: 0,
-            total: 1,
-            checker_name: checker.name().to_string(),
-        }))
-        .unwrap();
-
     let root_journal_path = match snapshot.config.journal_root.clone() {
         Some(path) => path,
         None => {
@@ -435,19 +427,23 @@ fn handle_diagnostics(
         }
     };
 
+    sender.send(Task::Progress(ProgressMsg::BeanCheck {
+        done: 0,
+        total: 1,
+        checker_name: checker.name().to_string(),
+    }))?;
+
     let diags = diagnostics::diagnostics(
         snapshot.beancount_data,
         checker.as_ref(),
         &root_journal_path,
     );
 
-    sender
-        .send(Task::Progress(ProgressMsg::BeanCheck {
-            done: 1,
-            total: 1,
-            checker_name: checker.name().to_string(),
-        }))
-        .unwrap();
+    sender.send(Task::Progress(ProgressMsg::BeanCheck {
+        done: 1,
+        total: 1,
+        checker_name: checker.name().to_string(),
+    }))?;
 
     let mut normalized_diags: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
     for (path, diagnostics) in diags {
@@ -463,10 +459,11 @@ fn handle_diagnostics(
                 method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
                 params: to_json(lsp_types::PublishDiagnosticsParams {
                     uri: {
-                        let url = url::Url::from_file_path(file)
-                            .expect("Failed to convert file path to URI");
+                        let url = url::Url::from_file_path(file).map_err(|()| {
+                            anyhow!("Failed to convert file path to URI: {}", file.display())
+                        })?;
                         lsp_types::Uri::from_str(url.as_str())
-                            .expect("Failed to parse URL as LSP URI")
+                            .with_context(|| format!("Failed to parse URL as LSP URI: {}", url))?
                     },
                     diagnostics,
                     version: None,
@@ -476,23 +473,47 @@ fn handle_diagnostics(
             .unwrap()
     }
 
+    // ignore the broken file paths
     for (file, diagnostics) in normalized_diags {
-        sender
-            .send(Task::Notify(lsp_server::Notification {
-                method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
-                params: to_json(lsp_types::PublishDiagnosticsParams {
-                    uri: {
-                        let url = url::Url::from_file_path(&file)
-                            .expect("Failed to convert file path to URI");
-                        lsp_types::Uri::from_str(url.as_str())
-                            .expect("Failed to parse URL as LSP URI")
-                    },
-                    diagnostics,
-                    version: None,
-                })
-                .unwrap(),
-            }))
-            .unwrap()
+        let url = match url::Url::from_file_path(&file) {
+            Ok(url) => url,
+            Err(_) => {
+                warn!("Failed to convert file path to URI: {}", file.display());
+                continue;
+            }
+        };
+
+        let uri = match lsp_types::Uri::from_str(url.as_str()) {
+            Ok(uri) => uri,
+            Err(e) => {
+                warn!("Failed to parse URL as LSP URI ({}): {}", url, e);
+                continue;
+            }
+        };
+
+        let params = match to_json(lsp_types::PublishDiagnosticsParams {
+            uri,
+            diagnostics,
+            version: None,
+        }) {
+            Ok(params) => params,
+            Err(e) => {
+                warn!(
+                    "Failed to serialize diagnostics for {}: {}",
+                    file.display(),
+                    e
+                );
+                continue;
+            }
+        };
+
+        if let Err(e) = sender.send(Task::Notify(lsp_server::Notification {
+            method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
+            params,
+        })) {
+            // Sending back to the main loop failed; propagate error to abort the function
+            return Err(e.into());
+        }
     }
     Ok(())
 }
