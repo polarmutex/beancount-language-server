@@ -117,7 +117,8 @@
         "extensions": [
           ".beancount",
           ".bean"
-        ]
+        ],
+        "configuration": "./language-configuration.json"
       }
     ]
   },
