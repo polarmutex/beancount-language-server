@@ -23,6 +23,56 @@ struct Amount {
     currency: String,
 }
 
+#[derive(Debug, Clone)]
+struct Price {
+    amount: Amount,
+    is_total: bool, // true for @@, false for @
+}
+
+#[derive(Debug, Clone)]
+struct Cost {
+    amount: Amount,
+    is_total: bool, // true for {{total}}, false for {unit}
+}
+
+#[derive(Debug, Clone)]
+struct PostingAmount {
+    amount: Amount,
+    price: Option<Price>,
+    cost: Option<Cost>,
+}
+
+impl PostingAmount {
+    /// Convert this posting amount to a specific currency if price or cost is specified
+    fn convert_to_currency(&self) -> Option<(rust_decimal::Decimal, String)> {
+        // Cost basis takes precedence over price for balance calculations
+        if let Some(cost) = &self.cost {
+            // Cost is specified, convert to the cost currency
+            let converted_value = if cost.is_total {
+                // {{total}} means total cost, use the cost amount directly
+                cost.amount.value
+            } else {
+                // {unit} means unit cost, multiply by quantity
+                self.amount.value * cost.amount.value
+            };
+            Some((converted_value, cost.amount.currency.clone()))
+        } else if let Some(price) = &self.price {
+            // Price is specified, convert to the price currency
+            let converted_value = if price.is_total {
+                // @@ means total cost, use the price amount directly
+                price.amount.value
+            } else {
+                // @ means unit price, multiply by quantity
+                self.amount.value * price.amount.value
+            };
+            Some((converted_value, price.amount.currency.clone()))
+        } else {
+            // No price or cost, return original
+            None
+        }
+    }
+}
+
 impl Amount {
     fn parse(text: &str) -> Option<Self> {
         // Parse amount like "100.00 USD" or "100.00USD" or "100 USD"
@@ -55,7 +105,7 @@ impl Amount {
 #[derive(Debug)]
 struct Posting {
     node: tree_sitter::Node<'static>,
-    amount: Option<Amount>,
+    amount: Option<PostingAmount>,
 }
 
 /// Main entry point for inlay hints
@@ -200,11 +250,64 @@ fn extract_postings(txn_node: &tree_sitter::Node, content: &ropey::Rope) -> Opti
     }
 }
 
-/// Extract amount from a posting node
-fn extract_amount(posting_node: &tree_sitter::Node, content: &ropey::Rope) -> Option<Amount> {
+/// Extract amount and optional price/cost from a posting node
+fn extract_amount(
+    posting_node: &tree_sitter::Node,
+    content: &ropey::Rope,
+) -> Option<PostingAmount> {
     let mut cursor = posting_node.walk();
+    let mut amount_opt: Option<Amount> = None;
+    let mut is_price_total = false;
+    let mut price_amount_opt: Option<Amount> = None;
+    let mut cost_opt: Option<Cost> = None;
 
     for child in posting_node.children(&mut cursor) {
+        match child.kind() {
+            "incomplete_amount" | "amount" => {
+                if amount_opt.is_none() {
+                    // First amount is the posting amount
+                    let amount_text = text_for_tree_sitter_node(content, &child);
+                    amount_opt = Amount::parse(&amount_text);
+                }
+            }
+            "at" => {
+                // @ means unit price
+                is_price_total = false;
+            }
+            "atat" => {
+                // @@ means total cost
+                is_price_total = true;
+            }
+            "price_annotation" => {
+                // Parse the price amount from price_annotation
+                price_amount_opt = extract_price_annotation(&child, content);
+            }
+            "cost_spec" => {
+                // Parse cost basis from cost_spec
+                cost_opt = extract_cost_spec(&child, content);
+            }
+            _ => {}
+        }
+    }
+
+    amount_opt.map(|amount| PostingAmount {
+        amount,
+        price: price_amount_opt.map(|price_amt| Price {
+            amount: price_amt,
+            is_total: is_price_total,
+        }),
+        cost: cost_opt,
+    })
+}
+
+/// Extract price amount from a price_annotation node
+fn extract_price_annotation(
+    price_annotation_node: &tree_sitter::Node,
+    content: &ropey::Rope,
+) -> Option<Amount> {
+    let mut cursor = price_annotation_node.walk();
+
+    for child in price_annotation_node.children(&mut cursor) {
         if child.kind() == "incomplete_amount" || child.kind() == "amount" {
             let amount_text = text_for_tree_sitter_node(content, &child);
             return Amount::parse(&amount_text);
@@ -214,19 +317,98 @@ fn extract_amount(posting_node: &tree_sitter::Node, content: &ropey::Rope) -> Op
     None
 }
 
+/// Extract cost basis from a cost_spec node
+fn extract_cost_spec(cost_spec_node: &tree_sitter::Node, content: &ropey::Rope) -> Option<Cost> {
+    let mut cursor = cost_spec_node.walk();
+    let mut is_total = false;
+    let mut cost_amount: Option<Amount> = None;
+
+    // Check for {{ or {
+    for child in cost_spec_node.children(&mut cursor) {
+        match child.kind() {
+            "{{" => is_total = true,
+            "{" => is_total = false,
+            "cost_comp" => {
+                // Extract the amount from cost_comp -> compound_amount
+                cost_amount = extract_cost_comp(&child, content);
+            }
+            _ => {}
+        }
+    }
+
+    cost_amount.map(|amount| Cost { amount, is_total })
+}
+
+/// Extract amount from a cost_comp node
+fn extract_cost_comp(cost_comp_node: &tree_sitter::Node, content: &ropey::Rope) -> Option<Amount> {
+    let mut cursor = cost_comp_node.walk();
+
+    for child in cost_comp_node.children(&mut cursor) {
+        if child.kind() == "compound_amount" {
+            return extract_compound_amount(&child, content);
+        }
+    }
+
+    None
+}
+
+/// Extract amount from a compound_amount node (has number and currency children)
+fn extract_compound_amount(
+    compound_amount_node: &tree_sitter::Node,
+    content: &ropey::Rope,
+) -> Option<Amount> {
+    let mut cursor = compound_amount_node.walk();
+    let mut number_str = String::new();
+    let mut currency_str = String::new();
+
+    for child in compound_amount_node.children(&mut cursor) {
+        match child.kind() {
+            "number" => {
+                number_str = text_for_tree_sitter_node(content, &child);
+            }
+            "currency" => {
+                currency_str = text_for_tree_sitter_node(content, &child);
+            }
+            _ => {}
+        }
+    }
+
+    if !number_str.is_empty() && !currency_str.is_empty() {
+        let value = rust_decimal::Decimal::from_str_exact(&number_str).ok()?;
+        Some(Amount {
+            value,
+            currency: currency_str,
+        })
+    } else {
+        None
+    }
+}
+
 /// Calculate hint for balancing amounts (postings without explicit amounts)
 fn calculate_balancing_hint(postings: &[Posting]) -> Option<InlayHint> {
     // Find posting without amount
     let posting_without_amount = postings.iter().find(|p| p.amount.is_none())?;
 
     // Calculate the sum of all other postings grouped by currency
+    // If a posting has a price, convert it to the price currency
     let mut totals: HashMap<String, rust_decimal::Decimal> = HashMap::new();
 
     for posting in postings {
-        if let Some(amount) = &posting.amount {
-            *totals
-                .entry(amount.currency.clone())
-                .or_insert(rust_decimal::Decimal::ZERO) += amount.value;
+        if let Some(posting_amount) = &posting.amount {
+            // Check if this posting has a price annotation
+            if let Some((converted_value, converted_currency)) =
+                posting_amount.convert_to_currency()
+            {
+                // Use the converted amount and currency
+                *totals
+                    .entry(converted_currency)
+                    .or_insert(rust_decimal::Decimal::ZERO) += converted_value;
+            } else {
+                // Use the original amount and currency
+                *totals
+                    .entry(posting_amount.amount.currency.clone())
+                    .or_insert(rust_decimal::Decimal::ZERO) += posting_amount.amount.value;
+            }
         }
     }
 
@@ -330,13 +512,25 @@ fn find_account_end_column(posting_node: &tree_sitter::Node) -> usize {
 /// Calculate hint for transaction total (only when not balanced)
 fn calculate_total_hint(postings: &[Posting], position: Position) -> Option<InlayHint> {
     // Calculate total for each currency
+    // If a posting has a price, convert it to the price currency
     let mut totals: HashMap<String, rust_decimal::Decimal> = HashMap::new();
 
     for posting in postings {
-        if let Some(amount) = &posting.amount {
-            *totals
-                .entry(amount.currency.clone())
-                .or_insert(rust_decimal::Decimal::ZERO) += amount.value;
+        if let Some(posting_amount) = &posting.amount {
+            // Check if this posting has a price annotation
+            if let Some((converted_value, converted_currency)) =
+                posting_amount.convert_to_currency()
+            {
+                // Use the converted amount and currency
+                *totals
+                    .entry(converted_currency)
+                    .or_insert(rust_decimal::Decimal::ZERO) += converted_value;
+            } else {
+                // Use the original amount and currency
+                *totals
+                    .entry(posting_amount.amount.currency.clone())
+                    .or_insert(rust_decimal::Decimal::ZERO) += posting_amount.amount.value;
+            }
         }
     }
 
@@ -810,6 +1004,302 @@ mod tests {
                     leading_spaces
                 );
             }
+        } else {
+            panic!("No transaction found");
+        }
+    }
+
+    #[test]
+    fn test_multi_currency_with_unit_price() {
+        // Test multi-currency transaction with @ (unit price) - should balance
+        let content = r#"2024-01-15 * "Currency exchange with unit price"
+  Assets:USD              100.00 USD @ 0.8 EUR
+  Assets:EUR              -80.00 EUR
+"#;
+        let rope_content = ropey::Rope::from_str(content);
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(content, None).unwrap();
+
+        let txn_query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let content_bytes = content.as_bytes();
+        let mut matches = cursor.matches(&txn_query, tree.root_node(), content_bytes);
+
+        if let Some(qmatch) = matches.next() {
+            let txn_node = qmatch.captures[0].node;
+            let hints = process_transaction(&txn_node, &rope_content).unwrap();
+
+            // Should not have warning hint - transaction should balance with conversion
+            let has_warning = hints.iter().any(|h| {
+                if let InlayHintLabel::String(label) = &h.label {
+                    label.contains("⚠")
+                } else {
+                    false
+                }
+            });
+            assert!(
+                !has_warning,
+                "Transaction with correct price conversion should not show warning"
+            );
+        } else {
+            panic!("No transaction found");
+        }
+    }
+
+    #[test]
+    fn test_multi_currency_with_total_price() {
+        // Test multi-currency transaction with @@ (total cost) - should balance
+        let content = r#"2024-01-15 * "Currency exchange with total cost"
+  Assets:USD              100.00 USD @@ 80.00 EUR
+  Assets:EUR              -80.00 EUR
+"#;
+        let rope_content = ropey::Rope::from_str(content);
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(content, None).unwrap();
+
+        let txn_query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let content_bytes = content.as_bytes();
+        let mut matches = cursor.matches(&txn_query, tree.root_node(), content_bytes);
+
+        if let Some(qmatch) = matches.next() {
+            let txn_node = qmatch.captures[0].node;
+            let hints = process_transaction(&txn_node, &rope_content).unwrap();
+
+            // Should not have warning hint - transaction should balance with conversion
+            let has_warning = hints.iter().any(|h| {
+                if let InlayHintLabel::String(label) = &h.label {
+                    label.contains("⚠")
+                } else {
+                    false
+                }
+            });
+            assert!(
+                !has_warning,
+                "Transaction with correct total cost should not show warning"
+            );
+        } else {
+            panic!("No transaction found");
+        }
+    }
+
+    #[test]
+    fn test_multi_currency_without_price_unbalanced() {
+        // Test multi-currency without price - should show as unbalanced
+        let content = r#"2024-01-15 * "Multi-currency without conversion"
+  Assets:USD              100.00 USD
+  Assets:EUR              -80.00 EUR
+"#;
+        let rope_content = ropey::Rope::from_str(content);
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(content, None).unwrap();
+
+        let txn_query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let content_bytes = content.as_bytes();
+        let mut matches = cursor.matches(&txn_query, tree.root_node(), content_bytes);
+
+        if let Some(qmatch) = matches.next() {
+            let txn_node = qmatch.captures[0].node;
+            let hints = process_transaction(&txn_node, &rope_content).unwrap();
+
+            // Should have warning hint - different currencies without conversion
+            let has_warning = hints.iter().any(|h| {
+                if let InlayHintLabel::String(label) = &h.label {
+                    label.contains("⚠")
+                } else {
+                    false
+                }
+            });
+            assert!(
+                has_warning,
+                "Multi-currency transaction without conversion should show warning"
+            );
+        } else {
+            panic!("No transaction found");
+        }
+    }
+
+    #[test]
+    fn test_cost_basis_unit_cost() {
+        // Test transaction with unit cost basis - should balance
+        let content = r#"2026-01-08 * "Starbucks purchase"
+  Liabilities:CC:Apple                      -25 USD
+  Assets:Cash:Starbucks:Brian                25 STARBUCKS_GC {1 USD}
+"#;
+        let rope_content = ropey::Rope::from_str(content);
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(content, None).unwrap();
+
+        let txn_query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let content_bytes = content.as_bytes();
+        let mut matches = cursor.matches(&txn_query, tree.root_node(), content_bytes);
+
+        if let Some(qmatch) = matches.next() {
+            let txn_node = qmatch.captures[0].node;
+            let hints = process_transaction(&txn_node, &rope_content).unwrap();
+
+            // Should not have warning hint - transaction should balance with cost basis
+            let has_warning = hints.iter().any(|h| {
+                if let InlayHintLabel::String(label) = &h.label {
+                    label.contains("⚠")
+                } else {
+                    false
+                }
+            });
+            assert!(
+                !has_warning,
+                "Transaction with correct cost basis should not show warning"
+            );
+        } else {
+            panic!("No transaction found");
+        }
+    }
+
+    #[test]
+    fn test_cost_basis_with_missing_amount() {
+        // Test transaction with cost basis and missing amount
+        let content = r#"2026-01-08 * "Gift card purchase"
+  Assets:Checking
+  Liabilities:CC                             25 STARBUCKS_GC {1 USD}
+"#;
+        let rope_content = ropey::Rope::from_str(content);
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(content, None).unwrap();
+
+        let txn_query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let content_bytes = content.as_bytes();
+        let mut matches = cursor.matches(&txn_query, tree.root_node(), content_bytes);
+
+        if let Some(qmatch) = matches.next() {
+            let txn_node = qmatch.captures[0].node;
+            let hints = process_transaction(&txn_node, &rope_content).unwrap();
+
+            // Should have balancing hint showing the converted cost amount
+            let balancing_hint = hints.iter().find(|h| {
+                if let InlayHintLabel::String(label) = &h.label {
+                    // 25 * 1 USD = 25 USD
+                    label.contains("-25") && label.contains("USD")
+                } else {
+                    false
+                }
+            });
+            assert!(
+                balancing_hint.is_some(),
+                "Should show balancing hint with cost-converted amount"
+            );
+        } else {
+            panic!("No transaction found");
+        }
+    }
+
+    #[test]
+    fn test_cost_basis_without_conversion_unbalanced() {
+        // Test transaction with different commodities but no cost - should show as unbalanced
+        let content = r#"2026-01-08 * "Purchase without cost"
+  Assets:Checking                            -25 USD
+  Liabilities:CC                             25 STARBUCKS_GC
+"#;
+        let rope_content = ropey::Rope::from_str(content);
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(content, None).unwrap();
+
+        let txn_query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let content_bytes = content.as_bytes();
+        let mut matches = cursor.matches(&txn_query, tree.root_node(), content_bytes);
+
+        if let Some(qmatch) = matches.next() {
+            let txn_node = qmatch.captures[0].node;
+            let hints = process_transaction(&txn_node, &rope_content).unwrap();
+
+            // Should have warning hint - different commodities without conversion
+            let has_warning = hints.iter().any(|h| {
+                if let InlayHintLabel::String(label) = &h.label {
+                    label.contains("⚠")
+                } else {
+                    false
+                }
+            });
+            assert!(
+                has_warning,
+                "Transaction with different commodities and no cost should show warning"
+            );
+        } else {
+            panic!("No transaction found");
+        }
+    }
+
+    #[test]
+    fn test_multi_currency_with_missing_amount_and_price() {
+        // Test transaction with missing amount and price conversion
+        let content = r#"2024-01-15 * "Purchase with price"
+  Expenses:Shopping        50.00 USD @ 0.85 EUR
+  Assets:EUR
+"#;
+        let rope_content = ropey::Rope::from_str(content);
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(content, None).unwrap();
+
+        let txn_query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let content_bytes = content.as_bytes();
+        let mut matches = cursor.matches(&txn_query, tree.root_node(), content_bytes);
+
+        if let Some(qmatch) = matches.next() {
+            let txn_node = qmatch.captures[0].node;
+            let hints = process_transaction(&txn_node, &rope_content).unwrap();
+
+            // Should have balancing hint showing the converted amount
+            let balancing_hint = hints.iter().find(|h| {
+                if let InlayHintLabel::String(label) = &h.label {
+                    // 50 * 0.85 = 42.5 EUR
+                    label.contains("-42.5") && label.contains("EUR")
+                } else {
+                    false
+                }
+            });
+            assert!(
+                balancing_hint.is_some(),
+                "Should show balancing hint with converted amount"
+            );
         } else {
             panic!("No transaction found");
         }
