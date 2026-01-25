@@ -245,6 +245,43 @@ fn check_if_in_posting_area(
     content: &ropey::Rope,
     cursor: Point,
 ) -> CompletionContext {
+    // First check if current line is a directive (balance, open, close, etc.)
+    // This handles cases where tree-sitter doesn't recognize the directive due to invalid syntax
+    let current_line = content.line(cursor.row).to_string();
+    let trimmed_current = current_line.trim();
+
+    // Check for balance directive
+    if trimmed_current.starts_with(|c: char| c.is_ascii_digit())
+        && trimmed_current.contains("balance")
+    {
+        // Extract words to determine what we're completing
+        let words: Vec<&str> = trimmed_current.split_whitespace().collect();
+        // Format: YYYY-MM-DD balance [account] [amount] [currency]
+        // If we have at least date + "balance", we're expecting an account
+        if words.len() >= 2 && words[1] == "balance" {
+            let prefix = extract_account_prefix(&current_line, cursor.column);
+            return CompletionContext::BalanceAccount { prefix };
+        }
+    }
+
+    // Check for open directive
+    if trimmed_current.starts_with(|c: char| c.is_ascii_digit()) && trimmed_current.contains("open")
+    {
+        let words: Vec<&str> = trimmed_current.split_whitespace().collect();
+        if words.len() >= 2 && words[1] == "open" {
+            // Determine if we need account or currency completion
+            // Format: YYYY-MM-DD open Account Currency
+            if words.len() >= 3 {
+                // Already have account, expecting currency
+                return CompletionContext::OpenCurrency;
+            } else {
+                // Expecting account
+                let prefix = extract_account_prefix(&current_line, cursor.column);
+                return CompletionContext::OpenAccount { prefix };
+            }
+        }
+    }
+
     // Look at previous lines to see if there's a transaction header
     if cursor.row > 0 {
         // Check up to 10 lines back for a transaction
@@ -2818,5 +2855,123 @@ A"#;
             "Should NOT contain payee in narration context: {:?}",
             labels
         );
+    }
+
+    #[test]
+    fn test_balance_completion_lowercase_prefix() {
+        use lsp_types::{TextDocumentIdentifier, TextDocumentPositionParams};
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::str::FromStr;
+        use std::sync::Arc;
+        use tree_sitter::Parser;
+
+        // Create test data with some accounts
+        let test_data = r#"
+2026-01-01 open Assets:Checking
+2026-01-01 open Assets:Savings
+2026-01-01 open Liabilities:CreditCard
+2026-01-01 open Liabilities:Loan
+"#;
+
+        // Parse the test data
+        let rope = Rope::from_str(test_data);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(test_data, None).unwrap();
+        let bean_data = BeancountData::new(&Arc::new(tree), &rope);
+
+        // Create snapshot with test data
+        let mut beancount_data: HashMap<PathBuf, Arc<BeancountData>> = HashMap::new();
+        let (path, uri) = if cfg!(windows) {
+            let path = PathBuf::from("C:\\test.bean");
+            let url = url::Url::from_file_path(&path).unwrap();
+            let uri = lsp_types::Uri::from_str(url.as_str()).unwrap();
+            (path, uri)
+        } else {
+            let path = PathBuf::from("/test.bean");
+            let url = url::Url::from_file_path(&path).unwrap();
+            let uri = lsp_types::Uri::from_str(url.as_str()).unwrap();
+            (path, uri)
+        };
+        beancount_data.insert(path.clone(), Arc::new(bean_data));
+
+        // Parse the document being edited - balance directive with lowercase prefix
+        let edit_text = r#"2026-01-06 balance lia"#;
+        let edit_rope = Rope::from_str(edit_text);
+        let mut edit_parser = Parser::new();
+        edit_parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let edit_tree = edit_parser.parse(edit_text, None).unwrap();
+
+        let mut forest = HashMap::new();
+        forest.insert(path.clone(), Arc::new(edit_tree));
+
+        let mut open_docs = HashMap::new();
+        open_docs.insert(
+            path.clone(),
+            crate::document::Document {
+                content: edit_rope.clone(),
+                version: 0,
+            },
+        );
+
+        let snapshot = LspServerStateSnapshot {
+            beancount_data,
+            config: crate::config::Config::new(PathBuf::from("/test")),
+            forest,
+            open_docs,
+            checker: None,
+        };
+
+        // Cursor position after "lia"
+        // Text: '2026-01-06 balance lia'
+        //        0123456789012345678901 2
+        //                              ^22 = after "lia"
+        let position = TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: lsp_types::Position {
+                line: 0,
+                character: 22,
+            },
+        };
+
+        // Call the completion function
+        let result = completion(snapshot, None, position).unwrap();
+        assert!(
+            result.is_some(),
+            "Should return completion items for lowercase prefix"
+        );
+
+        let items = result.unwrap();
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+
+        // Should contain Liabilities accounts (case-insensitive match)
+        assert!(
+            labels.contains(&"Liabilities:CreditCard"),
+            "Should contain Liabilities:CreditCard for lowercase 'lia' prefix. Found: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"Liabilities:Loan"),
+            "Should contain Liabilities:Loan for lowercase 'lia' prefix. Found: {:?}",
+            labels
+        );
+
+        // Liabilities accounts should be ranked higher (appear first) due to prefix match
+        let liabilities_cc_pos = labels.iter().position(|&l| l == "Liabilities:CreditCard");
+        let assets_checking_pos = labels.iter().position(|&l| l == "Assets:Checking");
+
+        if let (Some(lia_pos), Some(assets_pos)) = (liabilities_cc_pos, assets_checking_pos) {
+            assert!(
+                lia_pos < assets_pos,
+                "Liabilities:CreditCard should be ranked higher than Assets:Checking for 'lia' prefix. Order: {:?}",
+                labels
+            );
+        }
     }
 }
