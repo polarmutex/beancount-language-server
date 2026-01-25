@@ -3,6 +3,8 @@ pub mod completion;
 pub mod definition;
 /// Provider definitions for LSP `textDocument/publishDiagnostics`.
 pub mod diagnostics;
+/// Provider definitions for LSP `textDocument/foldingRange`.
+pub mod folding_range;
 pub mod formatting;
 /// Provider definitions for LSP `textDocument/hover`.
 pub mod hover;

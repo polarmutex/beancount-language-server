@@ -1,4 +1,5 @@
 use crate::providers::semantic_tokens;
+use lsp_types::FoldingRangeProviderCapability;
 use lsp_types::InlayHintOptions;
 use lsp_types::InlayHintServerCapabilities;
 use lsp_types::RenameOptions;
@@ -62,6 +63,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
                 },
             },
         ))),
+        folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
         ..Default::default()
     }
 }
@@ -300,6 +302,10 @@ mod tests {
             caps.inlay_hint_provider.is_some(),
             "inlay_hint is implemented"
         );
+        assert!(
+            caps.folding_range_provider.is_some(),
+            "folding_range is implemented"
+        );
 
         // Verify NOT implemented capabilities are disabled
         assert!(
@@ -334,9 +340,9 @@ mod tests {
             caps.document_link_provider, None,
             "document_link is not implemented"
         );
-        assert_eq!(
-            caps.folding_range_provider, None,
-            "folding_range is not implemented"
+        assert!(
+            caps.folding_range_provider.is_some(),
+            "folding_range is implemented"
         );
     }
 
@@ -456,6 +462,15 @@ mod tests {
                 lsp_types::InlayHintParams,
             ) -> anyhow::Result<Option<Vec<lsp_types::InlayHint>>> =
                 handlers::text_document::inlay_hint;
+        }
+
+        // Folding range capability -> handlers::text_document::folding_range
+        if caps.folding_range_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::FoldingRangeParams,
+            ) -> anyhow::Result<Option<Vec<lsp_types::FoldingRange>>> =
+                handlers::text_document::folding_range;
         }
 
         // Text document sync notifications (these don't return responses)
