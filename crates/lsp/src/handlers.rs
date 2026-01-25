@@ -1,6 +1,7 @@
 pub mod text_document {
     use crate::providers::completion;
     use crate::providers::definition;
+    use crate::providers::folding_range;
     use crate::providers::formatting;
     use crate::providers::hover;
     use crate::providers::inlay_hints;
@@ -287,6 +288,31 @@ pub mod text_document {
         inlay_hints::inlay_hints(snapshot, params)
     }
 
+    pub(crate) fn folding_range(
+        snapshot: LspServerStateSnapshot,
+        params: lsp_types::FoldingRangeParams,
+    ) -> Result<Option<Vec<lsp_types::FoldingRange>>> {
+        tracing::debug!(
+            "Folding ranges requested for: {}",
+            params.text_document.uri.as_str()
+        );
+
+        match folding_range::folding_ranges(snapshot, params) {
+            Ok(Some(ranges)) => {
+                tracing::trace!("Folding ranges returned {} ranges", ranges.len());
+                Ok(Some(ranges))
+            }
+            Ok(None) => {
+                tracing::debug!("No folding ranges available");
+                Ok(None)
+            }
+            Err(e) => {
+                tracing::error!("Folding ranges failed: {}", e);
+                Err(e)
+            }
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -477,6 +503,161 @@ pub mod text_document {
 
             let result = semantic_tokens_full(state.snapshot, params);
             assert!(result.is_ok());
+        }
+
+        #[test]
+        fn test_folding_range_handler() {
+            let content = r#"2024-01-15 * "Grocery Store" "Weekly shopping"
+  Expenses:Food:Groceries    45.23 USD
+  Assets:Bank:Checking      -45.23 USD
+
+2024-01-20 * "Gas Station"
+  Expenses:Transport         50.00 USD
+  Assets:Bank:CreditCard    -50.00 USD
+"#;
+            let state = TestState::new(content).unwrap();
+
+            let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
+                .unwrap();
+            let params = lsp_types::FoldingRangeParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+
+            let result = folding_range(state.snapshot, params);
+            assert!(result.is_ok());
+            let ranges = result.unwrap();
+            assert!(ranges.is_some());
+            let ranges = ranges.unwrap();
+            // Should have 2 foldable transactions
+            assert_eq!(ranges.len(), 2, "Should find 2 foldable transactions");
+        }
+
+        #[test]
+        fn test_folding_range_handler_with_comments() {
+            let content = r#"; Comment line 1
+; Comment line 2
+; Comment line 3
+2024-01-01 open Assets:Checking
+"#;
+            let state = TestState::new(content).unwrap();
+
+            let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
+                .unwrap();
+            let params = lsp_types::FoldingRangeParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+
+            let result = folding_range(state.snapshot, params);
+            assert!(result.is_ok());
+            let ranges = result.unwrap();
+            assert!(ranges.is_some());
+            let ranges = ranges.unwrap();
+            // Should have 1 comment block fold
+            assert_eq!(ranges.len(), 1, "Should find 1 comment block");
+            assert_eq!(
+                ranges[0].kind,
+                Some(lsp_types::FoldingRangeKind::Comment),
+                "Should be comment kind"
+            );
+        }
+
+        #[test]
+        fn test_folding_range_handler_with_directives() {
+            let content = r#"2020-01-01 open Assets:Bank:Checking
+2020-01-01 open Assets:Bank:Savings
+2020-01-01 open Assets:Bank:CreditCard
+"#;
+            let state = TestState::new(content).unwrap();
+
+            let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
+                .unwrap();
+            let params = lsp_types::FoldingRangeParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+
+            let result = folding_range(state.snapshot, params);
+            assert!(result.is_ok());
+            let ranges = result.unwrap();
+            assert!(ranges.is_some());
+            let ranges = ranges.unwrap();
+            // Should have 1 directive group fold
+            assert_eq!(ranges.len(), 1, "Should find 1 directive group");
+            assert_eq!(
+                ranges[0].kind,
+                Some(lsp_types::FoldingRangeKind::Region),
+                "Should be region kind"
+            );
+        }
+
+        #[test]
+        fn test_folding_range_handler_empty_file() {
+            let content = "";
+            let state = TestState::new(content).unwrap();
+
+            let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
+                .unwrap();
+            let params = lsp_types::FoldingRangeParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+
+            let result = folding_range(state.snapshot, params);
+            assert!(result.is_ok());
+            let ranges = result.unwrap();
+            assert!(ranges.is_some());
+            let ranges = ranges.unwrap();
+            assert_eq!(ranges.len(), 0, "Empty file should have no folding ranges");
+        }
+
+        #[test]
+        fn test_folding_range_handler_mixed_content() {
+            let content = r#"; Configuration
+option "title" "My Ledger"
+option "operating_currency" "USD"
+
+; Accounts
+2020-01-01 open Assets:Checking
+2020-01-01 open Assets:Savings
+
+2024-01-15 * "Test Transaction"
+  Assets:Checking    100.00 USD
+  Income:Salary     -100.00 USD
+"#;
+            let state = TestState::new(content).unwrap();
+
+            let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
+                .unwrap();
+            let params = lsp_types::FoldingRangeParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+
+            let result = folding_range(state.snapshot, params);
+            assert!(result.is_ok());
+            let ranges = result.unwrap();
+            assert!(ranges.is_some());
+            let ranges = ranges.unwrap();
+            // Should find multiple types of folds: comments, options, opens, transaction
+            assert!(
+                ranges.len() >= 3,
+                "Should find at least 3 folding ranges (comments, directives, transaction)"
+            );
+
+            // Verify ranges are sorted by start line
+            for i in 1..ranges.len() {
+                assert!(
+                    ranges[i - 1].start_line <= ranges[i].start_line,
+                    "Ranges should be sorted by start line"
+                );
+            }
         }
     }
 }

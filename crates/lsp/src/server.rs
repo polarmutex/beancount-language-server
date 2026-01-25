@@ -522,7 +522,9 @@ impl LspServerState {
             )
             .expect("Failed to register SemanticTokens handler")
             .on::<lsp_types::request::InlayHintRequest>(handlers::text_document::inlay_hint)
-            .expect("Failed to register InlayHint handler");
+            .expect("Failed to register InlayHint handler")
+            .on::<lsp_types::request::FoldingRangeRequest>(handlers::text_document::folding_range)
+            .expect("Failed to register FoldingRange handler");
 
         router
     }
