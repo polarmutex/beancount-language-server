@@ -11,10 +11,7 @@ pub struct SystemPythonChecker {
     python_cmd: PathBuf,
 }
 
-const EMBEDDED_BEAN_CHECK: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../python/bean_check.py"
-));
+const EMBEDDED_BEAN_CHECK: &str = include_str!("./bean_check.py");
 
 impl SystemPythonChecker {
     pub fn new(python_cmd: PathBuf) -> Self {
