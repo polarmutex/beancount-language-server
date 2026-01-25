@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.1] - 2026-01-25
+
+### Bug Fixes
+
+- Cargo publish
+
 ## [1.8.0] - 2026-01-25
 
 ### Bug Fixes
