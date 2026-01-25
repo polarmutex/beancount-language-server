@@ -1,10 +1,16 @@
 import * as fs from "fs";
 import * as path from "path";
+import { inspect } from "util";
 import * as vscode from "vscode";
 import {
+  CloseAction,
+  CloseHandlerResult,
+  ErrorAction,
+  ErrorHandlerResult,
   Executable,
   LanguageClient,
   LanguageClientOptions,
+  Message,
   ServerOptions,
 } from "vscode-languageclient/node";
 
@@ -12,12 +18,16 @@ import { log } from "./util";
 
 let client: LanguageClient | undefined;
 
+const lspOutputChannel = vscode.window.createOutputChannel(
+  "beancount-language-server (server)",
+);
+
 async function start_or_restart_client(
   context: vscode.ExtensionContext,
   showRestartMessage: boolean,
 ): Promise<void> {
-  const server_path = await get_server_path(context);
-  if (!server_path) {
+  const serverSelection = await get_server_path(context);
+  if (!serverSelection) {
     await vscode.window.showErrorMessage(
       "The beancount-language-server extension doesn't ship with prebuilt binaries for your platform yet. " +
         "You can still use it by cloning the polarmutex/beancount-language-server repo from GitHub to build the LSP " +
@@ -26,14 +36,17 @@ async function start_or_restart_client(
     return;
   }
 
-  log.info("use lsp executable", server_path);
+  log.info("use lsp executable", {
+    path: serverSelection.path,
+    reason: serverSelection.reason,
+  });
 
   const config = vscode.workspace.getConfiguration("beancountLangServer");
 
   const serverArgs: string[] = [];
 
   const server_executable: Executable = {
-    command: server_path,
+    command: serverSelection.path,
     args: serverArgs,
   };
 
@@ -59,6 +72,7 @@ async function start_or_restart_client(
   }
 
   const client_options: LanguageClientOptions = {
+    outputChannel: lspOutputChannel,
     documentSelector: [{ scheme: "file", language: "beancount" }],
     synchronize: {
       // Notify the server about file changes to beancount files contained in the workspace
@@ -67,6 +81,32 @@ async function start_or_restart_client(
       ),
     },
     initializationOptions,
+    errorHandler: {
+      error(
+        error: Error,
+        message: Message | undefined,
+        count: number | undefined,
+      ): ErrorHandlerResult {
+        log.error("client error: ", error, message, count);
+        return {
+          action: ErrorAction.Continue,
+          message: inspect(message),
+          handled: true,
+        };
+      },
+      closed(): CloseHandlerResult {
+        log.error("server stopped, restarting");
+        vscode.window.showErrorMessage(
+          "beancount-language-server stopped unexpectedly, restarting",
+        );
+
+        return {
+          action: CloseAction.Restart,
+          message: "server exit, restarting",
+          handled: true,
+        };
+      },
+    },
   };
 
   log.info(JSON.stringify(initializationOptions, null, 2));
@@ -190,60 +230,128 @@ const PLATFORM_TRIPLETS: PlatformTriplets = {
   },
 };
 
+const SERVER_BINARY_NAME =
+  process.platform === "win32"
+    ? "beancount-language-server.exe"
+    : "beancount-language-server";
+
+type ServerSelection = {
+  path: string;
+  reason: string;
+};
+
 async function get_server_path(
   context: vscode.ExtensionContext,
-): Promise<string | undefined> {
+): Promise<ServerSelection | undefined> {
+  const resolvers: Array<{
+    reason: string;
+    resolver: () => Promise<string | undefined>;
+  }> = [
+    {
+      reason: "config: beancountLangServer.serverPath",
+      resolver: () => Promise.resolve(find_explicit_server_path()),
+    },
+    {
+      reason: "workspace: .venv",
+      resolver: () => find_in_workspace_venv(),
+    },
+    {
+      reason: "PATH",
+      resolver: () => find_on_path(),
+    },
+    {
+      reason: "bundled binary",
+      resolver: () => find_bundled_server_path(context),
+    },
+  ];
+
+  for (const entry of resolvers) {
+    const path = await entry.resolver();
+    if (path) {
+      return { path, reason: entry.reason };
+    }
+  }
+
+  return undefined;
+}
+
+function find_explicit_server_path(): string | undefined {
   const config = vscode.workspace.getConfiguration("beancountLangServer");
   const explicitPath = config.get("serverPath");
   if (typeof explicitPath === "string" && explicitPath !== "") {
     return explicitPath;
   }
+  return undefined;
+}
 
+async function find_bundled_server_path(
+  context: vscode.ExtensionContext,
+): Promise<string | undefined> {
   const triplet =
     PLATFORM_TRIPLETS[process.platform]?.[process.arch as Architecture];
   if (!triplet) {
     return undefined;
   }
 
-  const binaryExt = triplet.includes("windows") ? ".exe" : "";
-  const binaryName = `beancount-language-server${binaryExt}`;
-
   const bundlePath = vscode.Uri.joinPath(
     context.extensionUri,
     "server",
     triplet,
-    binaryName,
+    SERVER_BINARY_NAME,
   );
   const bundleExists = await vscode.workspace.fs.stat(bundlePath).then(
     () => true,
     () => false,
   );
 
-  if (bundleExists) {
-    return bundlePath.fsPath;
-  }
-
-  const onPath = await find_on_path(binaryName);
-  return onPath ?? undefined;
+  return bundleExists ? bundlePath.fsPath : undefined;
 }
 
-async function find_on_path(binaryName: string): Promise<string | null> {
-  const candidates = process.env.PATH?.split(path.delimiter) ?? [];
-  const names =
-    process.platform === "win32"
-      ? [binaryName, `${binaryName}.exe`]
-      : [binaryName];
+async function find_in_workspace_venv(): Promise<string | undefined> {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  const venvNames = [".venv"];
 
-  for (const dir of candidates) {
-    for (const name of names) {
-      const full = path.join(dir, name);
-      try {
-        await fs.promises.access(full, fs.constants.X_OK);
-        return full;
-      } catch (_) {
-        // continue searching
+  for (const folder of folders) {
+    for (const venvName of venvNames) {
+      const venvPath = path.join(folder.uri.fsPath, venvName);
+      const binDir = venv_bin_dir(venvPath);
+      if (!binDir) {
+        continue;
+      }
+      const candidate = await find_in_dir(binDir);
+      if (candidate) {
+        return candidate;
       }
     }
   }
-  return null;
+
+  return undefined;
+}
+
+function venv_bin_dir(venvPath: string): string | null {
+  if (process.platform === "win32") {
+    return path.join(venvPath, "Scripts");
+  }
+  return path.join(venvPath, "bin");
+}
+
+async function find_in_dir(dirPath: string): Promise<string | undefined> {
+  const candidate = path.join(dirPath, SERVER_BINARY_NAME);
+  try {
+    await fs.promises.access(candidate, fs.constants.X_OK);
+    return candidate;
+  } catch (_) {
+    return undefined;
+  }
+}
+
+async function find_on_path(): Promise<string | undefined> {
+  const candidates = process.env.PATH?.split(path.delimiter) ?? [];
+  for (const dir of candidates) {
+    const found = await find_in_dir(dir);
+    if (found) {
+      return found;
+    }
+  }
+  return undefined;
 }
