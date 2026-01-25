@@ -2,6 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.0] - 2026-01-25
+
+### Bug Fixes
+
+- Skip edits for unchanged lines (#766)
+- Handle UTF-8 multi-byte characters correctly
+- Allow client to control formatting
+- Small bugs and improvements
+- Code improvements
+- Make field of `BeancountCheckConfig` default to be `None` so the auto-discovery could work (#772)
+- Use default value when parsing BeancountLspOptions (#773)
+- Enable pyo3 feature by default
+- Pyo3 optimizations
+- Cache pyo3 beancount loader
+- Fix error handling #776
+- Only send checking progress message if it's enabeld
+- Inlay hints oddities
+- Un delfault python-embedded
+
+### Documentation
+
+- Add nvim.lsp configuration example for neovim 0.11+ (#676)
+- Update readme
+- Add troubleshooting tips for inlay hints in VSCode
+
+### Features
+
+- Add language configuration
+- Implement `SystemPythonChecker` and checker auto discovery (#771)
+- Add configuration options for bean-check execution (#770)
+- Add checker name to progress message
+- Add start/stop/reload command (#774)
+- Use tree-sitter queries as default
+- Optimize BeancountData extraction with unified static queries (#755)
+- Replace Vec clones with Arc-based data sharing (#756)
+- Only create beancount_data on requests that need it
+- Add inlay_hints #750
+
+### Refactor
+
+- Server dispatcher for better maintenance
+- Simplify request handlers by inlining data validation
+
+### Build
+
+- Enable abi3 feature of pyo3
+
 ## [1.7.0] - 2026-01-11
 
 ### Bug Fixes
