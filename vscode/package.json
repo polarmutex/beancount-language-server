@@ -33,6 +33,10 @@
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
   },
+  "prettier": {
+    "semi": true,
+    "trailingComma": "all"
+  },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@types/node": "^22.19.3",
