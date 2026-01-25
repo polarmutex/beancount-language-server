@@ -73,35 +73,6 @@ impl PostingAmount {
     }
 }
 
-impl Amount {
-    fn parse(text: &str) -> Option<Self> {
-        // Parse amount like "100.00 USD" or "100.00USD" or "100 USD"
-        let text = text.trim();
-        let parts: Vec<&str> = text.split_whitespace().collect();
-
-        if parts.len() >= 2 {
-            // Format: "100.00 USD"
-            let value = rust_decimal::Decimal::from_str_exact(parts[0]).ok()?;
-            let currency = parts[1].to_string();
-            Some(Amount { value, currency })
-        } else if parts.len() == 1 {
-            // Try to split number and currency without space: "100.00USD"
-            let text = parts[0];
-            for (i, c) in text.char_indices() {
-                if c.is_alphabetic() {
-                    let (num_part, curr_part) = text.split_at(i);
-                    let value = rust_decimal::Decimal::from_str_exact(num_part).ok()?;
-                    let currency = curr_part.to_string();
-                    return Some(Amount { value, currency });
-                }
-            }
-            None
-        } else {
-            None
-        }
-    }
-}
-
 #[derive(Debug)]
 struct Posting {
     node: tree_sitter::Node<'static>,
@@ -276,9 +247,8 @@ fn extract_amount(
         match child.kind() {
             "incomplete_amount" | "amount" => {
                 if amount_opt.is_none() {
-                    // First amount is the posting amount
-                    let amount_text = text_for_tree_sitter_node(content, &child);
-                    amount_opt = Amount::parse(&amount_text);
+                    // First amount is the posting amount - parse it from structure
+                    amount_opt = extract_amount_from_node(&child, content);
                 }
             }
             "at" => {
@@ -311,6 +281,48 @@ fn extract_amount(
     })
 }
 
+/// Extract amount from an incomplete_amount or amount node by parsing its children
+fn extract_amount_from_node(
+    amount_node: &tree_sitter::Node,
+    content: &ropey::Rope,
+) -> Option<Amount> {
+    let mut cursor = amount_node.walk();
+    let mut number_str = String::new();
+    let mut currency_str = String::new();
+
+    for child in amount_node.children(&mut cursor) {
+        match child.kind() {
+            "number" | "unary_number_expr" | "binary_number_expr" => {
+                number_str = text_for_tree_sitter_node(content, &child);
+            }
+            "currency" => {
+                currency_str = text_for_tree_sitter_node(content, &child);
+            }
+            _ => {}
+        }
+    }
+
+    if !number_str.is_empty() && !currency_str.is_empty() {
+        // Try to evaluate the expression if it's a calculation
+        let value = if number_str.contains('*')
+            || number_str.contains('+')
+            || (number_str.contains('-') && number_str.matches('-').count() > 1)
+        {
+            // For binary expressions, try to evaluate them
+            evaluate_expression(&number_str)
+                .or_else(|| rust_decimal::Decimal::from_str_exact(&number_str).ok())?
+        } else {
+            rust_decimal::Decimal::from_str_exact(&number_str).ok()?
+        };
+        Some(Amount {
+            value,
+            currency: currency_str,
+        })
+    } else {
+        None
+    }
+}
+
 /// Extract price amount from a price_annotation node
 fn extract_price_annotation(
     price_annotation_node: &tree_sitter::Node,
@@ -320,8 +332,7 @@ fn extract_price_annotation(
 
     for child in price_annotation_node.children(&mut cursor) {
         if child.kind() == "incomplete_amount" || child.kind() == "amount" {
-            let amount_text = text_for_tree_sitter_node(content, &child);
-            return Amount::parse(&amount_text);
+            return extract_amount_from_node(&child, content);
         }
     }
 
@@ -374,7 +385,7 @@ fn extract_compound_amount(
 
     for child in compound_amount_node.children(&mut cursor) {
         match child.kind() {
-            "number" => {
+            "number" | "unary_number_expr" | "binary_number_expr" => {
                 number_str = text_for_tree_sitter_node(content, &child);
             }
             "currency" => {
@@ -385,7 +396,17 @@ fn extract_compound_amount(
     }
 
     if !number_str.is_empty() && !currency_str.is_empty() {
-        let value = rust_decimal::Decimal::from_str_exact(&number_str).ok()?;
+        // Try to evaluate the expression if it's a calculation
+        let value = if number_str.contains('*')
+            || number_str.contains('+')
+            || number_str.contains('-') && number_str.matches('-').count() > 1
+        {
+            // For binary expressions, try to evaluate them
+            evaluate_expression(&number_str)
+                .or_else(|| rust_decimal::Decimal::from_str_exact(&number_str).ok())?
+        } else {
+            rust_decimal::Decimal::from_str_exact(&number_str).ok()?
+        };
         Some(Amount {
             value,
             currency: currency_str,
@@ -393,6 +414,46 @@ fn extract_compound_amount(
     } else {
         None
     }
+}
+
+/// Simple expression evaluator for basic arithmetic
+fn evaluate_expression(expr: &str) -> Option<rust_decimal::Decimal> {
+    use rust_decimal::Decimal;
+
+    let expr = expr.trim();
+
+    // Handle simple binary operations: a * b, a + b, a - b
+    if let Some(pos) = expr.rfind('*') {
+        let left = expr[..pos].trim();
+        let right = expr[pos + 1..].trim();
+        let left_val = Decimal::from_str_exact(left).ok()?;
+        let right_val = Decimal::from_str_exact(right).ok()?;
+        return Some(left_val * right_val);
+    }
+
+    if let Some(pos) = expr.rfind('+') {
+        let left = expr[..pos].trim();
+        let right = expr[pos + 1..].trim();
+        let left_val = Decimal::from_str_exact(left).ok()?;
+        let right_val = Decimal::from_str_exact(right).ok()?;
+        return Some(left_val + right_val);
+    }
+
+    // Handle subtraction (but not unary minus)
+    if let Some(pos) = expr.rfind('-')
+        && pos > 0
+    {
+        let left = expr[..pos].trim();
+        let right = expr[pos + 1..].trim();
+        if let (Ok(left_val), Ok(right_val)) = (
+            Decimal::from_str_exact(left),
+            Decimal::from_str_exact(right),
+        ) {
+            return Some(left_val - right_val);
+        }
+    }
+
+    None
 }
 
 /// Calculate hint for balancing amounts (postings without explicit amounts)
@@ -586,30 +647,6 @@ fn calculate_total_hint(postings: &[Posting], position: Position) -> Option<Inla
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rust_decimal::Decimal;
-    use std::str::FromStr;
-
-    #[test]
-    fn test_amount_parse() {
-        let amount = Amount::parse("100.00 USD").unwrap();
-        assert_eq!(amount.value, Decimal::from_str("100.00").unwrap());
-        assert_eq!(amount.currency, "USD");
-
-        let amount = Amount::parse("100.00USD").unwrap();
-        assert_eq!(amount.value, Decimal::from_str("100.00").unwrap());
-        assert_eq!(amount.currency, "USD");
-
-        let amount = Amount::parse("-45.23 EUR").unwrap();
-        assert_eq!(amount.value, Decimal::from_str("-45.23").unwrap());
-        assert_eq!(amount.currency, "EUR");
-    }
-
-    #[test]
-    fn test_amount_parse_invalid() {
-        assert!(Amount::parse("invalid").is_none());
-        assert!(Amount::parse("").is_none());
-        assert!(Amount::parse("USD").is_none());
-    }
 
     #[test]
     fn test_balancing_hint() {
@@ -1310,6 +1347,96 @@ mod tests {
             assert!(
                 balancing_hint.is_some(),
                 "Should show balancing hint with converted amount"
+            );
+        } else {
+            panic!("No transaction found");
+        }
+    }
+
+    #[test]
+    fn test_binary_expression_in_amount() {
+        // Test transaction with calculation expression (300 * 4)
+        let content = r#"2024-01-15 * "Test calculations"
+  Assets:Cash              300 * 4 USD
+  Expenses:Food
+"#;
+        let rope_content = ropey::Rope::from_str(content);
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(content, None).unwrap();
+
+        let txn_query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let content_bytes = content.as_bytes();
+        let mut matches = cursor.matches(&txn_query, tree.root_node(), content_bytes);
+
+        if let Some(qmatch) = matches.next() {
+            let txn_node = qmatch.captures[0].node;
+            let hints = process_transaction(&txn_node, &rope_content);
+
+            if let Some(hints) = hints {
+                println!("Hints: {:?}", hints);
+                // Should have balancing hint with calculated amount (300 * 4 = 1200)
+                let balancing_hint = hints.iter().find(|h| {
+                    if let InlayHintLabel::String(label) = &h.label {
+                        println!("Label: {}", label);
+                        label.contains("-1200") && label.contains("USD")
+                    } else {
+                        false
+                    }
+                });
+                assert!(
+                    balancing_hint.is_some(),
+                    "Should show balancing hint with calculated amount (-1200 USD)"
+                );
+            } else {
+                panic!("No hints generated - amounts likely not parsed correctly");
+            }
+        } else {
+            panic!("No transaction found");
+        }
+    }
+
+    #[test]
+    fn test_binary_expression_addition() {
+        // Test transaction with addition expression
+        let content = r#"2024-01-15 * "Test addition"
+  Assets:Cash              100 + 50 USD
+  Expenses:Food
+"#;
+        let rope_content = ropey::Rope::from_str(content);
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(content, None).unwrap();
+
+        let txn_query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let content_bytes = content.as_bytes();
+        let mut matches = cursor.matches(&txn_query, tree.root_node(), content_bytes);
+
+        if let Some(qmatch) = matches.next() {
+            let txn_node = qmatch.captures[0].node;
+            let hints = process_transaction(&txn_node, &rope_content).unwrap();
+
+            // Should have balancing hint with calculated amount (100 + 50 = 150)
+            let balancing_hint = hints.iter().find(|h| {
+                if let InlayHintLabel::String(label) = &h.label {
+                    label.contains("-150") && label.contains("USD")
+                } else {
+                    false
+                }
+            });
+            assert!(
+                balancing_hint.is_some(),
+                "Should show balancing hint with calculated amount (-150 USD)"
             );
         } else {
             panic!("No transaction found");
