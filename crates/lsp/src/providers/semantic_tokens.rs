@@ -29,6 +29,7 @@ enum TokenKind {
     Parameter,
     Property,
     Class,
+    Function,
 }
 
 fn token_types() -> Vec<SemanticTokenType> {
@@ -51,6 +52,7 @@ fn token_type(kind: TokenKind) -> SemanticTokenType {
         TokenKind::Parameter => SemanticTokenType::PARAMETER,
         TokenKind::Property => SemanticTokenType::PROPERTY,
         TokenKind::Class => SemanticTokenType::CLASS,
+        TokenKind::Function => SemanticTokenType::FUNCTION,
     }
 }
 
@@ -96,7 +98,7 @@ pub(crate) fn semantic_tokens_full(
     let content: Rope = document.content;
 
     let mut raw_tokens = Vec::new();
-    collect_tokens(tree.root_node(), &content, &mut raw_tokens);
+    collect_tokens(&tree.root_node(), &content, &mut raw_tokens);
 
     if raw_tokens.is_empty() {
         return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
@@ -140,16 +142,42 @@ pub(crate) fn semantic_tokens_full(
     })))
 }
 
-fn collect_tokens(node: Node, content: &Rope, out: &mut Vec<RawToken>) {
+fn collect_tokens(node: &Node, content: &Rope, out: &mut Vec<RawToken>) {
+    let child = match NodeKind::from(node.kind()) {
+        NodeKind::Include
+        | NodeKind::Pushtag
+        | NodeKind::Poptag
+        | NodeKind::Pushmeta
+        | NodeKind::Popmeta
+        | NodeKind::Plugin
+        | NodeKind::Option => Some((0, TokenKind::Function)),
+
+        NodeKind::Open
+        | NodeKind::Pad
+        | NodeKind::Note
+        | NodeKind::Balance
+        | NodeKind::Transaction
+        | NodeKind::Custom => Some((1, TokenKind::Function)),
+
+        _ => None,
+    };
+
+    if let Some((index, kind)) = child
+        && let Some(child) = node.child(index)
+        && let Some(token) = to_semantic_token(&child, content, kind)
+    {
+        out.push(token);
+    }
+
     if let Some(kind) = classify_node(node.kind().into())
-        && let Some(tok) = to_semantic_token(&node, content, kind)
+        && let Some(tok) = to_semantic_token(node, content, kind)
     {
         out.push(tok);
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_tokens(child, content, out);
+        collect_tokens(&child, content, out);
     }
 }
 
@@ -408,12 +436,12 @@ mod tests {
             .unwrap();
 
         let mut tokens = Vec::new();
-        collect_tokens(tree.root_node(), &content, &mut tokens);
+        collect_tokens(&tree.root_node(), &content, &mut tokens);
 
         // Should collect at least the date token
         assert!(!tokens.is_empty());
         // Verify we collected a date token (should be first)
-        assert_eq!(tokens[0].token_type, token_index(TokenKind::Number));
+        assert_eq!(tokens[0].token_type, token_index(TokenKind::Function));
     }
 
     #[test]
@@ -434,7 +462,7 @@ mod tests {
             .unwrap();
 
         let mut tokens = Vec::new();
-        collect_tokens(tree.root_node(), &content, &mut tokens);
+        collect_tokens(&tree.root_node(), &content, &mut tokens);
 
         // Should collect multiple tokens: date, payee, narration, numbers, currency
         assert!(tokens.len() >= 4, "Should collect at least 4 tokens");
@@ -474,7 +502,7 @@ mod tests {
             .unwrap();
 
         let mut tokens = Vec::new();
-        collect_tokens(tree.root_node(), &content, &mut tokens);
+        collect_tokens(&tree.root_node(), &content, &mut tokens);
 
         // Should have both comment and date tokens
         let has_comment = tokens
