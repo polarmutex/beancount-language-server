@@ -33,8 +33,9 @@ const QUERY_STR: &str = r#"
     (account) @prefix
     amount: (incomplete_amount
         [
-            (unary_number_expr)
             (number)
+            (unary_number_expr)
+            (binary_number_expr)
         ] @number
     )?
 )
@@ -42,8 +43,9 @@ const QUERY_STR: &str = r#"
     (account) @prefix
     (amount_tolerance
         ([
-            (unary_number_expr)
             (number)
+            (unary_number_expr)
+            (binary_number_expr)
         ] @number)
     )
 )
@@ -51,10 +53,15 @@ const QUERY_STR: &str = r#"
     currency: (_) @prefix
     amount: (amount
         ([
-            (unary_number_expr)
             (number)
+            (unary_number_expr)
+            (binary_number_expr)
         ] @number)
     )
+)
+( open
+    (account) @prefix
+    (currency) @number
 )
 "#;
 
@@ -129,25 +136,31 @@ pub(crate) fn formatting(
         }
     };
 
-    if formateable_lines.is_empty() {
-        tracing::debug!("No formateable lines found, returning empty edits");
-        return Ok(Some(vec![]));
-    }
-
-    // Calculate formatting configuration
-    let format_config = calculate_format_config(&formateable_lines, &snapshot.config.formatting);
-
-    // Generate text edits based on formatting mode
-    let text_edits = if let Some(currency_col) = snapshot.config.formatting.currency_column {
-        generate_currency_column_edits(&formateable_lines, currency_col, doc)
+    // Generate text edits based on formatting mode (only if we have formateable lines)
+    let text_edits = if formateable_lines.is_empty() {
+        tracing::debug!("No formateable lines found, skipping alignment formatting");
+        vec![]
     } else {
-        generate_template_edits(
-            &formateable_lines,
-            &format_config,
-            snapshot.config.formatting.number_currency_spacing,
-            snapshot.config.formatting.indent_width,
-            doc,
-        )
+        // Calculate formatting configuration
+        let format_config =
+            calculate_format_config(&formateable_lines, &snapshot.config.formatting);
+
+        if let Some(currency_col) = snapshot.config.formatting.currency_column {
+            generate_currency_column_edits(
+                &formateable_lines,
+                currency_col,
+                doc,
+                snapshot.config.formatting.indent_width,
+            )
+        } else {
+            generate_template_edits(
+                &formateable_lines,
+                &format_config,
+                snapshot.config.formatting.number_currency_spacing,
+                snapshot.config.formatting.indent_width,
+                doc,
+            )
+        }
     };
 
     // Apply indent normalization to remaining lines if configured
@@ -342,13 +355,52 @@ fn generate_currency_column_edits(
     formateable_lines: &[FormatableLine],
     currency_col: usize,
     doc: &crate::document::Document,
+    indent_width: Option<usize>,
 ) -> Vec<lsp_types::TextEdit> {
     let mut text_edits = Vec::new();
 
     for line in formateable_lines {
+        // Apply custom indentation if specified, but only for postings, not top-level directives
+        let (indent_str, account_name) = if let Some(target_indent) = indent_width {
+            let account_part = line.prefix.trim_start().trim_end();
+
+            // Check if this is a top-level directive that shouldn't be indented
+            let line_start_char = doc.content.line_to_char(line.line_num);
+            let line_end_char = if line.line_num + 1 < doc.content.len_lines() {
+                doc.content.line_to_char(line.line_num + 1)
+            } else {
+                doc.content.len_chars()
+            };
+            let full_line = doc
+                .content
+                .slice(line_start_char..line_end_char)
+                .to_string();
+
+            let line_content = full_line.trim();
+            let is_top_level_directive = line_content.contains("balance ")
+                || line_content.contains("price ")
+                || (line_content.starts_with("20")
+                    && (line_content.contains(" balance ") || line_content.contains(" price ")));
+
+            if is_top_level_directive {
+                ("".to_string(), account_part)
+            } else {
+                (" ".repeat(target_indent), account_part)
+            }
+        } else {
+            // Preserve original indentation
+            let account_part = line.prefix.trim_end();
+            let original_indent = if line.prefix.len() > account_part.len() {
+                &line.prefix[..(line.prefix.len() - account_part.len())]
+            } else {
+                ""
+            };
+            (original_indent.to_string(), account_part)
+        };
+
         // Calculate spacing needed to align currency at the specified column
         // Bean-format logic: num_of_spaces = currency_column - len(prefix) - len(number) - 3
-        let prefix_len = line.prefix.trim_end().len();
+        let prefix_len = indent_str.len() + account_name.len();
         let number_len = line.number.len();
         let spaces_needed = if currency_col >= prefix_len + number_len + 3 {
             currency_col - prefix_len - number_len - 3
@@ -356,10 +408,11 @@ fn generate_currency_column_edits(
             2 // minimum spacing
         };
 
-        // Create the formatted line: prefix + spaces + "  " + number + " " + rest
+        // Create the formatted line: indent + account + spaces + "  " + number + " " + rest
         let target_line = format!(
-            "{}{}  {} {}",
-            line.prefix.trim_end(),
+            "{}{}{}  {} {}",
+            indent_str,
+            account_name,
             " ".repeat(spaces_needed),
             line.number,
             line.rest.trim_start()
@@ -2160,5 +2213,206 @@ mod tests {
         assert!(formatted.contains("Résumé"), "Résumé should be intact");
         assert!(formatted.contains("Банк"), "Банк should be intact");
         assert!(formatted.contains("日本"), "日本 should be intact");
+    }
+
+    #[test]
+    fn test_formatting_with_calculations() {
+        // Test formatting with calculations in amounts (issue #783 item 5)
+        let content = r#"2023-01-01 * "Test calculations"
+  Assets:Cash 300 * 4 USD
+  Expenses:Food 50.0 USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        let formatted = apply_edits(content, &edits);
+        println!("Formatted with calculations:\n{formatted}");
+
+        // Check if calculation is preserved
+        assert!(
+            formatted.contains("300 * 4"),
+            "Calculation should be preserved"
+        );
+        assert!(formatted.contains("USD"), "Currency should be preserved");
+
+        // Verify calculations are aligned with regular numbers
+        let lines: Vec<&str> = formatted.lines().collect();
+        let mut usd_positions = Vec::new();
+
+        for line in &lines[1..] {
+            if let Some(usd_pos) = line.find("USD") {
+                usd_positions.push(usd_pos);
+            }
+        }
+
+        // All USD positions should be the same (aligned)
+        if usd_positions.len() > 1 {
+            let first_pos = usd_positions[0];
+            for &pos in &usd_positions[1..] {
+                assert_eq!(
+                    pos, first_pos,
+                    "Calculations should be aligned with regular numbers"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_formatting_open_directives() {
+        // Test formatting open directives (issue #783 item 4)
+        let content = r#"2020-01-01 open Expenses:Moradia:Manutencao BRL
+2020-01-01 open Assets:Nub:CC BRL
+2020-01-01 open Assets:Cash USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        let formatted = apply_edits(content, &edits);
+        println!("Formatted open directives:\n{formatted}");
+
+        // Check if currencies are aligned
+        let lines: Vec<&str> = formatted.lines().collect();
+        let mut currency_positions = Vec::new();
+
+        for line in &lines {
+            if line.contains("open") {
+                if let Some(brl_pos) = line.find("BRL") {
+                    currency_positions.push(brl_pos);
+                } else if let Some(usd_pos) = line.find("USD") {
+                    currency_positions.push(usd_pos);
+                }
+            }
+        }
+
+        // All currencies should be at the same position
+        if currency_positions.len() > 1 {
+            let first_pos = currency_positions[0];
+            for &pos in &currency_positions[1..] {
+                assert_eq!(
+                    pos, first_pos,
+                    "Currencies in open directives should be aligned"
+                );
+            }
+        }
+
+        // Verify that formatting was applied (edits generated)
+        assert!(
+            !edits.is_empty(),
+            "Should generate formatting edits for open directives"
+        );
+    }
+
+    #[test]
+    fn test_indent_on_files_without_transactions() {
+        // Test issue #783 item 3: indent normalization on files without transactions
+        // This was previously blocked by an early return
+        let content = r#"1900-01-01 commodity USD
+      name: "US Dollar"
+        asset-class: "currency"
+
+1900-01-01 commodity EUR
+     name: "Euro"
+"#;
+
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: None,
+            account_amount_spacing: 2,
+            number_currency_spacing: 1,
+            indent_width: Some(2),
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        let formatted = apply_edits(content, &edits);
+        println!("Formatted commodity file:\n{formatted}");
+
+        // Verify that indent normalization was applied even without transactions
+        let lines: Vec<&str> = formatted.lines().collect();
+        for line in &lines {
+            if line.trim().starts_with("name:") || line.trim().starts_with("asset-class:") {
+                assert!(
+                    line.starts_with("  "),
+                    "Metadata should be indented to 2 spaces: '{line}'"
+                );
+                assert!(
+                    !line.starts_with("   ") || line.starts_with("    "),
+                    "Metadata should use exactly 2 spaces, not more: '{line}'"
+                );
+            }
+        }
+
+        // Verify edits were generated (this would fail with the old early return)
+        assert!(
+            !edits.is_empty(),
+            "Should generate indent edits for commodity files without transactions"
+        );
+    }
+
+    #[test]
+    fn test_single_pass_indent_and_currency_alignment() {
+        // Test issue #783 item 2: indent and currency column should align in one pass
+        let content = r#"2023-01-01 * "Test"
+    Assets:Cash 100.00 USD
+      Expenses:Food 50.0 USD
+"#;
+
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: Some(40),
+            account_amount_spacing: 2,
+            number_currency_spacing: 1,
+            indent_width: Some(2),
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        let formatted = apply_edits(content, &edits);
+        println!("Single pass format:\n{formatted}");
+
+        // Verify both indent and currency alignment happened in one pass
+        let lines: Vec<&str> = formatted.lines().collect();
+        for line in &lines[1..] {
+            if !line.trim().is_empty() && line.trim().contains("Assets")
+                || line.trim().contains("Expenses")
+            {
+                // Check indent is 2 spaces
+                assert!(
+                    line.starts_with("  "),
+                    "Should be indented to 2 spaces: '{line}'"
+                );
+
+                // Check currency is at column 40
+                if let Some(usd_pos) = line.find("USD") {
+                    assert_eq!(
+                        usd_pos, 40,
+                        "Currency should be at column 40 in same pass as indent fix: '{line}'"
+                    );
+                }
+            }
+        }
+
+        // Verify formatting is idempotent (one pass is enough)
+        let format_config2 = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: Some(40),
+            account_amount_spacing: 2,
+            number_currency_spacing: 1,
+            indent_width: Some(2),
+        };
+        let state2 = TestState::new_with_config(&formatted, format_config2).unwrap();
+        let edits2 = state2.format().unwrap().unwrap();
+        assert_eq!(
+            edits2.len(),
+            0,
+            "Second format should generate no edits (idempotent after single pass)"
+        );
     }
 }
