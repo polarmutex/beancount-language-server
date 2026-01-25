@@ -523,7 +523,7 @@ fn analyze_string_context(content: &ropey::Rope, cursor: Point) -> CompletionCon
     let prefix = extract_string_prefix(&line, cursor.column);
 
     // Count quotes before cursor to determine context
-    let before_cursor = &line[..cursor.column.min(line.len())];
+    let before_cursor = safe_substring_to_byte(&line, cursor.column);
     let quote_count = before_cursor.matches('"').count();
 
     // Check if we have a complete payee (2+ quotes before, suggesting this is narration)
@@ -541,6 +541,21 @@ fn analyze_string_context(content: &ropey::Rope, cursor: Point) -> CompletionCon
         has_opening_quote: true, // Quote was just typed
         has_closing_quote: has_closing,
     }
+}
+
+/// Safely get a substring from start to a byte offset, ensuring we don't split UTF-8 characters.
+/// If the byte offset falls in the middle of a character, it rounds down to the previous character boundary.
+fn safe_substring_to_byte(s: &str, byte_offset: usize) -> &str {
+    if byte_offset >= s.len() {
+        return s;
+    }
+
+    // Find the nearest character boundary at or before byte_offset
+    let mut idx = byte_offset;
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    &s[..idx]
 }
 
 /// Extract account prefix from line text up to cursor position
@@ -587,7 +602,7 @@ fn extract_string_prefix(line: &str, cursor_col: usize) -> String {
 }
 
 fn extract_tag_prefix(line: &str, cursor_col: usize) -> Option<String> {
-    let relevant_part = &line[..cursor_col];
+    let relevant_part = safe_substring_to_byte(line, cursor_col);
     if let Some(hash_pos) = relevant_part.rfind('#') {
         // Ensure we are not in a comment
         if let Some(comment_pos) = relevant_part.find(';')
@@ -606,7 +621,7 @@ fn extract_tag_prefix(line: &str, cursor_col: usize) -> Option<String> {
 }
 
 fn extract_link_prefix(line: &str, cursor_col: usize) -> Option<String> {
-    let relevant_part = &line[..cursor_col];
+    let relevant_part = safe_substring_to_byte(line, cursor_col);
     if let Some(hash_pos) = relevant_part.rfind('^') {
         // Ensure we are not in a comment
         if let Some(comment_pos) = relevant_part.find(';')
@@ -1393,6 +1408,50 @@ mod tests {
         assert_eq!(extract_account_prefix("Assets:Cash", 6), "Assets");
         assert_eq!(extract_account_prefix("  Assets:Cash", 13), "Assets:Cash");
         assert_eq!(extract_account_prefix("", 0), "");
+    }
+
+    #[test]
+    fn test_safe_substring_to_byte_ascii() {
+        let s = "hello world";
+        assert_eq!(safe_substring_to_byte(s, 5), "hello");
+        assert_eq!(safe_substring_to_byte(s, 0), "");
+        assert_eq!(safe_substring_to_byte(s, 100), s);
+    }
+
+    #[test]
+    fn test_safe_substring_to_byte_cjk() {
+        // "最" is 3 bytes (bytes 11-13), "后" is 3 bytes (bytes 14-16)
+        let s = "2026-02-15 最后";
+        // Byte 11 is at the start of '最'
+        assert_eq!(safe_substring_to_byte(s, 11), "2026-02-15 ");
+        // Byte 12 is in the middle of '最', should round down to 11
+        assert_eq!(safe_substring_to_byte(s, 12), "2026-02-15 ");
+        // Byte 13 is in the middle of '最', should round down to 11
+        assert_eq!(safe_substring_to_byte(s, 13), "2026-02-15 ");
+        // Byte 14 is at the start of '后'
+        assert_eq!(safe_substring_to_byte(s, 14), "2026-02-15 最");
+        // Byte 15 is in the middle of '后', should round down to 14
+        assert_eq!(safe_substring_to_byte(s, 15), "2026-02-15 最");
+    }
+
+    #[test]
+    fn test_extract_tag_prefix_with_cjk() {
+        // Test that tag extraction doesn't panic with CJK content
+        let line = "  comment: \"2026-02-15 最后\"";
+        // This would have panicked before the fix when cursor_col is in the middle of a multi-byte char
+        let result = extract_tag_prefix(line, 25);
+        // Should not panic and return None (no tag in this context)
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_link_prefix_with_cjk() {
+        // Test that link extraction doesn't panic with CJK content
+        let line = "  comment: \"2026-02-15 最后\"";
+        // This would have panicked before the fix
+        let result = extract_link_prefix(line, 25);
+        // Should not panic and return None (no link in this context)
+        assert_eq!(result, None);
     }
 
     #[test]
