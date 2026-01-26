@@ -1,5 +1,4 @@
 use crate::server::LspServerStateSnapshot;
-use crate::utils::ToFilePath;
 use anyhow::Result;
 use lsp_types::{
     SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
@@ -8,10 +7,9 @@ use lsp_types::{
 use ropey::Rope;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
-use std::path::PathBuf;
 use strum::IntoEnumIterator;
 use tree_sitter_beancount::NodeKind;
-use tree_sitter_beancount::tree_sitter::{self, Node};
+use tree_sitter_beancount::tree_sitter::Node;
 
 #[repr(u8)]
 #[derive(
@@ -81,21 +79,11 @@ pub(crate) fn semantic_tokens_full(
     snapshot: LspServerStateSnapshot,
     params: SemanticTokensParams,
 ) -> Result<Option<SemanticTokensResult>> {
-    let uri_path: PathBuf = match params.text_document.uri.to_file_path() {
-        Ok(path) => path,
+    let (tree, doc) = match snapshot.tree_and_document_for_uri(&params.text_document.uri) {
+        Ok(v) => v,
         Err(_) => return Ok(None),
     };
-
-    let tree: &tree_sitter::Tree = match snapshot.forest.get(&uri_path) {
-        Some(tree) => tree,
-        None => return Ok(None),
-    };
-
-    let document = match snapshot.open_docs.get(&uri_path) {
-        Some(doc) => doc.clone(),
-        None => return Ok(None),
-    };
-    let content: Rope = document.content;
+    let content: Rope = doc.content.clone();
 
     let mut raw_tokens = Vec::new();
     collect_tokens(&tree.root_node(), &content, &mut raw_tokens);
@@ -248,6 +236,8 @@ fn to_semantic_token(node: &Node, content: &Rope, kind: TokenKind) -> Option<Raw
 
 #[cfg(test)]
 mod tests {
+    use tree_sitter_beancount::tree_sitter;
+
     use super::*;
     use strum::IntoEnumIterator;
 

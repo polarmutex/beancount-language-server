@@ -9,7 +9,7 @@ use crate::forest;
 use crate::handlers;
 use crate::progress::Progress;
 use crate::utils::ToFilePath;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender};
 use lsp_types::notification::Notification;
 use std::collections::HashMap;
@@ -100,6 +100,27 @@ pub(crate) struct LspServerStateSnapshot {
     pub forest: HashMap<PathBuf, Arc<tree_sitter::Tree>>,
     pub open_docs: HashMap<PathBuf, Document>,
     pub checker: Option<Arc<dyn BeancountChecker>>,
+}
+
+impl LspServerStateSnapshot {
+    pub fn tree_and_document_for_uri(
+        &self,
+        uri: &lsp_types::Uri,
+    ) -> Result<(&Arc<tree_sitter::Tree>, &Document)> {
+        let path = uri
+            .to_file_path()
+            .map_err(|_| anyhow::anyhow!("Failed to convert URI to file path: {}", uri.as_str()))?;
+
+        let tree = self
+            .forest
+            .get(&path)
+            .with_context(|| format!("No parsed tree found for file: {}", path.display()))?;
+        let doc = self
+            .open_docs
+            .get(&path)
+            .with_context(|| format!("Document not found for file: {}", path.display()))?;
+        Ok((tree, doc))
+    }
 }
 
 /*
