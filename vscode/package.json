@@ -77,17 +77,6 @@
       "type": "object",
       "title": "Beancount Language Server Configuration",
       "properties": {
-        "beancountLangServer.trace.server": {
-          "scope": "window",
-          "type": "string",
-          "enum": [
-            "off",
-            "messages",
-            "verbose"
-          ],
-          "default": "off",
-          "description": "Traces the communication between VS Code and the language server."
-        },
         "beancountLangServer.journalFile": {
           "scope": "resource",
           "type": "string",
@@ -153,6 +142,24 @@
           "type": "string",
           "default": "",
           "description": "Path to the beancount-language-server executable"
+        },
+        "beancountLangServer.logLevel": {
+          "scope": "window",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "trace",
+            "debug",
+            "info",
+            "warn",
+            "error",
+            "off",
+            null
+          ],
+          "default": null,
+          "description": "Log level for the language server."
         }
       }
     },
