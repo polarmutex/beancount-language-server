@@ -1,7 +1,9 @@
 use crate::providers::inlay_hints::transaction_inlay_hints;
 use crate::server::LspServerStateSnapshot;
-use crate::treesitter_utils::text_for_tree_sitter_node;
-use crate::utils::ToFilePath;
+use crate::treesitter_utils::{
+    lsp_position_to_tree_sitter_point_range, text_for_tree_sitter_node,
+    tree_sitter_node_to_lsp_range,
+};
 use anyhow::Result;
 use lsp_types::{
     Hover, HoverContents, HoverParams, InlayHintLabel, MarkupContent, MarkupKind, Range,
@@ -14,51 +16,20 @@ pub(crate) fn hover(
     snapshot: LspServerStateSnapshot,
     params: HoverParams,
 ) -> Result<Option<Hover>> {
-    let uri = match params
-        .text_document_position_params
-        .text_document
-        .uri
-        .to_file_path()
-    {
-        Ok(path) => path,
-        Err(_) => {
-            tracing::debug!("Failed to convert URI to file path");
+    let uri = &params.text_document_position_params.text_document.uri;
+
+    let position = params.text_document_position_params.position;
+
+    let (tree, doc) = match snapshot.tree_and_document_for_uri(uri) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::debug!("Hover: failed to get tree/doc for uri: {e}");
             return Ok(None);
         }
     };
+    let content = doc.content.clone();
 
-    let line = params.text_document_position_params.position.line;
-    let char = params.text_document_position_params.position.character;
-
-    let forest = snapshot.forest;
-    let tree = match forest.get(&uri) {
-        Some(tree) => tree,
-        None => {
-            tracing::warn!("Tree not found in forest: {:?}", uri);
-            return Ok(None);
-        }
-    };
-
-    let content = match snapshot.open_docs.get(&uri) {
-        Some(doc) => doc.content.clone(),
-        None => {
-            tracing::warn!("Document not found in open_docs: {:?}", uri);
-            return Ok(None);
-        }
-    };
-
-    let start = tree_sitter::Point {
-        row: line as usize,
-        column: if char == 0 {
-            char as usize
-        } else {
-            char as usize - 1
-        },
-    };
-    let end = tree_sitter::Point {
-        row: line as usize,
-        column: char as usize,
-    };
+    let (start, end) = lsp_position_to_tree_sitter_point_range(&content, position)?;
 
     let Some(node) = tree
         .root_node()
@@ -92,23 +63,17 @@ pub(crate) fn hover(
     }
 
     let hover_text = sections.join("\n\n");
-    let range = Range {
-        start: lsp_types::Position::new(
-            account_node.start_position().row as u32,
-            account_node.start_position().column as u32,
-        ),
-        end: lsp_types::Position::new(
-            account_node.end_position().row as u32,
-            account_node.end_position().column as u32,
-        ),
-    };
+    let range = tree_sitter_node_to_lsp_range(&content, &account_node);
 
     Ok(Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
             value: hover_text,
         }),
-        range: Some(range),
+        range: Some(Range {
+            start: range.start,
+            end: range.end,
+        }),
     }))
 }
 

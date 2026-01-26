@@ -5,7 +5,6 @@
 /// 2. Transaction totals - displays total when transaction doesn't balance
 use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::text_for_tree_sitter_node;
-use crate::utils::ToFilePath;
 use anyhow::{Context, Result};
 use lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams, Position};
 use std::collections::HashMap;
@@ -85,19 +84,10 @@ pub(crate) fn inlay_hints(
     params: InlayHintParams,
 ) -> Result<Option<Vec<InlayHint>>> {
     let uri = &params.text_document.uri;
-    let file_path = uri
-        .to_file_path()
-        .map_err(|_| anyhow::anyhow!("Invalid file path"))?;
 
-    // Get the tree and document content
-    let tree = snapshot
-        .forest
-        .get(&file_path)
-        .context("File not found in forest")?;
-    let doc = snapshot
-        .open_docs
-        .get(&file_path)
-        .context("Document not found")?;
+    let (tree, doc) = snapshot
+        .tree_and_document_for_uri(uri)
+        .context("Failed to get tree/document for inlay hints")?;
     let content = &doc.content;
     let content_str = content.to_string();
     let content_bytes = content_str.as_bytes();
