@@ -1,20 +1,22 @@
 use crate::beancount_data::get_unified_query;
 use crate::document::Document;
 use crate::server::LspServerStateSnapshot;
-use crate::treesitter_utils::text_for_tree_sitter_node;
-use crate::utils::ToFilePath;
+use crate::treesitter_utils::{
+    lsp_position_to_tree_sitter_point_range, text_for_tree_sitter_node,
+    tree_sitter_node_to_lsp_range,
+};
+use crate::utils::file_path_to_uri;
+use anyhow::Context;
 use anyhow::Result;
-use anyhow::{Context, anyhow};
 use lsp_types::GotoDefinitionResponse;
 use lsp_types::Location;
+use ropey::Rope;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::NodeKind;
 use tree_sitter_beancount::tree_sitter;
-use url::Url;
 
 /// Provider function for `textDocument/definition`.
 pub(crate) fn definition(
@@ -22,30 +24,15 @@ pub(crate) fn definition(
     params: lsp_types::GotoDefinitionParams,
 ) -> Result<Option<GotoDefinitionResponse>> {
     let doc_uri = &params.text_document_position_params.text_document.uri;
-    let uri = doc_uri.to_file_path().map_err(|_| {
-        anyhow!(
-            "failed to convert document URI to file path for definition: {}",
-            doc_uri.as_str()
-        )
-    })?;
-    let line = params.text_document_position_params.position.line;
-    let char = params.text_document_position_params.position.character;
-    let forest = snapshot.forest;
-    let start = tree_sitter::Point {
-        row: line as usize,
-        column: if char == 0 {
-            char as usize
-        } else {
-            char as usize - 1
-        },
-    };
-    let end = tree_sitter::Point {
-        row: line as usize,
-        column: char as usize,
-    };
-    let tree = forest
-        .get(&uri)
-        .with_context(|| format!("missing syntax tree for file: {}", uri.display()))?;
+    let position = params.text_document_position_params.position;
+
+    let (tree, doc) = snapshot
+        .tree_and_document_for_uri(doc_uri)
+        .context("Failed to get tree/document for definition")?;
+    let content = doc.content.clone();
+
+    let (start, end) = lsp_position_to_tree_sitter_point_range(&content, position)?;
+
     let Some(node) = tree
         .root_node()
         .named_descendant_for_point_range(start, end)
@@ -57,15 +44,8 @@ pub(crate) fn definition(
         return Ok(None);
     }
 
-    let content = snapshot
-        .open_docs
-        .get(&uri)
-        .with_context(|| format!("missing open document content for file: {}", uri.display()))?
-        .content
-        .clone();
     let node_text = text_for_tree_sitter_node(&content, &node);
-    let open_docs = snapshot.open_docs;
-    let locs = find_account_open_definitions(&forest, &open_docs, node_text);
+    let locs = find_account_open_definitions(&snapshot.forest, &snapshot.open_docs, node_text);
     if locs.is_empty() {
         return Ok(None);
     }
@@ -88,17 +68,23 @@ fn find_account_open_definitions(
                     return vec![];
                 }
             };
-            let text = if let Some(doc) = open_docs.get(url) {
-                doc.text().to_string()
+
+            let (text, rope) = if let Some(doc) = open_docs.get(url) {
+                (doc.text().to_string(), doc.content.clone())
             } else {
-                match std::fs::read_to_string(url) {
-                    Ok(content) => content,
-                    Err(_) => {
-                        tracing::debug!("Failed to read file: {:?}", url);
-                        return vec![];
-                    }
-                }
+                let Ok(content) = std::fs::read_to_string(url) else {
+                    tracing::debug!("Failed to read file: {:?}", url);
+                    return vec![];
+                };
+                let rope = Rope::from_str(&content);
+                (content, rope)
             };
+
+            let Ok(uri) = file_path_to_uri(url) else {
+                tracing::debug!("Failed to convert file path to URI: {}", url.display());
+                return vec![];
+            };
+
             let source = text.as_bytes();
             let mut query_cursor = tree_sitter::QueryCursor::new();
             let mut matches = query_cursor.matches(query, tree.root_node(), source);
@@ -113,34 +99,14 @@ fn find_account_open_definitions(
                         }
                     };
                     if m_text == node_text {
-                        results.push((url.clone(), node));
+                        results.push(Location::new(
+                            uri.clone(),
+                            tree_sitter_node_to_lsp_range(&rope, &node),
+                        ));
                     }
                 }
             }
             results
-        })
-        .filter_map(|(url, node): (PathBuf, tree_sitter::Node)| {
-            let range = node.range();
-            let uri = Url::from_file_path(&url)
-                .ok()
-                .and_then(|u| lsp_types::Uri::from_str(u.as_ref()).ok());
-            let Some(uri) = uri else {
-                tracing::debug!("Failed to convert file path to URI: {}", url.display());
-                return None;
-            };
-            Some(Location::new(
-                uri,
-                lsp_types::Range {
-                    start: lsp_types::Position {
-                        line: range.start_point.row as u32,
-                        character: range.start_point.column as u32,
-                    },
-                    end: lsp_types::Position {
-                        line: range.end_point.row as u32,
-                        character: range.end_point.column as u32,
-                    },
-                },
-            ))
         })
         .collect::<Vec<_>>()
 }
@@ -187,10 +153,7 @@ mod tests {
         assert_eq!(loc.range.end.line, 0);
         assert_eq!(loc.range.end.character, 27);
 
-        let expected_uri = Url::from_file_path(&path)
-            .ok()
-            .and_then(|u| lsp_types::Uri::from_str(u.as_ref()).ok())
-            .unwrap();
+        let expected_uri = crate::utils::file_path_to_uri(&path).unwrap();
         assert_eq!(loc.uri, expected_uri);
     }
 

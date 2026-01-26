@@ -1,5 +1,4 @@
 use crate::server::LspServerStateSnapshot;
-use crate::utils::ToFilePath;
 use anyhow::Result;
 use tracing::debug;
 use tree_sitter::StreamingIterator;
@@ -113,13 +112,13 @@ pub(crate) fn formatting(
     );
 
     // Get document and tree from the snapshot
-    let (doc, tree) = match get_document_and_tree(&snapshot, &params.text_document.uri) {
-        Some((doc, tree)) => {
+    let (tree, doc) = match snapshot.tree_and_document_for_uri(&params.text_document.uri) {
+        Ok(v) => {
             tracing::debug!("Found document and parsed tree");
-            (doc, tree)
+            v
         }
-        None => {
-            tracing::warn!("Could not find document or tree for formatting");
+        Err(e) => {
+            tracing::warn!("Could not find document or tree for formatting: {e}");
             return Ok(None);
         }
     };
@@ -175,38 +174,6 @@ pub(crate) fn formatting(
         final_text_edits.len()
     );
     Ok(Some(final_text_edits))
-}
-
-/// Gets the document and tree from the snapshot, with error handling
-fn get_document_and_tree<'a>(
-    snapshot: &'a LspServerStateSnapshot,
-    uri: &lsp_types::Uri,
-) -> Option<(&'a crate::document::Document, &'a tree_sitter::Tree)> {
-    let path = match uri.to_file_path() {
-        Ok(path) => path,
-        Err(_) => {
-            debug!("Failed to convert URI to file path: {:?}", uri);
-            return None;
-        }
-    };
-
-    let tree = match snapshot.forest.get(&path) {
-        Some(tree) => tree,
-        None => {
-            debug!("No tree found for URI: {:?}", uri);
-            return None;
-        }
-    };
-
-    let doc = match snapshot.open_docs.get(&path) {
-        Some(doc) => doc,
-        None => {
-            debug!("No document found for URI: {:?}", uri);
-            return None;
-        }
-    };
-
-    Some((doc, tree))
 }
 
 /// Extracts formateable lines from the document using tree-sitter
