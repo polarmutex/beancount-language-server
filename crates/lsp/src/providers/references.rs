@@ -1,9 +1,13 @@
 use crate::document::Document;
 use crate::server::LspServerStateSnapshot;
-use crate::treesitter_utils::text_for_tree_sitter_node;
-use crate::utils::ToFilePath;
+use crate::treesitter_utils::{
+    lsp_position_to_tree_sitter_point_range, text_for_tree_sitter_node,
+    tree_sitter_node_to_lsp_range,
+};
+use crate::utils::file_path_to_uri;
 use anyhow::{Context, Result};
 use lsp_types::Location;
+use ropey::Rope;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -11,58 +15,51 @@ use std::sync::Arc;
 use tracing::debug;
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::tree_sitter;
-use url::Url;
+
+fn node_text_at_position(
+    tree: &tree_sitter::Tree,
+    content: &Rope,
+    position: lsp_types::Position,
+) -> Result<Option<String>> {
+    let (start, end) = lsp_position_to_tree_sitter_point_range(content, position)?;
+    let Some(node) = tree
+        .root_node()
+        .named_descendant_for_point_range(start, end)
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(text_for_tree_sitter_node(content, &node)))
+}
 
 /// Provider function for `textDocument/references`.
 pub(crate) fn references(
     snapshot: LspServerStateSnapshot,
     params: lsp_types::ReferenceParams,
 ) -> Result<Option<Vec<lsp_types::Location>>> {
-    let uri = match params
-        .text_document_position
-        .text_document
-        .uri
-        .to_file_path()
-    {
-        Ok(path) => path,
-        Err(_) => {
-            debug!("Failed to convert URI to file path");
+    let uri = &params.text_document_position.text_document.uri;
+    let (tree, doc) = match snapshot.tree_and_document_for_uri(uri) {
+        Ok(v) => v,
+        Err(e) => {
+            debug!("References: failed to get tree/document for uri: {e}");
             return Ok(None);
         }
     };
-    let line = params.text_document_position.position.line;
-    let char = params.text_document_position.position.character;
-    let forest = snapshot.forest;
-    let start = tree_sitter::Point {
-        row: line as usize,
-        column: if char == 0 {
-            char as usize
-        } else {
-            char as usize - 1
-        },
-    };
-    let end = tree_sitter::Point {
-        row: line as usize,
-        column: char as usize,
-    };
-    let Some(node) = forest
-        .get(&uri)
-        .with_context(|| format!("missing syntax tree for file: {}", uri.display()))?
-        .root_node()
-        .named_descendant_for_point_range(start, end)
+    let content = doc.content.clone();
+
+    // Keep behavior consistent: references only works on open documents.
+    let position = params.text_document_position.position;
+    let Some(node_text) = node_text_at_position(tree, &content, position).with_context(|| {
+        format!(
+            "failed to get node text at position for uri: {}",
+            uri.as_str()
+        )
+    })?
     else {
         return Ok(None);
     };
-    let content = match snapshot.open_docs.get(&uri) {
-        Some(doc) => doc.content.clone(),
-        None => {
-            debug!("Document not found in open_docs: {:?}", uri);
-            return Ok(None);
-        }
-    };
-    let node_text = text_for_tree_sitter_node(&content, &node);
-    let open_docs = snapshot.open_docs;
-    let locs = find_references(&forest, &open_docs, node_text);
+
+    let locs = find_references(&snapshot.forest, &snapshot.open_docs, &node_text);
     Ok(Some(locs))
 }
 
@@ -72,59 +69,28 @@ pub(crate) fn rename(
     snapshot: LspServerStateSnapshot,
     params: lsp_types::RenameParams,
 ) -> Result<Option<lsp_types::WorkspaceEdit>> {
-    let uri = match params
-        .text_document_position
-        .text_document
-        .uri
-        .to_file_path()
-    {
-        Ok(path) => path,
-        Err(_) => {
-            debug!("Failed to convert URI to file path");
+    let uri = &params.text_document_position.text_document.uri;
+    let (tree, doc) = match snapshot.tree_and_document_for_uri(uri) {
+        Ok(v) => v,
+        Err(e) => {
+            debug!("Rename: failed to get tree/document for uri: {e}");
             return Ok(None);
         }
     };
-    let line = &params.text_document_position.position.line;
-    let char = &params.text_document_position.position.character;
-    let forest = snapshot.forest;
-    let _tree = match forest.get(&uri) {
-        Some(tree) => tree,
-        None => {
-            debug!("Tree not found in forest: {:?}", uri);
-            return Ok(None);
-        }
-    };
-    let open_docs = snapshot.open_docs;
-    let doc = match open_docs.get(&uri) {
-        Some(doc) => doc,
-        None => {
-            debug!("Document not found in open_docs: {:?}", uri);
-            return Ok(None);
-        }
-    };
-    let content = doc.clone().content;
-    let start = tree_sitter::Point {
-        row: *line as usize,
-        column: if *char == 0 {
-            *char as usize
-        } else {
-            *char as usize - 1
-        },
-    };
-    let end = tree_sitter::Point {
-        row: *line as usize,
-        column: *char as usize,
-    };
-    let Some(node) = forest
-        .get(&uri)
-        .expect("to have tree found")
-        .root_node()
-        .named_descendant_for_point_range(start, end)
+
+    let content = doc.content.clone();
+    let position = params.text_document_position.position;
+    let Some(node_text) = node_text_at_position(tree, &content, position).with_context(|| {
+        format!(
+            "failed to get node text at position for uri: {}",
+            uri.as_str()
+        )
+    })?
     else {
         return Ok(None);
     };
-    let node_text = text_for_tree_sitter_node(&content, &node);
-    let locs = find_references(&forest, &open_docs, node_text);
+
+    let locs = find_references(&snapshot.forest, &snapshot.open_docs, &node_text);
     let new_name = params.new_name;
 
     // Group locations by URI string to avoid mutable key type warning
@@ -163,7 +129,7 @@ pub(crate) fn rename(
 fn find_references(
     forest: &HashMap<PathBuf, Arc<tree_sitter::Tree>>,
     open_docs: &HashMap<PathBuf, Document>,
-    node_text: String,
+    node_text: &str,
 ) -> Vec<lsp_types::Location> {
     forest
         .iter()
@@ -178,51 +144,44 @@ fn find_references(
             let capture_account = query
                 .capture_index_for_name("account")
                 .expect("account should be captured");
-            let text = if let Some(doc) = open_docs.get(url) {
-                doc.text().to_string()
+
+            let (rope, text) = if let Some(doc) = open_docs.get(url) {
+                let rope = doc.content.clone();
+                let text = rope.to_string();
+                (rope, text)
             } else {
                 match std::fs::read_to_string(url) {
-                    Ok(content) => content,
+                    Ok(content) => {
+                        let rope = Rope::from_str(&content);
+                        (rope, content)
+                    }
                     Err(_) => {
-                        // If file read fails, return empty results
                         debug!("Failed to read file: {:?}", url);
                         return vec![];
                     }
                 }
             };
+
             let source = text.as_bytes();
-            {
-                let mut query_cursor = tree_sitter::QueryCursor::new();
-                let mut matches = query_cursor.matches(&query, tree.root_node(), source);
-                let mut results = Vec::new();
-                while let Some(m) = matches.next() {
-                    if let Some(node) = m.nodes_for_capture_index(capture_account).next() {
-                        let m_text = node.utf8_text(source).expect("");
-                        if m_text == node_text {
-                            results.push((url.clone(), node));
-                        }
+
+            let mut query_cursor = tree_sitter::QueryCursor::new();
+            let mut matches = query_cursor.matches(&query, tree.root_node(), source);
+            let mut results = Vec::new();
+            while let Some(m) = matches.next() {
+                if let Some(node) = m.nodes_for_capture_index(capture_account).next() {
+                    let m_text = node.utf8_text(source).expect("");
+                    if m_text == node_text {
+                        results.push((url.clone(), rope.clone(), node));
                     }
                 }
-                results
             }
+
+            results
         })
-        .filter_map(|(url, node): (PathBuf, tree_sitter::Node)| {
-            let range = node.range();
-            let file_url = Url::from_file_path(&url).ok()?;
-            let uri = lsp_types::Uri::from_str(file_url.as_ref()).ok()?;
-            Some(Location::new(
-                uri,
-                lsp_types::Range {
-                    start: lsp_types::Position {
-                        line: range.start_point.row as u32,
-                        character: range.start_point.column as u32,
-                    },
-                    end: lsp_types::Position {
-                        line: range.end_point.row as u32,
-                        character: range.end_point.column as u32,
-                    },
-                },
-            ))
+        .filter_map(|(url, rope, node): (PathBuf, Rope, tree_sitter::Node)| {
+            let uri = file_path_to_uri(&url).ok()?;
+            let range = tree_sitter_node_to_lsp_range(&rope, &node);
+            Some(Location::new(uri, range))
         })
         .collect::<Vec<_>>()
 }
@@ -293,7 +252,7 @@ mod tests {
         let locs = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
-            "Assets:Checking".to_string(),
+            "Assets:Checking",
         );
 
         assert_eq!(locs.len(), 2); // open + posting
@@ -312,7 +271,7 @@ mod tests {
         let locs = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
-            "Assets:Nonexistent".to_string(),
+            "Assets:Nonexistent",
         );
 
         assert_eq!(locs.len(), 0);
@@ -360,7 +319,7 @@ mod tests {
             },
         );
 
-        let locs = find_references(&forest, &open_docs, "Assets:Bank".to_string());
+        let locs = find_references(&forest, &open_docs, "Assets:Bank");
 
         assert_eq!(locs.len(), 3); // open in file1 + posting in file1 + posting in file2
     }
@@ -375,8 +334,7 @@ mod tests {
 "#;
         let state = TestState::new(content).unwrap();
 
-        let uri =
-            lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref()).unwrap();
+        let uri = file_path_to_uri(&state.path).unwrap();
         let params = lsp_types::ReferenceParams {
             text_document_position: lsp_types::TextDocumentPositionParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri },
@@ -409,8 +367,7 @@ mod tests {
 "#;
         let state = TestState::new(content).unwrap();
 
-        let uri =
-            lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref()).unwrap();
+        let uri = file_path_to_uri(&state.path).unwrap();
         let params = lsp_types::RenameParams {
             text_document_position: lsp_types::TextDocumentPositionParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -444,8 +401,7 @@ mod tests {
 "#;
         let state = TestState::new(content).unwrap();
 
-        let uri =
-            lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref()).unwrap();
+        let uri = file_path_to_uri(&state.path).unwrap();
 
         // Test at line 1 (open directive)
         let params1 = lsp_types::ReferenceParams {
@@ -482,14 +438,14 @@ mod tests {
         let locs_food = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
-            "Expenses:Food".to_string(),
+            "Expenses:Food",
         );
         assert_eq!(locs_food.len(), 2); // open + posting
 
         let locs_cash = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
-            "Assets:Cash".to_string(),
+            "Assets:Cash",
         );
         assert_eq!(locs_cash.len(), 2); // open + posting
     }

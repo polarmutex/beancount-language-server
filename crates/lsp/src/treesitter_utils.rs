@@ -1,5 +1,38 @@
 use tree_sitter_beancount::tree_sitter;
 
+/// Convert an LSP UTF-16 position into a tree-sitter `Point` (byte-based column).
+pub fn lsp_position_to_tree_sitter_point(
+    source: &ropey::Rope,
+    position: lsp_types::Position,
+) -> anyhow::Result<tree_sitter::Point> {
+    Ok(lsp_position_to_core(source, position)?.point)
+}
+
+pub fn lsp_position_to_tree_sitter_point_range(
+    source: &ropey::Rope,
+    position: lsp_types::Position,
+) -> anyhow::Result<(tree_sitter::Point, tree_sitter::Point)> {
+    // Use a 1-character-wide point range (pos-1..pos) so token-boundary cursors
+    // still resolve to the intended node.
+    let start_pos = lsp_types::Position {
+        line: position.line,
+        character: position.character.saturating_sub(1),
+    };
+
+    let start = lsp_position_to_tree_sitter_point(source, start_pos)?;
+    let end = lsp_position_to_tree_sitter_point(source, position)?;
+    Ok((start, end))
+}
+
+pub fn tree_sitter_node_to_lsp_range(
+    source: &ropey::Rope,
+    node: &tree_sitter::Node,
+) -> lsp_types::Range {
+    let start = byte_to_lsp_position(source, node.start_byte());
+    let end = byte_to_lsp_position(source, node.end_byte());
+    lsp_types::Range { start, end }
+}
+
 pub fn lsp_textdocchange_to_ts_inputedit(
     source: &ropey::Rope,
     change: &lsp_types::TextDocumentContentChangeEvent,
@@ -77,26 +110,27 @@ fn lsp_position_to_core(
 ) -> anyhow::Result<TextPosition> {
     let row_idx = position.line as usize;
 
-    let col_code_idx = position.character as usize;
+    // LSP `character` is a *line-relative* UTF-16 code-unit offset.
+    let col_utf16_cu_idx = position.character as usize;
 
+    // Convert the *line-relative* UTF-16 column into an absolute UTF-16 index.
     let row_char_idx = source.line_to_char(row_idx);
-    let col_char_idx = source.utf16_cu_to_char(col_code_idx);
+    let row_utf16_cu_idx = source.char_to_utf16_cu(row_char_idx);
+    let abs_utf16_cu_idx = row_utf16_cu_idx + col_utf16_cu_idx;
 
+    // Convert absolute UTF-16 index -> absolute char index -> absolute byte index.
+    let abs_char_idx = source.utf16_cu_to_char(abs_utf16_cu_idx);
+    let abs_byte_idx = source.char_to_byte(abs_char_idx);
+
+    // tree-sitter Point columns are byte offsets from the *start of the row*.
     let row_byte_idx = source.line_to_byte(row_idx);
-    let col_byte_idx = source.char_to_byte(col_char_idx);
-
-    let row_code_idx = source.char_to_utf16_cu(row_char_idx);
-
-    let point = {
-        let row = position.line as usize;
-        let col = u32::try_from(col_byte_idx)? as usize;
-        tree_sitter::Point::new(row, col)
-    };
+    let col_byte_offset = abs_byte_idx.saturating_sub(row_byte_idx);
+    let point = tree_sitter::Point::new(row_idx, col_byte_offset);
 
     Ok(TextPosition {
-        char: u32::try_from(row_char_idx + col_char_idx)?,
-        byte: u32::try_from(row_byte_idx + col_byte_idx)?,
-        code: u32::try_from(row_code_idx + col_code_idx)?,
+        char: u32::try_from(abs_char_idx)?,
+        byte: u32::try_from(abs_byte_idx)?,
+        code: u32::try_from(abs_utf16_cu_idx)?,
         point,
     })
 }
@@ -305,6 +339,21 @@ mod tests {
         let core_pos = lsp_position_to_core(&source, pos).unwrap();
         assert_eq!(core_pos.byte, 9); // "Hello\n" is 6 bytes + 3
         assert_eq!(core_pos.point, Point::new(1, 3)); // Point column is byte offset from line start
+    }
+
+    #[test]
+    fn test_lsp_position_to_core_second_line_with_utf8_in_first_line() {
+        // First line contains multibyte UTF-8, which must not affect addressing on the next line.
+        let source = Rope::from("财财\nABC");
+
+        // On the second line, after "A" (column 1 in UTF-16), byte offset should be 1.
+        let pos = Position::new(1, 1);
+        let core_pos = lsp_position_to_core(&source, pos).unwrap();
+        assert_eq!(core_pos.point, Point::new(1, 1));
+
+        // The absolute byte index should be: bytes("财财\n") + 1.
+        let prefix_len = "财财\n".len();
+        assert_eq!(core_pos.byte as usize, prefix_len + 1);
     }
 
     #[test]

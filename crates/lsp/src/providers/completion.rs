@@ -1,6 +1,6 @@
 use crate::beancount_data::BeancountData;
 use crate::server::LspServerStateSnapshot;
-use crate::utils::ToFilePath;
+use crate::treesitter_utils::lsp_position_to_tree_sitter_point;
 use anyhow::Result;
 use chrono::Datelike;
 use lsp_types::{CompletionItem, CompletionItemKind, Position, Range, TextEdit};
@@ -90,28 +90,11 @@ pub(crate) fn completion(
         cursor.position.line, cursor.position.character
     );
 
-    // Get file path from URI
-    let uri = cursor
-        .text_document
-        .uri
-        .to_file_path()
-        .map_err(|_| anyhow::anyhow!("Failed to convert URI to file path"))?;
-
-    // Get parsed tree and document
-    let tree = snapshot
-        .forest
-        .get(&uri)
-        .ok_or_else(|| anyhow::anyhow!("No parsed tree found"))?;
-    let doc = snapshot
-        .open_docs
-        .get(&uri)
-        .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
+    // Get parsed tree and document (snapshot helper supports Uri directly)
+    let (tree, doc) = snapshot.tree_and_document_for_uri(&cursor.text_document.uri)?;
 
     let content = &doc.content;
-    let cursor_point = Point {
-        row: cursor.position.line as usize,
-        column: cursor.position.character as usize,
-    };
+    let cursor_point = lsp_position_to_tree_sitter_point(content, cursor.position)?;
 
     // Determine completion context using left-context-aware analysis
     let context = determine_completion_context(tree, content, cursor_point, trigger_character);

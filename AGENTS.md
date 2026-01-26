@@ -188,3 +188,7 @@ Supports multiple editors:
 - **beancount** Python package (for diagnostics)
 - **tree-sitter** grammar for parsing
 - Standard Rust toolchain
+
+## Gotcha
+
+The lsp specifies text positions (line, character) using UTF-16 code units, but beancount source files are UTF-8. so when converting position, you should always do a multiple bytes aware converting.
