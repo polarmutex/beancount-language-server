@@ -11,25 +11,80 @@ use ropey::Rope;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tracing::debug;
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::tree_sitter;
 
-fn node_text_at_position(
-    tree: &tree_sitter::Tree,
+fn cached_account_query() -> &'static (tree_sitter::Query, u32) {
+    static ACCOUNT_QUERY: OnceLock<(tree_sitter::Query, u32)> = OnceLock::new();
+    ACCOUNT_QUERY.get_or_init(|| {
+        let query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), "(account)@account")
+                .expect("account query should compile");
+        let capture_index = query
+            .capture_index_for_name("account")
+            .expect("account should be captured");
+        (query, capture_index)
+    })
+}
+
+fn cached_tag_query() -> &'static (tree_sitter::Query, u32) {
+    static TAG_QUERY: OnceLock<(tree_sitter::Query, u32)> = OnceLock::new();
+    TAG_QUERY.get_or_init(|| {
+        let query = tree_sitter::Query::new(&tree_sitter_beancount::language(), "(tag)@tag")
+            .expect("tag query should compile");
+        let capture_index = query
+            .capture_index_for_name("tag")
+            .expect("tag should be captured");
+        (query, capture_index)
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReferenceKind {
+    Account,
+    Tag,
+}
+
+fn reference_node_at_position<'a>(
+    tree: &'a tree_sitter::Tree,
     content: &Rope,
     position: lsp_types::Position,
-) -> Result<Option<String>> {
+) -> Result<Option<(ReferenceKind, tree_sitter::Node<'a>)>> {
     let (start, end) = lsp_position_to_tree_sitter_point_range(content, position)?;
-    let Some(node) = tree
+    let Some(mut node) = tree
         .root_node()
         .named_descendant_for_point_range(start, end)
     else {
         return Ok(None);
     };
 
-    Ok(Some(text_for_tree_sitter_node(content, &node)))
+    // The cursor may land on a child node; walk up until we find a referenceable node.
+    loop {
+        match node.kind() {
+            "account" => return Ok(Some((ReferenceKind::Account, node))),
+            "tag" => return Ok(Some((ReferenceKind::Tag, node))),
+            _ => {}
+        }
+
+        if let Some(parent) = node.parent() {
+            node = parent;
+            continue;
+        }
+        return Ok(None);
+    }
+}
+
+fn reference_text_at_position(
+    tree: &tree_sitter::Tree,
+    content: &Rope,
+    position: lsp_types::Position,
+) -> Result<Option<(ReferenceKind, String)>> {
+    let Some((kind, node)) = reference_node_at_position(tree, content, position)? else {
+        return Ok(None);
+    };
+    Ok(Some((kind, text_for_tree_sitter_node(content, &node))))
 }
 
 /// Provider function for `textDocument/references`.
@@ -49,17 +104,18 @@ pub(crate) fn references(
 
     // Keep behavior consistent: references only works on open documents.
     let position = params.text_document_position.position;
-    let Some(node_text) = node_text_at_position(tree, &content, position).with_context(|| {
-        format!(
-            "failed to get node text at position for uri: {}",
-            uri.as_str()
-        )
-    })?
+    let Some((kind, node_text)) = reference_text_at_position(tree, &content, position)
+        .with_context(|| {
+            format!(
+                "failed to get node text at position for uri: {}",
+                uri.as_str()
+            )
+        })?
     else {
         return Ok(None);
     };
 
-    let locs = find_references(&snapshot.forest, &snapshot.open_docs, &node_text);
+    let locs = find_references(&snapshot.forest, &snapshot.open_docs, kind, &node_text);
     Ok(Some(locs))
 }
 
@@ -80,17 +136,18 @@ pub(crate) fn rename(
 
     let content = doc.content.clone();
     let position = params.text_document_position.position;
-    let Some(node_text) = node_text_at_position(tree, &content, position).with_context(|| {
-        format!(
-            "failed to get node text at position for uri: {}",
-            uri.as_str()
-        )
-    })?
+    let Some((kind, node_text)) = reference_text_at_position(tree, &content, position)
+        .with_context(|| {
+            format!(
+                "failed to get node text at position for uri: {}",
+                uri.as_str()
+            )
+        })?
     else {
         return Ok(None);
     };
 
-    let locs = find_references(&snapshot.forest, &snapshot.open_docs, &node_text);
+    let locs = find_references(&snapshot.forest, &snapshot.open_docs, kind, &node_text);
     let new_name = params.new_name;
 
     // Group locations by URI string to avoid mutable key type warning
@@ -129,21 +186,16 @@ pub(crate) fn rename(
 fn find_references(
     forest: &HashMap<PathBuf, Arc<tree_sitter::Tree>>,
     open_docs: &HashMap<PathBuf, Document>,
+    kind: ReferenceKind,
     node_text: &str,
 ) -> Vec<lsp_types::Location> {
     forest
         .iter()
         .flat_map(|(url, tree)| {
-            let query = match tree_sitter::Query::new(
-                &tree_sitter_beancount::language(),
-                "(account)@account",
-            ) {
-                Ok(q) => q,
-                Err(_e) => return vec![],
+            let (query, capture_index) = match kind {
+                ReferenceKind::Account => cached_account_query(),
+                ReferenceKind::Tag => cached_tag_query(),
             };
-            let capture_account = query
-                .capture_index_for_name("account")
-                .expect("account should be captured");
 
             let (rope, text) = if let Some(doc) = open_docs.get(url) {
                 let rope = doc.content.clone();
@@ -165,10 +217,10 @@ fn find_references(
             let source = text.as_bytes();
 
             let mut query_cursor = tree_sitter::QueryCursor::new();
-            let mut matches = query_cursor.matches(&query, tree.root_node(), source);
+            let mut matches = query_cursor.matches(query, tree.root_node(), source);
             let mut results = Vec::new();
             while let Some(m) = matches.next() {
-                if let Some(node) = m.nodes_for_capture_index(capture_account).next() {
+                if let Some(node) = m.nodes_for_capture_index(*capture_index).next() {
                     let m_text = node.utf8_text(source).expect("");
                     if m_text == node_text {
                         results.push((url.clone(), rope.clone(), node));
@@ -252,6 +304,7 @@ mod tests {
         let locs = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
+            ReferenceKind::Account,
             "Assets:Checking",
         );
 
@@ -271,6 +324,7 @@ mod tests {
         let locs = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
+            ReferenceKind::Account,
             "Assets:Nonexistent",
         );
 
@@ -319,7 +373,7 @@ mod tests {
             },
         );
 
-        let locs = find_references(&forest, &open_docs, "Assets:Bank");
+        let locs = find_references(&forest, &open_docs, ReferenceKind::Account, "Assets:Bank");
 
         assert_eq!(locs.len(), 3); // open in file1 + posting in file1 + posting in file2
     }
@@ -438,6 +492,7 @@ mod tests {
         let locs_food = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
+            ReferenceKind::Account,
             "Expenses:Food",
         );
         assert_eq!(locs_food.len(), 2); // open + posting
@@ -445,8 +500,139 @@ mod tests {
         let locs_cash = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
+            ReferenceKind::Account,
             "Assets:Cash",
         );
         assert_eq!(locs_cash.len(), 2); // open + posting
+    }
+
+    #[test]
+    fn test_find_references_single_tag() {
+        let content = r#"
+2024-01-02 * "Test" #Groceries
+  Assets:Cash  -10.00 USD
+  Expenses:Food  10.00 USD
+2024-01-03 * "Another" #Groceries
+  Assets:Cash  -5.00 USD
+  Expenses:Food  5.00 USD
+"#;
+        let state = TestState::new(content).unwrap();
+        let locs = find_references(
+            &state.snapshot.forest,
+            &state.snapshot.open_docs,
+            ReferenceKind::Tag,
+            "#Groceries",
+        );
+
+        assert_eq!(locs.len(), 2);
+    }
+
+    #[test]
+    fn test_references_handler_for_tag() {
+        let content = r#"
+2024-01-02 * "Test" #Groceries
+  Assets:Cash  -10.00 USD
+  Expenses:Food  10.00 USD
+2024-01-03 * "Another" #Groceries
+  Assets:Cash  -5.00 USD
+  Expenses:Food  5.00 USD
+"#;
+        let state = TestState::new(content).unwrap();
+        let uri = file_path_to_uri(&state.path).unwrap();
+
+        // Cursor somewhere inside "#Groceries".
+        let params = lsp_types::ReferenceParams {
+            text_document_position: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                position: lsp_types::Position {
+                    line: 1,
+                    character: 22,
+                },
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: lsp_types::ReferenceContext {
+                include_declaration: true,
+            },
+        };
+
+        let result = references(state.snapshot, params).unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 2);
+    }
+
+    #[test]
+    #[allow(clippy::mutable_key_type)]
+    fn test_rename_handler_for_tag() {
+        let content = r#"
+2024-01-02 * "Test" #Groceries
+  Assets:Cash  -10.00 USD
+  Expenses:Food  10.00 USD
+2024-01-03 * "Another" #Groceries
+  Assets:Cash  -5.00 USD
+  Expenses:Food  5.00 USD
+"#;
+        let state = TestState::new(content).unwrap();
+
+        let uri = file_path_to_uri(&state.path).unwrap();
+        let params = lsp_types::RenameParams {
+            text_document_position: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: lsp_types::Position {
+                    line: 1,
+                    character: 22,
+                },
+            },
+            new_name: "#Food".to_string(),
+            work_done_progress_params: Default::default(),
+        };
+
+        let result = rename(state.snapshot, params).unwrap();
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        assert!(edit.changes.is_some());
+        let changes = edit.changes.unwrap();
+        let edits = changes.get(&uri).unwrap();
+        assert_eq!(edits.len(), 2);
+        assert_eq!(edits[0].new_text, "#Food");
+        assert_eq!(edits[1].new_text, "#Food");
+    }
+
+    #[test]
+    fn test_references_tag_cursor_at_end_of_line_utf16() {
+        let content = r#"
+2025-07-31 * "财财财-财财财财财财财财财财财财财财财财财财" #credit-cmb-2025-08
+    Liabilities:A:B:C                           -2.50 CNY
+    Expenses:Food
+2025-08-01 * "Second" #credit-cmb-2025-08
+    Liabilities:A:B:C                           -1.00 CNY
+    Expenses:Food
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let uri = file_path_to_uri(&state.path).unwrap();
+
+        // LSP uses UTF-16 code units for character offsets; place the cursor at end-of-line.
+        let first_txn_line = content.lines().nth(1).expect("expected first txn line");
+        let eol_utf16 = first_txn_line.encode_utf16().count() as u32;
+
+        let params = lsp_types::ReferenceParams {
+            text_document_position: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                position: lsp_types::Position {
+                    line: 1,
+                    character: eol_utf16,
+                },
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: lsp_types::ReferenceContext {
+                include_declaration: true,
+            },
+        };
+
+        let result = references(state.snapshot, params).unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 2);
     }
 }
