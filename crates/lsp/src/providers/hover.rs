@@ -1,3 +1,4 @@
+use crate::document::Document;
 use crate::providers::inlay_hints::transaction_inlay_hints;
 use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::{
@@ -8,8 +9,72 @@ use anyhow::Result;
 use lsp_types::{
     Hover, HoverContents, HoverParams, InlayHintLabel, MarkupContent, MarkupKind, Range,
 };
-use std::collections::HashSet;
+use ropey::Rope;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
+use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::{NodeKind, tree_sitter};
+
+static COMMODITY_HOVER_QUERY: OnceLock<(tree_sitter::Query, u32, u32)> = OnceLock::new();
+
+fn commodity_hover_query() -> (&'static tree_sitter::Query, u32, u32) {
+    let cached = COMMODITY_HOVER_QUERY.get_or_init(|| {
+        let query_string = "(commodity (currency) @currency) @commodity";
+        let query = tree_sitter::Query::new(&tree_sitter_beancount::language(), query_string)
+            .expect("Failed to compile commodity hover query");
+        let capture_currency = query
+            .capture_index_for_name("currency")
+            .expect("commodity hover query should have 'currency' capture");
+        let capture_commodity = query
+            .capture_index_for_name("commodity")
+            .expect("commodity hover query should have 'commodity' capture");
+        (query, capture_currency, capture_commodity)
+    });
+    (&cached.0, cached.1, cached.2)
+}
+
+fn find_commodity_directive_for_currency(
+    forest: &HashMap<PathBuf, Arc<tree_sitter::Tree>>,
+    open_docs: &HashMap<PathBuf, Document>,
+    currency: &str,
+) -> Option<String> {
+    let (query, capture_currency, capture_commodity) = commodity_hover_query();
+
+    for (url, tree) in forest {
+        let (text, rope) = if let Some(doc) = open_docs.get(url) {
+            (doc.text().to_string(), doc.content.clone())
+        } else {
+            let Ok(content) = std::fs::read_to_string(url) else {
+                tracing::debug!("Failed to read file: {:?}", url);
+                continue;
+            };
+            let rope = Rope::from_str(&content);
+            (content, rope)
+        };
+
+        let source = text.as_bytes();
+        let mut query_cursor = tree_sitter::QueryCursor::new();
+        let mut matches = query_cursor.matches(query, tree.root_node(), source);
+
+        while let Some(m) = matches.next() {
+            let Some(currency_node) = m.nodes_for_capture_index(capture_currency).next() else {
+                continue;
+            };
+            let Some(commodity_node) = m.nodes_for_capture_index(capture_commodity).next() else {
+                continue;
+            };
+            let Ok(m_text) = currency_node.utf8_text(source) else {
+                continue;
+            };
+            if m_text == currency {
+                return Some(text_for_tree_sitter_node(&rope, &commodity_node));
+            }
+        }
+    }
+
+    None
+}
 
 /// Provider function for `textDocument/hover`.
 pub(crate) fn hover(
@@ -40,30 +105,43 @@ pub(crate) fn hover(
 
     let posting_hint = find_posting_inlay_hint(&content, node);
 
-    let account_node = find_node_of_kind(node, NodeKind::Account);
-    let Some(account_node) = account_node else {
-        return Ok(None);
-    };
-
-    let account_name = text_for_tree_sitter_node(&content, &account_node);
-    let notes = collect_account_notes(&snapshot.beancount_data, &account_name);
-
-    if notes.is_empty() && posting_hint.is_none() {
-        return Ok(None);
-    }
-
     let mut sections = Vec::new();
 
-    if !notes.is_empty() {
-        sections.push(format_account_hover_text(&account_name, &notes));
+    let account_node = find_node_of_kind(node, NodeKind::Account);
+    if let Some(account_node) = account_node {
+        let account_name = text_for_tree_sitter_node(&content, &account_node);
+        let notes = collect_account_notes(&snapshot.beancount_data, &account_name);
+        if !notes.is_empty() {
+            sections.push(format_account_hover_text(&account_name, &notes));
+        }
     }
 
     if let Some(label) = posting_hint {
         sections.push(format_posting_hover_text(&label));
     }
 
+    let currency_node = find_descendant_of_kind(node, NodeKind::Currency);
+    if let Some(currency_node) = currency_node {
+        let currency = text_for_tree_sitter_node(&content, &currency_node);
+        if let Some(commodity_text) =
+            find_commodity_directive_for_currency(&snapshot.forest, &snapshot.open_docs, &currency)
+        {
+            sections.push(format!("```beancount\n{}\n```", commodity_text.trim_end()));
+        }
+    }
+
+    if sections.is_empty() {
+        return Ok(None);
+    }
+
     let hover_text = sections.join("\n\n");
-    let range = tree_sitter_node_to_lsp_range(&content, &account_node);
+    let range = if let Some(account_node) = find_node_of_kind(node, NodeKind::Account) {
+        tree_sitter_node_to_lsp_range(&content, &account_node)
+    } else if let Some(currency_node) = find_node_of_kind(node, NodeKind::Currency) {
+        tree_sitter_node_to_lsp_range(&content, &currency_node)
+    } else {
+        tree_sitter_node_to_lsp_range(&content, &node)
+    };
 
     Ok(Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
@@ -91,6 +169,28 @@ fn find_node_of_kind<'a>(
             return None;
         }
     }
+}
+
+fn find_descendant_of_kind<'a>(
+    node: tree_sitter::Node<'a>,
+    kind: NodeKind,
+) -> Option<tree_sitter::Node<'a>> {
+    if NodeKind::from(node.kind()) == kind {
+        return Some(node);
+    }
+
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        let mut cursor = current.walk();
+        for child in current.named_children(&mut cursor) {
+            if NodeKind::from(child.kind()) == kind {
+                return Some(child);
+            }
+            stack.push(child);
+        }
+    }
+
+    None
 }
 
 fn collect_account_notes(
@@ -257,6 +357,33 @@ mod tests {
                     markup.value.contains("-1 USD"),
                     "Hover should surface the balancing hint for postings"
                 );
+            }
+            _ => panic!("Expected markup hover content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_shows_commodity_metadata_for_currency() {
+        let content = "2024-01-01 commodity USD\n  name: \"US Dollar\"\n  precision: 2\n\n2024-01-02 * \"Test\" \"Test\"\n  Assets:Cash  1 USD\n";
+        let state = TestState::new(content).unwrap();
+
+        let uri =
+            lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref()).unwrap();
+        let params = HoverParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                position: lsp_types::Position::new(5, 17),
+            },
+            work_done_progress_params: Default::default(),
+        };
+
+        let result = hover(state.snapshot, params).unwrap();
+        let hover = result.expect("Expected hover result");
+        match hover.contents {
+            HoverContents::Markup(markup) => {
+                assert!(markup.value.contains("commodity USD"));
+                assert!(markup.value.contains("name: \"US Dollar\""));
+                assert!(markup.value.contains("precision: 2"));
             }
             _ => panic!("Expected markup hover content"),
         }
