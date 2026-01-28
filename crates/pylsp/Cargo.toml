@@ -1,0 +1,16 @@
+[package]
+name = "beancount-lsp-python"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "_beancount_lsp"
+crate-type = ["cdylib"]
+
+[dependencies]
+beancount-language-server = { path = "../lsp", default-features = false, features = [
+  "python-embedded"
+] }
+pyo3 = { version = "0.27", features = ["abi3-py38", "generate-import-lib"] }

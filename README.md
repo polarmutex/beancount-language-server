@@ -115,6 +115,16 @@ cargo build --release --no-default-features
 
 The binary will be available at `target/release/beancount-language-server`.
 
+### Method 6: Python Package
+
+Install into the same Python environment as `beancount` to avoid system-wide Python linkage issues:
+
+```bash
+pip install beancount-language-server
+```
+
+This installs a `beancount-language-server` entry point that matches the native CLI name, so editors can invoke it the same way as the binary.
+
 ## 🔧 Requirements
 
 ### For Diagnostics (Bean-check)

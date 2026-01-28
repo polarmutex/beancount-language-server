@@ -51,7 +51,7 @@ jobs:
                   target: ${{ matrix.target }}
 
             - name: Build target
-              run: cargo build --release --target='${{ matrix.target }}' --features='${{ matrix.features }}'
+              run: cargo build -p beancount-language-server --release --target='${{ matrix.target }}' --features='${{ matrix.features }}'
 
             - name: Run main tests
               if: inputs.run-test && !matrix.no-run

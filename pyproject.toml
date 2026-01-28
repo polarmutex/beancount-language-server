@@ -1,0 +1,23 @@
+[build-system]
+requires = ["maturin>=1.7"]
+build-backend = "maturin"
+
+[project]
+name = "beancount-language-server"
+description = "pypi distribution for the Beancount Language Server"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+  { name = "Brian Ryall", email = "polarmutex@users.noreply.github.com" },
+]
+dependencies = ["beancount>=3,<4"]
+dynamic = ["version"]
+
+[project.scripts]
+beancount-language-server = "beancount_language_server.wrapper:main"
+
+[tool.maturin]
+manifest-path = "crates/pylsp/Cargo.toml"
+module-name = "beancount_language_server._beancount_lsp"
+python-source = "python"

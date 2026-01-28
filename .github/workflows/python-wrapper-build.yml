@@ -1,0 +1,50 @@
+name: python-wrapper-build
+
+on:
+  workflow_call:
+
+jobs:
+  python-wrapper-build:
+    name: Build Python Wheels
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Setup | uv
+        uses: astral-sh/setup-uv@v7
+
+      - run: uv tool install maturin
+
+      - run: maturin build --release -o dist --target ${{ matrix.target }}
+        if: runner.os != 'linux'
+
+      - uses: mlugg/setup-zig@v2
+        if: runner.os == 'linux'
+
+      - run: maturin build --release -o dist --target ${{ matrix.target }} --zig
+        if: runner.os == 'linux'
+
+      - name: Upload | Python wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
