@@ -1,6 +1,7 @@
 pub mod text_document {
     use crate::providers::completion;
     use crate::providers::definition;
+    use crate::providers::document_symbol;
     use crate::providers::folding_range;
     use crate::providers::formatting;
     use crate::providers::hover;
@@ -8,6 +9,7 @@ pub mod text_document {
     use crate::providers::references;
     use crate::providers::semantic_tokens;
     use crate::providers::text_document;
+    use crate::providers::workspace_symbol;
     use crate::server::LspServerState;
     use crate::server::LspServerStateSnapshot;
     use anyhow::Result;
@@ -308,6 +310,53 @@ pub mod text_document {
             }
             Err(e) => {
                 tracing::error!("Folding ranges failed: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    pub(crate) fn document_symbol(
+        snapshot: LspServerStateSnapshot,
+        params: lsp_types::DocumentSymbolParams,
+    ) -> Result<Option<lsp_types::DocumentSymbolResponse>> {
+        tracing::debug!(
+            "Document symbols requested for: {}",
+            params.text_document.uri.as_str()
+        );
+
+        match document_symbol::document_symbols(snapshot, params) {
+            Ok(Some(symbols)) => {
+                tracing::trace!("Document symbols returned");
+                Ok(Some(symbols))
+            }
+            Ok(None) => {
+                tracing::debug!("No document symbols available");
+                Ok(None)
+            }
+            Err(e) => {
+                tracing::error!("Document symbols failed: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    pub(crate) fn workspace_symbol(
+        snapshot: LspServerStateSnapshot,
+        params: lsp_types::WorkspaceSymbolParams,
+    ) -> Result<Option<lsp_types::WorkspaceSymbolResponse>> {
+        tracing::debug!("Workspace symbols requested for query: '{}'", params.query);
+
+        match workspace_symbol::workspace_symbols(snapshot, params) {
+            Ok(Some(symbols)) => {
+                tracing::trace!("Workspace symbols returned {} symbols", symbols.len());
+                Ok(Some(lsp_types::WorkspaceSymbolResponse::Flat(symbols)))
+            }
+            Ok(None) => {
+                tracing::debug!("No workspace symbols found");
+                Ok(None)
+            }
+            Err(e) => {
+                tracing::error!("Workspace symbols failed: {}", e);
                 Err(e)
             }
         }

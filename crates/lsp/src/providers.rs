@@ -3,6 +3,8 @@ pub mod completion;
 pub mod definition;
 /// Provider definitions for LSP `textDocument/publishDiagnostics`.
 pub mod diagnostics;
+/// Provider definitions for LSP `textDocument/documentSymbol`.
+pub mod document_symbol;
 /// Provider definitions for LSP `textDocument/foldingRange`.
 pub mod folding_range;
 pub mod formatting;
@@ -18,3 +20,5 @@ pub mod semantic_tokens;
 pub mod text_document;
 /// Utilities for cross-platform URI handling.
 pub mod uri;
+/// Provider definitions for LSP `workspace/symbol`.
+pub mod workspace_symbol;
