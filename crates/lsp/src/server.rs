@@ -524,7 +524,15 @@ impl LspServerState {
             .on::<lsp_types::request::InlayHintRequest>(handlers::text_document::inlay_hint)
             .expect("Failed to register InlayHint handler")
             .on::<lsp_types::request::FoldingRangeRequest>(handlers::text_document::folding_range)
-            .expect("Failed to register FoldingRange handler");
+            .expect("Failed to register FoldingRange handler")
+            .on::<lsp_types::request::DocumentSymbolRequest>(
+                handlers::text_document::document_symbol,
+            )
+            .expect("Failed to register DocumentSymbol handler")
+            .on::<lsp_types::request::WorkspaceSymbolRequest>(
+                handlers::text_document::workspace_symbol,
+            )
+            .expect("Failed to register WorkspaceSymbol handler");
 
         router
     }
