@@ -48,6 +48,11 @@ async function start_or_restart_client(
   const server_executable: Executable = {
     command: serverSelection.path,
     args: serverArgs,
+    options: {
+      env: {
+        RUST_BACKTRACE: "full",
+      },
+    },
   };
 
   const server_options: ServerOptions = {
