@@ -61,7 +61,13 @@
         };
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-        src = craneLib.cleanCargoSource ./.;
+        # Include Python files alongside Rust sources for include_str! macro
+        src = lib.cleanSourceWith {
+          src = craneLib.path ./.;
+          filter = path: type:
+            (craneLib.filterCargoSources path type)
+            || (lib.hasSuffix ".py" path);
+        };
 
         commonArgs = {
           inherit src;
