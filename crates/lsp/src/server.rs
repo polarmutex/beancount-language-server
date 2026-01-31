@@ -554,7 +554,7 @@ impl LspServerState {
         let watch_kind = WatchKind::Create | WatchKind::Change | WatchKind::Delete;
 
         let watchers = vec![FileSystemWatcher {
-            glob_pattern: GlobPattern::String("**/*.beancount".to_string()),
+            glob_pattern: GlobPattern::String("**/*.{bean,beancount}".to_string()),
             kind: Some(watch_kind),
         }];
 
