@@ -5,14 +5,13 @@ use crate::treesitter_utils::{
     tree_sitter_node_to_lsp_range,
 };
 use crate::utils::file_path_to_uri;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use lsp_types::Location;
 use ropey::Rope;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
-use tracing::debug;
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::tree_sitter;
 
@@ -41,81 +40,37 @@ fn cached_tag_query() -> &'static (tree_sitter::Query, u32) {
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReferenceKind {
-    Account,
-    Tag,
-}
-
-fn reference_node_at_position<'a>(
-    tree: &'a tree_sitter::Tree,
-    content: &Rope,
-    position: lsp_types::Position,
-) -> Result<Option<(ReferenceKind, tree_sitter::Node<'a>)>> {
-    let (start, end) = lsp_position_to_tree_sitter_point_range(content, position)?;
-    let Some(mut node) = tree
-        .root_node()
-        .named_descendant_for_point_range(start, end)
-    else {
-        return Ok(None);
-    };
-
-    // The cursor may land on a child node; walk up until we find a referenceable node.
-    loop {
-        match node.kind() {
-            "account" => return Ok(Some((ReferenceKind::Account, node))),
-            "tag" => return Ok(Some((ReferenceKind::Tag, node))),
-            _ => {}
-        }
-
-        if let Some(parent) = node.parent() {
-            node = parent;
-            continue;
-        }
-        return Ok(None);
-    }
-}
-
-fn reference_text_at_position(
-    tree: &tree_sitter::Tree,
-    content: &Rope,
-    position: lsp_types::Position,
-) -> Result<Option<(ReferenceKind, String)>> {
-    let Some((kind, node)) = reference_node_at_position(tree, content, position)? else {
-        return Ok(None);
-    };
-    Ok(Some((kind, text_for_tree_sitter_node(content, &node))))
-}
-
 /// Provider function for `textDocument/references`.
 pub(crate) fn references(
     snapshot: LspServerStateSnapshot,
     params: lsp_types::ReferenceParams,
 ) -> Result<Option<Vec<lsp_types::Location>>> {
     let uri = &params.text_document_position.text_document.uri;
+    let position = params.text_document_position.position;
+
     let (tree, doc) = match snapshot.tree_and_document_for_uri(uri) {
         Ok(v) => v,
         Err(e) => {
-            debug!("References: failed to get tree/document for uri: {e}");
+            tracing::warn!(
+                "Failed to get tree/document for URI {}: {}",
+                uri.as_str(),
+                e
+            );
             return Ok(None);
         }
     };
-    let content = doc.content.clone();
 
-    // Keep behavior consistent: references only works on open documents.
-    let position = params.text_document_position.position;
-    let Some((kind, node_text)) = reference_text_at_position(tree, &content, position)
-        .with_context(|| {
-            format!(
-                "failed to get node text at position for uri: {}",
-                uri.as_str()
-            )
-        })?
+    let (start, end) = lsp_position_to_tree_sitter_point_range(&doc.content, position)?;
+
+    let Some(node) = tree
+        .root_node()
+        .named_descendant_for_point_range(start, end)
     else {
         return Ok(None);
     };
 
-    let locs = find_references(&snapshot.forest, &snapshot.open_docs, kind, &node_text);
+    let node_text = text_for_tree_sitter_node(&doc.content, &node);
+    let locs = find_references(&snapshot.forest, &snapshot.open_docs, node_text.as_str());
     Ok(Some(locs))
 }
 
@@ -126,28 +81,36 @@ pub(crate) fn rename(
     params: lsp_types::RenameParams,
 ) -> Result<Option<lsp_types::WorkspaceEdit>> {
     let uri = &params.text_document_position.text_document.uri;
+    let position = params.text_document_position.position;
+
     let (tree, doc) = match snapshot.tree_and_document_for_uri(uri) {
         Ok(v) => v,
         Err(e) => {
-            debug!("Rename: failed to get tree/document for uri: {e}");
+            tracing::warn!(
+                "Failed to get tree/document for URI {}: {}",
+                uri.as_str(),
+                e
+            );
             return Ok(None);
         }
     };
 
-    let content = doc.content.clone();
-    let position = params.text_document_position.position;
-    let Some((kind, node_text)) = reference_text_at_position(tree, &content, position)
-        .with_context(|| {
-            format!(
-                "failed to get node text at position for uri: {}",
-                uri.as_str()
-            )
-        })?
+    let (start, end) = match lsp_position_to_tree_sitter_point_range(&doc.content, position) {
+        Ok(range) => range,
+        Err(e) => {
+            tracing::warn!("Failed to convert LSP position to tree-sitter Point range: {e}");
+            return Ok(None);
+        }
+    };
+
+    let Some(node) = tree
+        .root_node()
+        .named_descendant_for_point_range(start, end)
     else {
         return Ok(None);
     };
-
-    let locs = find_references(&snapshot.forest, &snapshot.open_docs, kind, &node_text);
+    let node_text = text_for_tree_sitter_node(&doc.content, &node);
+    let locs = find_references(&snapshot.forest, &snapshot.open_docs, node_text.as_str());
     let new_name = params.new_name;
 
     // Group locations by URI string to avoid mutable key type warning
@@ -166,7 +129,7 @@ pub(crate) fn rename(
         let uri = match lsp_types::Uri::from_str(&uri_str) {
             Ok(uri) => uri,
             Err(e) => {
-                debug!("Failed to parse URI string {}: {}", uri_str, e);
+                tracing::warn!("Failed to parse URI string {}: {}", uri_str, e);
                 continue;
             }
         };
@@ -186,56 +149,62 @@ pub(crate) fn rename(
 fn find_references(
     forest: &HashMap<PathBuf, Arc<tree_sitter::Tree>>,
     open_docs: &HashMap<PathBuf, Document>,
-    kind: ReferenceKind,
     node_text: &str,
 ) -> Vec<lsp_types::Location> {
-    forest
-        .iter()
-        .flat_map(|(url, tree)| {
-            let (query, capture_index) = match kind {
-                ReferenceKind::Account => cached_account_query(),
-                ReferenceKind::Tag => cached_tag_query(),
-            };
+    // Decide which syntax node type to search for.
+    // For now we support accounts and tags.
+    let (query, capture_index) = if node_text.starts_with('#') {
+        cached_tag_query()
+    } else {
+        cached_account_query()
+    };
 
-            let (rope, text) = if let Some(doc) = open_docs.get(url) {
-                let rope = doc.content.clone();
-                let text = rope.to_string();
-                (rope, text)
-            } else {
-                match std::fs::read_to_string(url) {
-                    Ok(content) => {
-                        let rope = Rope::from_str(&content);
-                        (rope, content)
-                    }
-                    Err(_) => {
-                        debug!("Failed to read file: {:?}", url);
-                        return vec![];
-                    }
+    let mut results: Vec<lsp_types::Location> = Vec::new();
+    for (url, tree) in forest.iter() {
+        let (text, rope): (String, Rope) = if let Some(doc) = open_docs.get(url) {
+            (doc.text().to_string(), doc.content.clone())
+        } else {
+            match std::fs::read_to_string(url) {
+                Ok(content) => {
+                    let rope = Rope::from_str(&content);
+                    (content, rope)
                 }
-            };
-
-            let source = text.as_bytes();
-
-            let mut query_cursor = tree_sitter::QueryCursor::new();
-            let mut matches = query_cursor.matches(query, tree.root_node(), source);
-            let mut results = Vec::new();
-            while let Some(m) = matches.next() {
-                if let Some(node) = m.nodes_for_capture_index(*capture_index).next() {
-                    let m_text = node.utf8_text(source).expect("");
-                    if m_text == node_text {
-                        results.push((url.clone(), rope.clone(), node));
-                    }
+                Err(err) => {
+                    // If file read fails, skip this file and continue.
+                    tracing::warn!("Skipping file due to read error: {:?}: {}", url, err);
+                    continue;
                 }
             }
+        };
 
-            results
-        })
-        .filter_map(|(url, rope, node): (PathBuf, Rope, tree_sitter::Node)| {
-            let uri = file_path_to_uri(&url).ok()?;
-            let range = tree_sitter_node_to_lsp_range(&rope, &node);
-            Some(Location::new(uri, range))
-        })
-        .collect::<Vec<_>>()
+        let uri = match file_path_to_uri(url) {
+            Ok(u) => u,
+            Err(_) => {
+                // If URI conversion fails, skip this file.
+                tracing::warn!("Skipping file due to URI conversion error: {:?}", url);
+                continue;
+            }
+        };
+
+        let source = text.as_bytes();
+        let mut query_cursor = tree_sitter::QueryCursor::new();
+        let mut matches = query_cursor.matches(query, tree.root_node(), source);
+
+        while let Some(m) = matches.next() {
+            if let Some(node) = m.nodes_for_capture_index(*capture_index).next() {
+                let m_text = match node.utf8_text(source) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                if m_text == node_text {
+                    let range = tree_sitter_node_to_lsp_range(&rope, &node);
+                    results.push(Location::new(uri.clone(), range));
+                }
+            }
+        }
+    }
+
+    results
 }
 
 #[cfg(test)]
@@ -304,7 +273,6 @@ mod tests {
         let locs = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
-            ReferenceKind::Account,
             "Assets:Checking",
         );
 
@@ -324,11 +292,35 @@ mod tests {
         let locs = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
-            ReferenceKind::Account,
             "Assets:Nonexistent",
         );
 
         assert_eq!(locs.len(), 0);
+    }
+
+    #[test]
+    fn test_find_references_single_tag() {
+        let content = r#"
+2024-01-01 * "Test" #vacation #travel
+    Assets:Checking  100.00 USD
+    Expenses:Food   -100.00 USD
+
+2024-01-02 * "Test2" #vacation
+    Assets:Checking  50.00 USD
+    Expenses:Food   -50.00 USD
+"#;
+        let state = TestState::new(content).unwrap();
+        let locs = find_references(
+            &state.snapshot.forest,
+            &state.snapshot.open_docs,
+            "#vacation",
+        );
+
+        assert_eq!(locs.len(), 2);
+        // Tag occurrences should be on the two txn header lines.
+        // Note: the raw string starts with a leading newline.
+        assert!(locs.iter().any(|l| l.range.start.line == 1));
+        assert!(locs.iter().any(|l| l.range.start.line == 5));
     }
 
     #[test]
@@ -373,7 +365,7 @@ mod tests {
             },
         );
 
-        let locs = find_references(&forest, &open_docs, ReferenceKind::Account, "Assets:Bank");
+        let locs = find_references(&forest, &open_docs, "Assets:Bank");
 
         assert_eq!(locs.len(), 3); // open in file1 + posting in file1 + posting in file2
     }
@@ -408,6 +400,87 @@ mod tests {
         assert!(result.is_some());
         let locs = result.unwrap();
         assert_eq!(locs.len(), 2); // open + posting
+    }
+
+    #[test]
+    fn test_references_handler_tag_with_utf8_prefix_and_cursor_at_line_end() {
+        let tag = "#credit-cmb-2025-08";
+        let content = format!(
+            r#"
+2025-07-30 * "财财财财财财财财财财财财财财财财" {tag}
+  Assets:Cash  -10 CNY
+  Expenses:Food 10 CNY
+
+2025-08-01 * "Other" {tag}
+  Assets:Cash  -5 CNY
+  Expenses:Food 5 CNY
+"#
+        );
+        let state = TestState::new(&content).unwrap();
+
+        // Put cursor at the end of the first tag occurrence.
+        let byte_idx = content.find(tag).expect("tag should exist") + tag.len();
+
+        let rope = &state
+            .snapshot
+            .open_docs
+            .get(&state.path)
+            .expect("doc should exist")
+            .content;
+        let line_idx = rope.byte_to_line(byte_idx);
+        let line_char_idx = rope.line_to_char(line_idx);
+        let line_utf16_cu_idx = rope.char_to_utf16_cu(line_char_idx);
+        let char_idx = rope.byte_to_char(byte_idx);
+        let utf16_cu_idx = rope.char_to_utf16_cu(char_idx);
+        let col_utf16 = utf16_cu_idx - line_utf16_cu_idx;
+
+        let uri = file_path_to_uri(&state.path).unwrap();
+
+        // Verify we actually pick the tag node at the cursor.
+        let tree = state.snapshot.forest.get(&state.path).unwrap();
+        let (start, end) = lsp_position_to_tree_sitter_point_range(
+            rope,
+            lsp_types::Position {
+                line: line_idx as u32,
+                character: col_utf16 as u32,
+            },
+        )
+        .unwrap();
+        let node = tree
+            .root_node()
+            .named_descendant_for_point_range(start, end)
+            .unwrap();
+        let node_text = text_for_tree_sitter_node(rope, &node);
+        assert_eq!(node_text, tag);
+
+        let params = lsp_types::ReferenceParams {
+            text_document_position: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                position: lsp_types::Position {
+                    line: line_idx as u32,
+                    character: col_utf16 as u32,
+                },
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: lsp_types::ReferenceContext {
+                include_declaration: true,
+            },
+        };
+
+        let result = references(state.snapshot, params).unwrap();
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        assert_eq!(locs.len(), 2);
+
+        // The returned highlight range should cover the whole tag.
+        // Since the tag is ASCII, UTF-16 columns match byte/char counts for the tag itself.
+        let expected_start = (col_utf16 as u32).saturating_sub(tag.len() as u32);
+        let first_line_loc = locs
+            .iter()
+            .find(|l| l.range.start.line == line_idx as u32)
+            .expect("should include the first tag occurrence");
+        assert_eq!(first_line_loc.range.start.character, expected_start);
     }
 
     #[test]
@@ -492,7 +565,6 @@ mod tests {
         let locs_food = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
-            ReferenceKind::Account,
             "Expenses:Food",
         );
         assert_eq!(locs_food.len(), 2); // open + posting
@@ -500,139 +572,8 @@ mod tests {
         let locs_cash = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
-            ReferenceKind::Account,
             "Assets:Cash",
         );
         assert_eq!(locs_cash.len(), 2); // open + posting
-    }
-
-    #[test]
-    fn test_find_references_single_tag() {
-        let content = r#"
-2024-01-02 * "Test" #Groceries
-  Assets:Cash  -10.00 USD
-  Expenses:Food  10.00 USD
-2024-01-03 * "Another" #Groceries
-  Assets:Cash  -5.00 USD
-  Expenses:Food  5.00 USD
-"#;
-        let state = TestState::new(content).unwrap();
-        let locs = find_references(
-            &state.snapshot.forest,
-            &state.snapshot.open_docs,
-            ReferenceKind::Tag,
-            "#Groceries",
-        );
-
-        assert_eq!(locs.len(), 2);
-    }
-
-    #[test]
-    fn test_references_handler_for_tag() {
-        let content = r#"
-2024-01-02 * "Test" #Groceries
-  Assets:Cash  -10.00 USD
-  Expenses:Food  10.00 USD
-2024-01-03 * "Another" #Groceries
-  Assets:Cash  -5.00 USD
-  Expenses:Food  5.00 USD
-"#;
-        let state = TestState::new(content).unwrap();
-        let uri = file_path_to_uri(&state.path).unwrap();
-
-        // Cursor somewhere inside "#Groceries".
-        let params = lsp_types::ReferenceParams {
-            text_document_position: lsp_types::TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri },
-                position: lsp_types::Position {
-                    line: 1,
-                    character: 22,
-                },
-            },
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-            context: lsp_types::ReferenceContext {
-                include_declaration: true,
-            },
-        };
-
-        let result = references(state.snapshot, params).unwrap();
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().len(), 2);
-    }
-
-    #[test]
-    #[allow(clippy::mutable_key_type)]
-    fn test_rename_handler_for_tag() {
-        let content = r#"
-2024-01-02 * "Test" #Groceries
-  Assets:Cash  -10.00 USD
-  Expenses:Food  10.00 USD
-2024-01-03 * "Another" #Groceries
-  Assets:Cash  -5.00 USD
-  Expenses:Food  5.00 USD
-"#;
-        let state = TestState::new(content).unwrap();
-
-        let uri = file_path_to_uri(&state.path).unwrap();
-        let params = lsp_types::RenameParams {
-            text_document_position: lsp_types::TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
-                position: lsp_types::Position {
-                    line: 1,
-                    character: 22,
-                },
-            },
-            new_name: "#Food".to_string(),
-            work_done_progress_params: Default::default(),
-        };
-
-        let result = rename(state.snapshot, params).unwrap();
-        assert!(result.is_some());
-        let edit = result.unwrap();
-        assert!(edit.changes.is_some());
-        let changes = edit.changes.unwrap();
-        let edits = changes.get(&uri).unwrap();
-        assert_eq!(edits.len(), 2);
-        assert_eq!(edits[0].new_text, "#Food");
-        assert_eq!(edits[1].new_text, "#Food");
-    }
-
-    #[test]
-    fn test_references_tag_cursor_at_end_of_line_utf16() {
-        let content = r#"
-2025-07-31 * "财财财-财财财财财财财财财财财财财财财财财财" #credit-cmb-2025-08
-    Liabilities:A:B:C                           -2.50 CNY
-    Expenses:Food
-2025-08-01 * "Second" #credit-cmb-2025-08
-    Liabilities:A:B:C                           -1.00 CNY
-    Expenses:Food
-"#;
-
-        let state = TestState::new(content).unwrap();
-        let uri = file_path_to_uri(&state.path).unwrap();
-
-        // LSP uses UTF-16 code units for character offsets; place the cursor at end-of-line.
-        let first_txn_line = content.lines().nth(1).expect("expected first txn line");
-        let eol_utf16 = first_txn_line.encode_utf16().count() as u32;
-
-        let params = lsp_types::ReferenceParams {
-            text_document_position: lsp_types::TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri },
-                position: lsp_types::Position {
-                    line: 1,
-                    character: eol_utf16,
-                },
-            },
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-            context: lsp_types::ReferenceContext {
-                include_declaration: true,
-            },
-        };
-
-        let result = references(state.snapshot, params).unwrap();
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().len(), 2);
     }
 }

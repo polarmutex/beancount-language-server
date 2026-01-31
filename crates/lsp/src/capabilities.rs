@@ -1,4 +1,5 @@
 use crate::providers::semantic_tokens;
+use lsp_types::FoldingRangeProviderCapability;
 use lsp_types::InlayHintOptions;
 use lsp_types::InlayHintServerCapabilities;
 use lsp_types::RenameOptions;
@@ -62,6 +63,9 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
                 },
             },
         ))),
+        folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
         ..Default::default()
     }
 }
@@ -300,6 +304,10 @@ mod tests {
             caps.inlay_hint_provider.is_some(),
             "inlay_hint is implemented"
         );
+        assert!(
+            caps.folding_range_provider.is_some(),
+            "folding_range is implemented"
+        );
 
         // Verify NOT implemented capabilities are disabled
         assert!(
@@ -314,13 +322,13 @@ mod tests {
             caps.implementation_provider, None,
             "implementation is not implemented"
         );
-        assert_eq!(
-            caps.document_symbol_provider, None,
-            "document_symbol is not implemented"
+        assert!(
+            caps.document_symbol_provider.is_some(),
+            "document_symbol is implemented"
         );
-        assert_eq!(
-            caps.workspace_symbol_provider, None,
-            "workspace_symbol is not implemented"
+        assert!(
+            caps.workspace_symbol_provider.is_some(),
+            "workspace_symbol is implemented"
         );
         assert_eq!(
             caps.code_action_provider, None,
@@ -334,9 +342,9 @@ mod tests {
             caps.document_link_provider, None,
             "document_link is not implemented"
         );
-        assert_eq!(
-            caps.folding_range_provider, None,
-            "folding_range is not implemented"
+        assert!(
+            caps.folding_range_provider.is_some(),
+            "folding_range is implemented"
         );
     }
 
@@ -458,6 +466,35 @@ mod tests {
                 handlers::text_document::inlay_hint;
         }
 
+        // Folding range capability -> handlers::text_document::folding_range
+        if caps.folding_range_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::FoldingRangeParams,
+            ) -> anyhow::Result<Option<Vec<lsp_types::FoldingRange>>> =
+                handlers::text_document::folding_range;
+        }
+
+        // Document symbol capability -> handlers::text_document::document_symbol
+        if caps.document_symbol_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::DocumentSymbolParams,
+            )
+                -> anyhow::Result<Option<lsp_types::DocumentSymbolResponse>> =
+                handlers::text_document::document_symbol;
+        }
+
+        // Workspace symbol capability -> handlers::text_document::workspace_symbol
+        if caps.workspace_symbol_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::WorkspaceSymbolParams,
+            )
+                -> anyhow::Result<Option<lsp_types::WorkspaceSymbolResponse>> =
+                handlers::text_document::workspace_symbol;
+        }
+
         // Text document sync notifications (these don't return responses)
         if let Some(TextDocumentSyncCapability::Options(sync_options)) = &caps.text_document_sync {
             // did_open handler
@@ -501,6 +538,15 @@ mod tests {
                 sync_options.will_save_wait_until, None,
                 "will_save_wait_until should not be used for formatting (client controls formatting)"
             );
+        }
+
+        // Workspace notifications (dynamically registered, not in static capabilities)
+        // didChangeWatchedFiles handler - registered dynamically for *.beancount files
+        {
+            let _handler: fn(
+                &mut crate::server::LspServerState,
+                lsp_types::DidChangeWatchedFilesParams,
+            ) -> anyhow::Result<()> = handlers::workspace::did_change_watched_files;
         }
 
         // This test will fail to compile if:
