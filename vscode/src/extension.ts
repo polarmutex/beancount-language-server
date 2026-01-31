@@ -100,19 +100,18 @@ async function start_or_restart_client(
         return {
           action: ErrorAction.Continue,
           message: inspect(message),
-          handled: true,
+          handled: false,
         };
       },
       closed(): CloseHandlerResult {
-        log.error("server stopped, restarting");
         vscode.window.showErrorMessage(
-          "beancount-language-server stopped unexpectedly, restarting",
+          "beancount-language-server exit unexpectedly",
         );
 
         return {
-          action: CloseAction.Restart,
-          message: "server exit, restarting",
-          handled: true,
+          action: CloseAction.DoNotRestart,
+          message: "server exit",
+          handled: false,
         };
       },
     },
