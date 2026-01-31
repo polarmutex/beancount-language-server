@@ -14,8 +14,6 @@ This is a Rust workspace with the following structure:
     - **`pyo3_embedded.rs`** - PyO3 embedded Python integration
     - **`types.rs`** - Shared data structures
 - **`vscode/`** - VSCode extension (TypeScript)
-- **`python/`** - Python utilities for beancount integration
-  - **`bean_check.py`** - Enhanced Python validation script with JSON output
 - **Root workspace** - Cargo workspace configuration
 
 ## Key Files
