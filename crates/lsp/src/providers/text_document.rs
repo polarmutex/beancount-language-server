@@ -165,21 +165,24 @@ pub(crate) fn did_open(
         .get_mut(&uri)
         .expect("parser should exist after insertion");
 
-    state.forest.entry(uri.clone()).or_insert_with(|| {
-        Arc::new(
-            parser
-                .parse(&params.text_document.text, None)
-                .expect("Failed to parse document"),
-        )
-    });
+    // Always parse fresh content - the file may have been modified externally
+    // between close and reopen, so we can't rely on cached trees
+    let tree = Arc::new(
+        parser
+            .parse(&params.text_document.text, None)
+            .expect("Failed to parse document"),
+    );
+    state.forest.insert(uri.clone(), tree);
 
-    state.beancount_data.entry(uri.clone()).or_insert_with(|| {
-        let content = ropey::Rope::from_str(&params.text_document.text);
+    // Always extract fresh beancount data from the newly parsed tree
+    let content = ropey::Rope::from_str(&params.text_document.text);
+    state.beancount_data.insert(
+        uri.clone(),
         Arc::new(BeancountData::new(
             state.forest.get(&uri).unwrap(),
             &content,
-        ))
-    });
+        )),
+    );
 
     // Process any included files from this document
     let mut processed = HashSet::new();
@@ -234,6 +237,122 @@ pub(crate) fn did_close(
         }
     };
     state.open_docs.remove(&uri);
+    // Clear cached parse tree and beancount data to ensure fresh parsing on reopen.
+    // This handles external modifications made while the file was closed.
+    // Note: We keep parsers for reuse as they are stateless.
+    state.forest.remove(&uri);
+    state.beancount_data.remove(&uri);
+    Ok(())
+}
+
+/// Provider function for `workspace/didChangeWatchedFiles`.
+/// Handles external file changes detected by the client's file watcher.
+pub(crate) fn did_change_watched_files(
+    state: &mut LspServerState,
+    params: lsp_types::DidChangeWatchedFilesParams,
+) -> Result<()> {
+    tracing::debug!(
+        "workspace::did_change_watched_files: {} changes",
+        params.changes.len()
+    );
+
+    for change in params.changes {
+        let uri = match change.uri.to_file_path() {
+            Ok(path) => path,
+            Err(_) => {
+                debug!("Failed to convert URI to file path: {:?}", change.uri);
+                continue;
+            }
+        };
+
+        match change.typ {
+            lsp_types::FileChangeType::CREATED | lsp_types::FileChangeType::CHANGED => {
+                tracing::debug!(
+                    "External file change detected: {:?} (type: {:?})",
+                    uri,
+                    change.typ
+                );
+
+                // Skip if file is currently open in editor (editor manages its own state)
+                if state.open_docs.contains_key(&uri) {
+                    tracing::debug!("Skipping {:?} - file is open in editor", uri);
+                    continue;
+                }
+
+                // Clear stale cache so next access will re-parse
+                if state.forest.remove(&uri).is_some() {
+                    tracing::debug!("Cleared stale tree for {:?}", uri);
+                }
+                if state.beancount_data.remove(&uri).is_some() {
+                    tracing::debug!("Cleared stale beancount_data for {:?}", uri);
+                }
+
+                // If this file is part of our forest (included files), re-parse it
+                if let Ok(content) = fs::read_to_string(&uri) {
+                    let mut parser = tree_sitter::Parser::new();
+                    if parser
+                        .set_language(&tree_sitter_beancount::language())
+                        .is_ok()
+                        && let Some(tree) = parser.parse(&content, None)
+                    {
+                        let rope_content = ropey::Rope::from_str(&content);
+                        let beancount_data = BeancountData::new(&tree, &rope_content);
+
+                        state.forest.insert(uri.clone(), Arc::new(tree));
+                        state
+                            .beancount_data
+                            .insert(uri.clone(), Arc::new(beancount_data));
+
+                        tracing::debug!("Re-parsed external file: {:?}", uri);
+                    }
+                }
+            }
+            lsp_types::FileChangeType::DELETED => {
+                tracing::debug!("External file deleted: {:?}", uri);
+
+                // Remove from all caches
+                state.forest.remove(&uri);
+                state.beancount_data.remove(&uri);
+                state.parsers.remove(&uri);
+            }
+            _ => {
+                tracing::debug!("Unknown file change type: {:?}", change.typ);
+            }
+        }
+    }
+
+    // Trigger diagnostics refresh for open documents
+    if state.config.journal_root.is_some() {
+        let snapshot = state.snapshot();
+        let task_sender = state.task_sender.clone();
+
+        // Find an open document to use for diagnostics URI
+        if let Some(open_uri) = state.open_docs.keys().next().cloned() {
+            let url = match url::Url::from_file_path(&open_uri) {
+                Ok(url) => url,
+                Err(_) => {
+                    tracing::warn!("Failed to convert path to URL: {:?}", open_uri);
+                    return Ok(());
+                }
+            };
+            let lsp_uri = match lsp_types::Uri::from_str(url.as_str()) {
+                Ok(uri) => uri,
+                Err(e) => {
+                    tracing::warn!("Failed to create LSP URI: {}", e);
+                    return Ok(());
+                }
+            };
+
+            state.thread_pool.execute(move || {
+                let _result = handle_diagnostics(snapshot, task_sender, lsp_uri);
+            });
+        } else {
+            tracing::debug!(
+                "No open documents, skipping diagnostics refresh after external change"
+            );
+        }
+    }
+
     Ok(())
 }
 

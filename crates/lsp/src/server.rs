@@ -157,6 +157,9 @@ impl LspServerState {
     pub fn run(&mut self, receiver: Receiver<lsp_server::Message>) -> Result<()> {
         tracing::info!("LSP server starting main event loop");
 
+        // Register file watchers for .beancount files
+        self.register_file_watchers();
+
         // Initialize checker once (can be slow); report progress to users.
         self.ensure_checker();
 
@@ -372,6 +375,9 @@ impl LspServerState {
             .on::<lsp_types::notification::DidChangeTextDocument>(
                 handlers::text_document::did_change,
             )?
+            .on::<lsp_types::notification::DidChangeWatchedFiles>(
+                handlers::workspace::did_change_watched_files,
+            )?
             .finish();
         Ok(())
     }
@@ -522,9 +528,63 @@ impl LspServerState {
             )
             .expect("Failed to register SemanticTokens handler")
             .on::<lsp_types::request::InlayHintRequest>(handlers::text_document::inlay_hint)
-            .expect("Failed to register InlayHint handler");
+            .expect("Failed to register InlayHint handler")
+            .on::<lsp_types::request::FoldingRangeRequest>(handlers::text_document::folding_range)
+            .expect("Failed to register FoldingRange handler")
+            .on::<lsp_types::request::DocumentSymbolRequest>(
+                handlers::text_document::document_symbol,
+            )
+            .expect("Failed to register DocumentSymbol handler")
+            .on::<lsp_types::request::WorkspaceSymbolRequest>(
+                handlers::text_document::workspace_symbol,
+            )
+            .expect("Failed to register WorkspaceSymbol handler");
 
         router
+    }
+
+    /// Register file watchers with the client to detect external file changes.
+    /// This enables real-time detection of files modified outside the editor.
+    fn register_file_watchers(&mut self) {
+        use lsp_types::{
+            DidChangeWatchedFilesRegistrationOptions, FileSystemWatcher, GlobPattern, Registration,
+            WatchKind,
+        };
+
+        let watch_kind = WatchKind::Create | WatchKind::Change | WatchKind::Delete;
+
+        let watchers = vec![FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/*.beancount".to_string()),
+            kind: Some(watch_kind),
+        }];
+
+        let registration_options = DidChangeWatchedFilesRegistrationOptions { watchers };
+
+        let registration = Registration {
+            id: "beancount-file-watcher".to_string(),
+            method: "workspace/didChangeWatchedFiles".to_string(),
+            register_options: Some(
+                serde_json::to_value(registration_options)
+                    .expect("Failed to serialize file watcher options"),
+            ),
+        };
+
+        let params = lsp_types::RegistrationParams {
+            registrations: vec![registration],
+        };
+
+        // Send registration request to client (fire-and-forget, we don't need the response)
+        self.send_request::<lsp_types::request::RegisterCapability>(params, |_state, response| {
+            if let Some(error) = response.error {
+                tracing::warn!(
+                    "Failed to register file watchers: {} (code: {})",
+                    error.message,
+                    error.code
+                );
+            } else {
+                tracing::info!("File watchers registered successfully for *.beancount files");
+            }
+        });
     }
 
     fn ensure_checker(&mut self) -> Option<Arc<dyn BeancountChecker>> {

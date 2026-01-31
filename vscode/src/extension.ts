@@ -44,10 +44,19 @@ async function start_or_restart_client(
   const config = vscode.workspace.getConfiguration("beancountLangServer");
 
   const serverArgs: string[] = [];
+  const logLevel = config.get<string | null>("logLevel")?.trim();
+  if (logLevel) {
+    serverArgs.push("--log-level", logLevel);
+  }
 
   const server_executable: Executable = {
     command: serverSelection.path,
     args: serverArgs,
+    options: {
+      env: {
+        RUST_BACKTRACE: "full",
+      },
+    },
   };
 
   const server_options: ServerOptions = {
