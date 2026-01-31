@@ -182,6 +182,30 @@ The language server accepts configuration via LSP initialization options:
 | -------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `journal_file` | string | Path to the main beancount journal file. **Optional**: Only required if your beancount files use `include` directives to span multiple files. Single-file projects work without this setting. | None    |
 
+### Workspace-Specific Configuration
+
+The `journal_file` setting is **workspace-specific**. Each editor workspace (project folder) can have its own journal file configured. This means:
+
+- **Completions are scoped**: Account names, payees, currencies, tags, and links are loaded only from the configured journal and its included files
+- **Separate ledgers**: If you work on multiple beancount projects (personal finances, business, etc.), each workspace uses its own configuration
+- **No cross-contamination**: Accounts from one ledger won't appear as completions in another
+
+**Example workflow with multiple ledgers:**
+
+```
+~/finances/personal/     # Workspace 1: journal_file = "main.beancount"
+  ├── main.beancount     # Includes accounts/*.beancount
+  └── accounts/
+      └── assets.beancount
+
+~/finances/business/     # Workspace 2: journal_file = "ledger.beancount"
+  ├── ledger.beancount   # Includes 2024/*.beancount
+  └── 2024/
+      └── transactions.beancount
+```
+
+When editing files in `~/finances/personal/`, completions only show accounts like `Assets:Personal:Checking`. When editing in `~/finances/business/`, completions show `Assets:Business:Operating`.
+
 ### Bean-check Configuration
 
 | Option                      | Type   | Description                                                        | Default |
@@ -381,6 +405,16 @@ This controls the whitespace between numbers and currency codes:
    }
    ```
 
+**Workspace-specific configuration**: Create a `.vscode/settings.json` in each project folder:
+
+```json
+{
+  "beancountLangServer.journalFile": "${workspaceFolder}/main.beancount"
+}
+```
+
+This ensures each workspace uses its own journal file for completions and diagnostics.
+
 ### Neovim
 
 Using `nvim.lsp` (nvim > 0.11)
@@ -447,6 +481,28 @@ vim.filetype.add({
 })
 ```
 
+**Workspace-specific configuration**: Use `.nvim.lua` or `exrc` for per-project settings:
+
+```lua
+-- .nvim.lua in your beancount project root
+vim.lsp.config.beancount = {
+  init_options = {
+    journal_file = vim.fn.getcwd() .. "/main.beancount",
+  },
+}
+```
+
+Or with nvim-lspconfig, use `on_new_config` to dynamically set the journal file:
+
+```lua
+lspconfig.beancount.setup({
+  on_new_config = function(new_config, new_root_dir)
+    new_config.init_options = new_config.init_options or {}
+    new_config.init_options.journal_file = new_root_dir .. "/main.beancount"
+  end,
+})
+```
+
 ### Helix
 
 Add to your `languages.toml`:
@@ -476,6 +532,53 @@ name = "beancount"
 language-servers = [{ name = "beancount-language-server" }]
 ```
 
+### Zed
+
+Add to your `settings.json` (access via `Zed > Settings > Open Settings`):
+
+```json
+{
+  "lsp": {
+    "beancount-language-server": {
+      "binary": {
+        "path": "beancount-language-server",
+        "arguments": ["--stdio"]
+      },
+      "initialization_options": {
+        // Optional: Only needed for multi-file projects with include directives
+        "journal_file": "/path/to/main.beancount",
+        "formatting": {
+          "prefix_width": 30,
+          "currency_column": 60,
+          "number_currency_spacing": 1
+        }
+      }
+    }
+  },
+  "languages": {
+    "Beancount": {
+      "language_servers": ["beancount-language-server"]
+    }
+  }
+}
+```
+
+For **workspace-specific configuration**, create a `.zed/settings.json` in your project root:
+
+```json
+{
+  "lsp": {
+    "beancount-language-server": {
+      "initialization_options": {
+        "journal_file": "main.beancount"
+      }
+    }
+  }
+}
+```
+
+**Note**: Zed may require a [Beancount extension](https://zed.dev/extensions) for syntax highlighting. The language server provides completions, diagnostics, and formatting regardless of syntax highlighting support.
+
 ### Emacs
 
 Using [lsp-mode](https://github.com/emacs-lsp/lsp-mode):
@@ -497,6 +600,27 @@ Using [lsp-mode](https://github.com/emacs-lsp/lsp-mode):
                 ;; Optional: bean_check config (uses python-embedded by default)
                 ;; :bean_check '(:method "python-embedded")
                 :formatting '(:prefix_width 30 :currency_column 60 :number_currency_spacing 1))))))
+```
+
+**Workspace-specific configuration**: Use `.dir-locals.el` in your project root:
+
+```elisp
+;; .dir-locals.el
+((beancount-mode
+  . ((lsp-clients-beancount-langserver-init-options
+      . (:journal_file "./main.beancount")))))
+```
+
+Or dynamically set based on project root:
+
+```elisp
+(defun my/beancount-lsp-init-options ()
+  "Generate init options with project-local journal file."
+  (let ((journal-file (expand-file-name "main.beancount" (project-root (project-current)))))
+    (when (file-exists-p journal-file)
+      (list :journal_file journal-file))))
+
+;; Use in lsp-register-client with :initialization-options #'my/beancount-lsp-init-options
 ```
 
 ### Vim

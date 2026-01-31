@@ -1,3 +1,18 @@
+pub mod workspace {
+    use crate::providers::text_document;
+    use crate::server::LspServerState;
+    use anyhow::Result;
+
+    /// handler for `workspace/didChangeWatchedFiles`.
+    pub(crate) fn did_change_watched_files(
+        state: &mut LspServerState,
+        params: lsp_types::DidChangeWatchedFilesParams,
+    ) -> Result<()> {
+        tracing::trace!("Watched files changed: {} changes", params.changes.len());
+        text_document::did_change_watched_files(state, params)
+    }
+}
+
 pub mod text_document {
     use crate::providers::completion;
     use crate::providers::definition;

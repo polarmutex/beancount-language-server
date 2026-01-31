@@ -540,6 +540,15 @@ mod tests {
             );
         }
 
+        // Workspace notifications (dynamically registered, not in static capabilities)
+        // didChangeWatchedFiles handler - registered dynamically for *.beancount files
+        {
+            let _handler: fn(
+                &mut crate::server::LspServerState,
+                lsp_types::DidChangeWatchedFilesParams,
+            ) -> anyhow::Result<()> = handlers::workspace::did_change_watched_files;
+        }
+
         // This test will fail to compile if:
         // 1. A capability is advertised but the handler function doesn't exist
         // 2. A handler function exists but has the wrong signature
