@@ -546,10 +546,21 @@ fn handle_diagnostics(
         }
     };
 
+    // Generate a unique run id for this diagnostics execution to avoid
+    // progress token collisions if multiple runs overlap.
+    let run_id: u64 = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    };
+
     sender.send(Task::Progress(ProgressMsg::BeanCheck {
         done: 0,
         total: 1,
         checker_name: checker.name().to_string(),
+        run_id,
     }))?;
 
     let diags = diagnostics::diagnostics(
@@ -562,6 +573,7 @@ fn handle_diagnostics(
         done: 1,
         total: 1,
         checker_name: checker.name().to_string(),
+        run_id,
     }))?;
 
     let mut normalized_diags: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
