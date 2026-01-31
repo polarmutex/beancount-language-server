@@ -74,7 +74,7 @@ pub(crate) fn workspace_symbols(
         }
 
         // Search for tags and links using tree-sitter query
-        extract_tags_and_links_query(&tree, content, &uri, &query, &mut symbols);
+        extract_tags_and_links_query(tree, content, &uri, &query, &mut symbols);
     }
 
     // Sort by relevance (exact matches first, then by file/line)
@@ -382,13 +382,11 @@ mod tests {
     use crate::config::Config;
     use crate::document::Document;
     use std::collections::HashMap;
-    use std::path::PathBuf;
     use std::sync::Arc;
     use tree_sitter_beancount::tree_sitter;
 
     struct TestState {
         snapshot: LspServerStateSnapshot,
-        path: PathBuf,
     }
 
     impl TestState {
@@ -428,7 +426,6 @@ mod tests {
                     config,
                     checker: None,
                 },
-                path,
             })
         }
     }
