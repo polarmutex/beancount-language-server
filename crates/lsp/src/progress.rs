@@ -23,6 +23,7 @@ impl LspServerState {
         state: Progress,
         message: Option<String>,
         fraction: Option<f64>,
+        token_suffix: Option<&str>,
     ) {
         // TODO: Ensure that the client supports WorkDoneProgress
 
@@ -30,7 +31,11 @@ impl LspServerState {
             (0.0..=1.0).contains(&f);
             (f * 100.0) as u32
         });
-        let token = lsp_types::ProgressToken::String(format!("beancount/{title}"));
+        let token_label = match token_suffix {
+            Some(suffix) => format!("beancount/{title}{suffix}"),
+            None => format!("beancount/{title}"),
+        };
+        let token = lsp_types::ProgressToken::String(token_label);
         let work_done_progress = match state {
             Progress::Begin => {
                 self.send_request::<lsp_types::request::WorkDoneProgressCreate>(
