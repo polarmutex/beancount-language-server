@@ -27,6 +27,8 @@ pub(crate) enum ProgressMsg {
         total: usize,
         done: usize,
         checker_name: String,
+        // Unique id for a single bean-check run to avoid token collisions
+        run_id: u64,
     },
     ForestInit {
         total: usize,
@@ -287,6 +289,7 @@ impl LspServerState {
                 total,
                 done,
                 checker_name,
+                run_id,
             } => {
                 let progress_state = if done == 0 {
                     Progress::Begin
@@ -295,11 +298,14 @@ impl LspServerState {
                 } else {
                     Progress::End
                 };
+                // Use a per-run unique token suffix to prevent collisions when
+                // multiple diagnostics tasks overlap.
                 self.report_progress(
                     &format!("bean check ({})", checker_name),
                     progress_state,
                     Some(format!("{done}/{total}")),
                     Some(Progress::fraction(done, total)),
+                    Some(&format!("/{}", run_id)),
                 )
             }
             ProgressMsg::ForestInit { total, done, data } => {
@@ -319,6 +325,7 @@ impl LspServerState {
                     progress_state,
                     Some(format!("{done}/{total}")),
                     Some(Progress::fraction(done, total)),
+                    None,
                 )
             }
         }
@@ -597,6 +604,7 @@ impl LspServerState {
             Progress::Begin,
             Some("discovering available checkers".to_string()),
             None,
+            None,
         );
 
         let checker = create_checker(&self.config.bean_check, &self.config.root_dir);
@@ -610,6 +618,7 @@ impl LspServerState {
                 Progress::End,
                 Some(format!("using {checker_name}")),
                 None,
+                None,
             );
 
             checker
@@ -620,6 +629,7 @@ impl LspServerState {
                 "checker auto",
                 Progress::End,
                 Some("no checker available".to_string()),
+                None,
                 None,
             );
         }
