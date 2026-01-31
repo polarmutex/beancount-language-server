@@ -14,9 +14,34 @@ use ropey::Rope;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::NodeKind;
 use tree_sitter_beancount::tree_sitter;
+
+static COMMODITY_CURRENCY_QUERY: OnceLock<(tree_sitter::Query, u32)> = OnceLock::new();
+static UNIFIED_ACCOUNT_CAPTURE_INDEX: OnceLock<u32> = OnceLock::new();
+
+fn commodity_currency_query() -> (&'static tree_sitter::Query, u32) {
+    let cached = COMMODITY_CURRENCY_QUERY.get_or_init(|| {
+        let query_string = "(commodity (currency) @currency)";
+        let query = tree_sitter::Query::new(&tree_sitter_beancount::language(), query_string)
+            .expect("Failed to compile commodity currency query");
+        let capture_currency = query
+            .capture_index_for_name("currency")
+            .expect("commodity currency query should have 'currency' capture");
+        (query, capture_currency)
+    });
+    (&cached.0, cached.1)
+}
+
+fn unified_account_capture_index() -> u32 {
+    *UNIFIED_ACCOUNT_CAPTURE_INDEX.get_or_init(|| {
+        get_unified_query()
+            .capture_index_for_name("account")
+            .expect("unified query should have 'account' capture")
+    })
+}
 
 /// Provider function for `textDocument/definition`.
 pub(crate) fn definition(
@@ -40,16 +65,31 @@ pub(crate) fn definition(
         return Ok(None);
     };
 
-    if NodeKind::Account != node.kind().into() {
-        return Ok(None);
+    let node_kind: NodeKind = node.kind().into();
+    match node_kind {
+        NodeKind::Account => {
+            let node_text = text_for_tree_sitter_node(&content, &node);
+            let locs =
+                find_account_open_definitions(&snapshot.forest, &snapshot.open_docs, node_text);
+            if locs.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(GotoDefinitionResponse::Array(locs)))
+        }
+        NodeKind::Currency => {
+            let node_text = text_for_tree_sitter_node(&content, &node);
+            let locs = find_commodity_definitions_for_currency(
+                &snapshot.forest,
+                &snapshot.open_docs,
+                node_text,
+            );
+            if locs.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(GotoDefinitionResponse::Array(locs)))
+        }
+        _ => Ok(None),
     }
-
-    let node_text = text_for_tree_sitter_node(&content, &node);
-    let locs = find_account_open_definitions(&snapshot.forest, &snapshot.open_docs, node_text);
-    if locs.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(GotoDefinitionResponse::Array(locs)))
 }
 
 fn find_account_open_definitions(
@@ -57,58 +97,102 @@ fn find_account_open_definitions(
     open_docs: &HashMap<PathBuf, Document>,
     node_text: String,
 ) -> Vec<Location> {
-    forest
-        .iter()
-        .flat_map(|(url, tree)| {
-            let query = get_unified_query();
-            let capture_account = match query.capture_index_for_name("account") {
-                Some(index) => index,
-                None => {
-                    tracing::warn!("Query missing capture 'account'");
-                    return vec![];
-                }
-            };
+    let query = get_unified_query();
+    let capture_account = unified_account_capture_index();
 
-            let (text, rope) = if let Some(doc) = open_docs.get(url) {
-                (doc.text().to_string(), doc.content.clone())
-            } else {
-                let Ok(content) = std::fs::read_to_string(url) else {
-                    tracing::debug!("Failed to read file: {:?}", url);
-                    return vec![];
-                };
-                let rope = Rope::from_str(&content);
-                (content, rope)
-            };
+    let mut out = Vec::new();
 
-            let Ok(uri) = file_path_to_uri(url) else {
-                tracing::debug!("Failed to convert file path to URI: {}", url.display());
-                return vec![];
+    for (url, tree) in forest {
+        let (text, rope) = if let Some(doc) = open_docs.get(url) {
+            (doc.text().to_string(), doc.content.clone())
+        } else {
+            let Ok(content) = std::fs::read_to_string(url) else {
+                tracing::debug!("Failed to read file: {:?}", url);
+                continue;
             };
+            let rope = Rope::from_str(&content);
+            (content, rope)
+        };
 
-            let source = text.as_bytes();
-            let mut query_cursor = tree_sitter::QueryCursor::new();
-            let mut matches = query_cursor.matches(query, tree.root_node(), source);
-            let mut results = Vec::new();
-            while let Some(m) = matches.next() {
-                if let Some(node) = m.nodes_for_capture_index(capture_account).next() {
-                    let m_text = match node.utf8_text(source) {
-                        Ok(text) => text,
-                        Err(err) => {
-                            tracing::debug!("Failed to read node text: {err}");
-                            continue;
-                        }
-                    };
-                    if m_text == node_text {
-                        results.push(Location::new(
-                            uri.clone(),
-                            tree_sitter_node_to_lsp_range(&rope, &node),
-                        ));
+        let Ok(uri) = file_path_to_uri(url) else {
+            tracing::debug!("Failed to convert file path to URI: {}", url.display());
+            continue;
+        };
+
+        let source = text.as_bytes();
+        let mut query_cursor = tree_sitter::QueryCursor::new();
+        let mut matches = query_cursor.matches(query, tree.root_node(), source);
+        while let Some(m) = matches.next() {
+            if let Some(node) = m.nodes_for_capture_index(capture_account).next() {
+                let m_text = match node.utf8_text(source) {
+                    Ok(text) => text,
+                    Err(err) => {
+                        tracing::debug!("Failed to read node text: {err}");
+                        continue;
                     }
+                };
+                if m_text == node_text {
+                    out.push(Location::new(
+                        uri.clone(),
+                        tree_sitter_node_to_lsp_range(&rope, &node),
+                    ));
                 }
             }
-            results
-        })
-        .collect::<Vec<_>>()
+        }
+    }
+
+    out
+}
+
+fn find_commodity_definitions_for_currency(
+    forest: &HashMap<PathBuf, Arc<tree_sitter::Tree>>,
+    open_docs: &HashMap<PathBuf, Document>,
+    node_text: String,
+) -> Vec<Location> {
+    let (query, capture_currency) = commodity_currency_query();
+    let mut out = Vec::new();
+
+    for (url, tree) in forest {
+        let (text, rope) = if let Some(doc) = open_docs.get(url) {
+            (doc.text().to_string(), doc.content.clone())
+        } else {
+            let Ok(content) = std::fs::read_to_string(url) else {
+                tracing::debug!("Failed to read file: {:?}", url);
+                continue;
+            };
+            let rope = Rope::from_str(&content);
+            (content, rope)
+        };
+
+        let Ok(uri) = file_path_to_uri(url) else {
+            tracing::debug!("Failed to convert file path to URI: {}", url.display());
+            continue;
+        };
+
+        let source = text.as_bytes();
+        let mut query_cursor = tree_sitter::QueryCursor::new();
+        let mut matches = query_cursor.matches(query, tree.root_node(), source);
+
+        while let Some(m) = matches.next() {
+            if let Some(node) = m.nodes_for_capture_index(capture_currency).next() {
+                let m_text = match node.utf8_text(source) {
+                    Ok(text) => text,
+                    Err(err) => {
+                        tracing::debug!("Failed to read node text: {err}");
+                        continue;
+                    }
+                };
+                if m_text == node_text {
+                    out.push(Location::new(
+                        uri.clone(),
+                        tree_sitter_node_to_lsp_range(&rope, &node),
+                    ));
+                }
+            }
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -193,5 +277,53 @@ mod tests {
             find_account_open_definitions(&forest, &open_docs, "Liabilities:Card".to_string());
 
         assert!(locs.is_empty());
+    }
+
+    #[test]
+    fn test_find_commodity_definitions_for_currency_single_match() {
+        let text = "2024-01-01 commodity USD\n";
+        let path = std::env::temp_dir().join("definition_test_commodity.bean");
+        let tree = Arc::new(make_tree(text));
+
+        let mut forest = HashMap::new();
+        forest.insert(path.clone(), tree);
+
+        let mut open_docs = HashMap::new();
+        open_docs.insert(path.clone(), make_doc(text));
+
+        let locs = find_commodity_definitions_for_currency(&forest, &open_docs, "USD".to_string());
+
+        assert_eq!(locs.len(), 1);
+        let loc = &locs[0];
+        assert_eq!(loc.range.start.line, 0);
+        assert_eq!(loc.range.start.character, 21);
+        assert_eq!(loc.range.end.line, 0);
+        assert_eq!(loc.range.end.character, 24);
+
+        let expected_uri = crate::utils::file_path_to_uri(&path).unwrap();
+        assert_eq!(loc.uri, expected_uri);
+    }
+
+    #[test]
+    fn test_find_commodity_definitions_for_currency_no_match() {
+        let text = "2024-01-01 commodity USD\n";
+        let path = std::env::temp_dir().join("definition_test_commodity_none.bean");
+        let tree = Arc::new(make_tree(text));
+
+        let mut forest = HashMap::new();
+        forest.insert(path.clone(), tree);
+
+        let mut open_docs = HashMap::new();
+        open_docs.insert(path, make_doc(text));
+
+        let locs = find_commodity_definitions_for_currency(&forest, &open_docs, "EUR".to_string());
+        assert!(locs.is_empty());
+    }
+
+    #[test]
+    fn test_unified_account_capture_index_cached() {
+        let idx1 = unified_account_capture_index();
+        let idx2 = unified_account_capture_index();
+        assert_eq!(idx1, idx2);
     }
 }

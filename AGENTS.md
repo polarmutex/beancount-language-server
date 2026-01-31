@@ -192,3 +192,9 @@ Supports multiple editors:
 ## Gotcha
 
 The lsp specifies text positions (line, character) using UTF-16 code units, but beancount source files are UTF-8. so when converting position, you should always do a multiple bytes aware converting.
+
+## Hints
+
+The tree-sitter query compiling and capture index finding should be cached should be cached by `OnceLock`, and should panic with `.expect(...)` when it failed, this should be validated by test.
+
+Otherwise, in LSP handler, the server should not panic, return a `Result::Err` instead.
