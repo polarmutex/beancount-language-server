@@ -78,7 +78,7 @@ test-log = { version = "0.2", features = ["trace"] }
 tempfile = "3.0"
 
 # Benchmarking
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "beancount_data"

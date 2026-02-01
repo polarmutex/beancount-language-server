@@ -1,6 +1,7 @@
 use beancount_language_server::beancount_data::BeancountData;
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use ropey::Rope;
+use std::hint::black_box;
 use std::sync::Arc;
 use tree_sitter::Parser;
 use tree_sitter_beancount::tree_sitter;
