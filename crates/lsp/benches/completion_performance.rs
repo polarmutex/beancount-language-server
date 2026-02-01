@@ -1,7 +1,8 @@
 use beancount_language_server::beancount_data::BeancountData;
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use ropey::Rope;
 use std::collections::HashMap;
+use std::hint::black_box;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tree_sitter::Parser;
