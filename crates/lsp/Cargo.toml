@@ -46,7 +46,7 @@ itertools = "0.14"
 shellexpand = "3.1"
 glob = "0.3"
 url = "2.5"
-which = "6.0"
+which = "8.0"
 
 # Data structures
 dashmap = "6.1"
