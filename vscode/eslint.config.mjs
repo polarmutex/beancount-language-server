@@ -1,7 +1,6 @@
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import eslintPlugin from "@typescript-eslint/eslint-plugin";
 import prettierConfig from "eslint-config-prettier";
 import parser from "@typescript-eslint/parser";
 import { defineConfig } from "eslint/config";
@@ -26,9 +25,6 @@ export default defineConfig(
         tsconfigRootDir: __dirname,
         sourceType: "module",
       },
-    },
-    plugins: {
-      "@typescript-eslint": eslintPlugin,
     },
     rules: {
       eqeqeq: ["error", "always", { null: "ignore" }],
