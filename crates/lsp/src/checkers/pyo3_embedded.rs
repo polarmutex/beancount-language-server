@@ -83,7 +83,9 @@ impl PyO3EmbeddedChecker {
             debug!("PyO3EmbeddedChecker: getting beancount.loader module");
             let beancount_loader = self
                 .get_beancount_loader(py)
-                .context("Failed to get beancount.loader - ensure beancount is installed")?;
+                .context("Failed to get beancount.loader - ensure beancount is installed.\n\
+                         Try: pip install beancount\n\
+                         Or set BEANCOUNT_LSP_PYTHON to point to a Python with beancount installed.")?;
             debug!("PyO3EmbeddedChecker: successfully obtained beancount.loader module");
 
             // Convert file path to Python string
@@ -377,7 +379,15 @@ impl BeancountChecker for PyO3EmbeddedChecker {
                     }
                     Err(e) => {
                         warn!(
-                            "PyO3EmbeddedChecker: failed to import beancount.loader: {}",
+                            "PyO3EmbeddedChecker: failed to import beancount.loader: {}\n\
+                             \n\
+                             Troubleshooting steps:\n\
+                             1. Install beancount: pip install beancount\n\
+                             2. Set BEANCOUNT_LSP_PYTHON environment variable: export BEANCOUNT_LSP_PYTHON=/path/to/python\n\
+                             3. Configure python_cmd in LSP settings (see documentation)\n\
+                             4. Verify Python installation: python3 -c \"import beancount.loader; print('OK')\"\n\
+                             \n\
+                             The language server will automatically fall back to alternative validation methods.",
                             e
                         );
                         Err(e.to_string())
