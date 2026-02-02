@@ -157,6 +157,19 @@ fn find_in_path(exe_name: &str) -> Option<PathBuf> {
 }
 
 fn resolve_python_cmd(config: &BeancountCheckConfig, root_dir: &Path) -> Option<PathBuf> {
+    // Highest priority: BEANCOUNT_LSP_PYTHON environment variable
+    if let Ok(env_python) = std::env::var("BEANCOUNT_LSP_PYTHON")
+        && !env_python.is_empty()
+    {
+        let env_python_path = PathBuf::from(&env_python);
+        tracing::info!(
+            "Using BEANCOUNT_LSP_PYTHON environment variable: {}",
+            env_python
+        );
+        return Some(env_python_path);
+    }
+
+    // Second priority: User-configured python_cmd
     let user_cmd = config.python_cmd.clone();
 
     if let Some(cmd) = &user_cmd
@@ -353,6 +366,11 @@ pub fn create_checker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Mutex to ensure environment variable tests don't run in parallel
+    #[allow(dead_code)]
+    static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_default_config() {
@@ -489,17 +507,76 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_python_cmd_env_variable() {
+        use std::env;
+        use tempfile::TempDir;
+
+        // Lock to prevent parallel execution with other env var tests
+        let _guard = ENV_TEST_LOCK.lock().unwrap();
+
+        // Save original value if exists
+        let original_value = env::var("BEANCOUNT_LSP_PYTHON").ok();
+
+        let temp_dir = TempDir::new().unwrap();
+
+        // Set environment variable (unsafe because it affects global state)
+        unsafe {
+            env::set_var("BEANCOUNT_LSP_PYTHON", "/env/python");
+        }
+
+        let config = BeancountCheckConfig {
+            method: None,
+            bean_check_cmd: None,
+            python_cmd: Some(PathBuf::from("/config/python")),
+        };
+
+        let result = resolve_python_cmd(&config, temp_dir.path());
+
+        // Restore original state
+        unsafe {
+            if let Some(original) = original_value {
+                env::set_var("BEANCOUNT_LSP_PYTHON", original);
+            } else {
+                env::remove_var("BEANCOUNT_LSP_PYTHON");
+            }
+        }
+
+        // Environment variable should take priority over config
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), PathBuf::from("/env/python"));
+    }
+
+    #[test]
     fn test_resolve_python_cmd_user_specified() {
+        use std::env;
+        use tempfile::TempDir;
+
+        // Lock to prevent parallel execution with other env var tests
+        let _guard = ENV_TEST_LOCK.lock().unwrap();
+
+        // Ensure BEANCOUNT_LSP_PYTHON is not set for this test
+        let original_value = env::var("BEANCOUNT_LSP_PYTHON").ok();
+        unsafe {
+            env::remove_var("BEANCOUNT_LSP_PYTHON");
+        }
+
         let config = BeancountCheckConfig {
             method: None,
             bean_check_cmd: None,
             python_cmd: Some(PathBuf::from("/custom/python")),
         };
 
-        use tempfile::TempDir;
         let temp_dir = TempDir::new().unwrap();
 
         let result = resolve_python_cmd(&config, temp_dir.path());
+
+        // Restore original state
+        unsafe {
+            if let Some(original) = original_value {
+                env::set_var("BEANCOUNT_LSP_PYTHON", original);
+            }
+        }
+
         assert!(result.is_some());
         assert_eq!(result.unwrap(), PathBuf::from("/custom/python"));
     }

@@ -132,6 +132,56 @@ The language server requires **one** of the following for validation and diagnos
 - **Performance**: 60-66x faster than subprocess-based methods (~838μs vs ~50ms per check)
 - **Note**: If beancount is not available, automatically falls back to other methods
 
+#### Python Environment Compatibility
+
+The PyO3 embedded checker (recommended) works seamlessly with:
+
+- ✅ **System Python 3.8+** (any minor version)
+- ✅ **Virtual environments** (venv, virtualenv)
+- ✅ **Conda environments**
+- ✅ **pyenv-managed Python**
+- ✅ **Multiple Python versions** (uses abi3 stable ABI - one binary works with all Python 3.8+)
+- ✅ **Project-local .venv** (automatically detected)
+
+**No special configuration needed** - the binary automatically detects and uses available Python installations.
+
+#### Python Discovery Order
+
+The language server searches for Python in this order:
+
+1. `BEANCOUNT_LSP_PYTHON` environment variable (if set)
+2. User-configured `python_cmd` in LSP settings
+3. Project-local `.venv/bin/python` (or `.venv/Scripts/python.exe` on Windows)
+4. System `python3` in PATH
+5. System `python` in PATH
+
+#### Advanced: Explicit Python Override
+
+For edge cases or custom Python installations, set the environment variable:
+
+```bash
+# Unix/Linux/macOS
+export BEANCOUNT_LSP_PYTHON=/path/to/python
+beancount-language-server
+
+# Windows (PowerShell)
+$env:BEANCOUNT_LSP_PYTHON = "C:\path\to\python.exe"
+beancount-language-server
+
+# Windows (CMD)
+set BEANCOUNT_LSP_PYTHON=C:\path\to\python.exe
+beancount-language-server
+```
+
+Or configure via LSP settings:
+```json
+{
+  "bean_check": {
+    "python_cmd": "/path/to/python"
+  }
+}
+```
+
 **Option 2: System Python (Fallback)**
 
 - **Python** with beancount library
@@ -298,7 +348,21 @@ If the PyO3 embedded checker is not working:
    pip install beancount
    ```
 
-5. **Fallback methods**: If PyO3 checker fails, the language server automatically tries:
+5. **Override Python detection** (if you have multiple Python installations):
+
+   ```bash
+   # Set environment variable to use specific Python
+   export BEANCOUNT_LSP_PYTHON=/path/to/python3
+
+   # Or configure in LSP settings
+   {
+     "bean_check": {
+       "python_cmd": "/path/to/python3"
+     }
+   }
+   ```
+
+6. **Fallback methods**: If PyO3 checker fails, the language server automatically tries:
    - System Python method (python -c with beancount)
    - System Call method (bean-check binary)
 

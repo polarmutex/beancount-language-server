@@ -141,68 +141,69 @@
               rm -f $out/LICENSE
               cp ${./LICENSE} $out/LICENSE
             '';
-          in pkgs.stdenv.mkDerivation rec {
-            pname = "beancount-vscode-vsix";
-            version = (builtins.fromJSON (builtins.readFile ./vscode/package.json)).version;
+          in
+            pkgs.stdenv.mkDerivation rec {
+              pname = "beancount-vscode-vsix";
+              version = (builtins.fromJSON (builtins.readFile ./vscode/package.json)).version;
 
-            src = vscodeWithLicense;
+              src = vscodeWithLicense;
 
-            nativeBuildInputs = with pkgs; [
-              nodejs
-              pnpm
-              pnpmConfigHook
-            ];
+              nativeBuildInputs = with pkgs; [
+                nodejs
+                pnpm
+                pnpmConfigHook
+              ];
 
-            pnpmDeps = pkgs.fetchPnpmDeps {
-              inherit pname version src;
-              hash = "sha256-n0qfM51winZCu2kv9pqJmQE4OVKl4+DFC/2wgJ/hYZs=";
-              fetcherVersion = 3; # lockfileVersion 9.0 uses fetcher v3
+              pnpmDeps = pkgs.fetchPnpmDeps {
+                inherit pname version src;
+                hash = "sha256-n0qfM51winZCu2kv9pqJmQE4OVKl4+DFC/2wgJ/hYZs=";
+                fetcherVersion = 3; # lockfileVersion 9.0 uses fetcher v3
+              };
+
+              buildPhase = ''
+                runHook preBuild
+
+                # Create server directory with the locally built binary
+                # Map Nix system to rust triplet for VSCode extension compatibility
+                triplet=""
+                case "${system}" in
+                  x86_64-linux) triplet="x86_64-unknown-linux-gnu" ;;
+                  aarch64-linux) triplet="aarch64-unknown-linux-gnu" ;;
+                  x86_64-darwin) triplet="x86_64-apple-darwin" ;;
+                  aarch64-darwin) triplet="aarch64-apple-darwin" ;;
+                  *) echo "Unsupported system: ${system}"; exit 1 ;;
+                esac
+
+                mkdir -p server/$triplet
+                cp ${beancount-language-server}/bin/beancount-language-server server/$triplet/
+                chmod +x server/$triplet/beancount-language-server
+
+                # Build the extension (compiles TypeScript)
+                pnpm run build-base
+
+                # Package the VSIX
+                mkdir -p dist
+                pnpm exec vsce package --no-dependencies -o dist/beancount-language-server-${system}.vsix
+
+                runHook postBuild
+              '';
+
+              installPhase = ''
+                runHook preInstall
+
+                mkdir -p $out
+                cp dist/*.vsix $out/
+
+                runHook postInstall
+              '';
+
+              meta = with lib; {
+                description = "Beancount language server VSCode extension";
+                homepage = "https://github.com/polarmutex/beancount-language-server";
+                license = licenses.mit;
+                platforms = platforms.all;
+              };
             };
-
-            buildPhase = ''
-              runHook preBuild
-
-              # Create server directory with the locally built binary
-              # Map Nix system to rust triplet for VSCode extension compatibility
-              triplet=""
-              case "${system}" in
-                x86_64-linux) triplet="x86_64-unknown-linux-gnu" ;;
-                aarch64-linux) triplet="aarch64-unknown-linux-gnu" ;;
-                x86_64-darwin) triplet="x86_64-apple-darwin" ;;
-                aarch64-darwin) triplet="aarch64-apple-darwin" ;;
-                *) echo "Unsupported system: ${system}"; exit 1 ;;
-              esac
-
-              mkdir -p server/$triplet
-              cp ${beancount-language-server}/bin/beancount-language-server server/$triplet/
-              chmod +x server/$triplet/beancount-language-server
-
-              # Build the extension (compiles TypeScript)
-              pnpm run build-base
-
-              # Package the VSIX
-              mkdir -p dist
-              pnpm exec vsce package --no-dependencies -o dist/beancount-language-server-${system}.vsix
-
-              runHook postBuild
-            '';
-
-            installPhase = ''
-              runHook preInstall
-
-              mkdir -p $out
-              cp dist/*.vsix $out/
-
-              runHook postInstall
-            '';
-
-            meta = with lib; {
-              description = "Beancount language server VSCode extension";
-              homepage = "https://github.com/polarmutex/beancount-language-server";
-              license = licenses.mit;
-              platforms = platforms.all;
-            };
-          };
         };
 
         devShells.default = craneLib.devShell {
@@ -214,13 +215,14 @@
             [
               git-cliff
               cargo-edit
-              beancount
+              # beancount
               cargo-llvm-cov
               cargo-hack
               just
               rustToolchain
               nodejs
               nodePackages.pnpm
+              python314
             ]
             ++ lib.optionals stdenv.isLinux [systemd];
 
