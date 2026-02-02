@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.0] - 2026-02-02
+
+### Bug Fixes
+
+- Improve formatting #783
+- Lower case trigger completion for balance statments
+- Panic on non ascii content #787
+- Utf8/utf16 point
+- Include python files in nix build
+- Update file watcher to include .bean extension
+- Add unique run id to bean-check progress to prevent token collisions
+- Remove auto-restart on server exit
+- Remove duplicate @typescript-eslint plugin definition
+
+### Features
+
+- Support GotoDefinition for account
+- Implement hover provider for account notes
+- Allow users to set log level and still log to stderr
+- Add highlight for keywords
+- Add log level configuration
+- Init folding support
+- Document symbol and workspace symbol
+- Enable workspace monitoring
+
 ## [1.8.1] - 2026-01-25
 
 ### Bug Fixes
