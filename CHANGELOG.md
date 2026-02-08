@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.1] - 2026-02-08
+
+### Bug Fixes
+
+- Add override and better support for pyo3 support
+- Handle utf16 panics #820
+- Add config for warning on transaction flag #816
+
 ## [1.9.0] - 2026-02-02
 
 ### Bug Fixes

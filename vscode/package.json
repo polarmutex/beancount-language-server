@@ -4,7 +4,7 @@
   "description": "beancount language server",
   "author": "Brian Ryall",
   "license": "MIT",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "repository": "https://github.com/polarmutex/beancount-language-server.git",
   "homepage": "https://github.com/polarmutex/beancount-language-server",
   "bugs": "https://github.com/polarmutex/beancount-language-server/issues",
