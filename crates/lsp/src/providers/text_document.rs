@@ -433,16 +433,16 @@ pub(crate) fn did_change(
         // Convert UTF-16 column offsets to character offsets within the line
         // CRITICAL: range.start.character is UTF-16 offset *within the line*, not document-wide
         let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
-        let start_col_char_idx = doc
-            .content
-            .utf16_cu_to_char(start_line_utf16_cu + range.start.character as usize)
-            - start_row_char_idx;
+        let start_utf16_idx = start_line_utf16_cu + range.start.character as usize;
+        // Clamp to document bounds to prevent panic if client sends invalid positions
+        let start_utf16_idx = start_utf16_idx.min(doc.content.len_utf16_cu());
+        let start_col_char_idx = doc.content.utf16_cu_to_char(start_utf16_idx) - start_row_char_idx;
 
         let end_line_utf16_cu = doc.content.char_to_utf16_cu(end_row_char_idx);
-        let end_col_char_idx = doc
-            .content
-            .utf16_cu_to_char(end_line_utf16_cu + range.end.character as usize)
-            - end_row_char_idx;
+        let end_utf16_idx = end_line_utf16_cu + range.end.character as usize;
+        // Clamp to document bounds to prevent panic if client sends invalid positions
+        let end_utf16_idx = end_utf16_idx.min(doc.content.len_utf16_cu());
+        let end_col_char_idx = doc.content.utf16_cu_to_char(end_utf16_idx) - end_row_char_idx;
 
         let start_char_idx = start_row_char_idx + start_col_char_idx;
         let end_char_idx = end_row_char_idx + end_col_char_idx;
@@ -902,6 +902,32 @@ mod tests {
             result.contains("中文测试"),
             "Should preserve '中文测试', got: {}",
             result
+        );
+    }
+
+    #[test]
+    fn test_out_of_bounds_utf16_position() {
+        // Test that out-of-bounds UTF-16 positions are clamped instead of panicking
+        // This reproduces issue #820 where neovim sends positions beyond document bounds
+        let content = "2023-01-01 * \"Test\"\n";
+        let doc = create_test_document(content);
+        let total_utf16_len = doc.content.len_utf16_cu();
+
+        // Simulate a change with end position beyond document bounds
+        let start_row_char_idx = doc.content.line_to_char(0);
+        let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
+
+        // This should not panic - it should clamp to document end
+        let out_of_bounds_utf16 = total_utf16_len + 100;
+        let clamped_utf16 = out_of_bounds_utf16.min(doc.content.len_utf16_cu());
+        let result = doc
+            .content
+            .utf16_cu_to_char(start_line_utf16_cu + clamped_utf16);
+
+        // Should succeed and clamp to valid position
+        assert!(
+            result <= doc.content.len_chars(),
+            "Should clamp to valid char position"
         );
     }
 }
