@@ -117,6 +117,8 @@ fn lsp_position_to_core(
     let row_char_idx = source.line_to_char(row_idx);
     let row_utf16_cu_idx = source.char_to_utf16_cu(row_char_idx);
     let abs_utf16_cu_idx = row_utf16_cu_idx + col_utf16_cu_idx;
+    // Clamp to document bounds to prevent panic if client sends invalid positions
+    let abs_utf16_cu_idx = abs_utf16_cu_idx.min(source.len_utf16_cu());
 
     // Convert absolute UTF-16 index -> absolute char index -> absolute byte index.
     let abs_char_idx = source.utf16_cu_to_char(abs_utf16_cu_idx);
@@ -396,5 +398,52 @@ mod tests {
 
         let text = text_for_tree_sitter_node(&source, &root);
         assert_eq!(text, "2024-01-01 * \"Coffee ☕\"");
+    }
+
+    #[test]
+    fn test_lsp_position_out_of_bounds() {
+        // Test that out-of-bounds UTF-16 positions are clamped instead of panicking
+        // This reproduces issue #820
+        let source = Rope::from("2024-01-01 * \"Test\"\n");
+        let total_utf16_len = source.len_utf16_cu();
+
+        // Position beyond document bounds - should be clamped
+        let pos = Position::new(0, (total_utf16_len + 100) as u32);
+        let result = lsp_position_to_core(&source, pos);
+
+        // Should not panic, should clamp to document end
+        assert!(
+            result.is_ok(),
+            "Should handle out-of-bounds position gracefully"
+        );
+        let core_pos = result.unwrap();
+        assert_eq!(
+            core_pos.char as usize,
+            source.len_chars(),
+            "Should clamp to document end"
+        );
+    }
+
+    #[test]
+    fn test_lsp_textdocchange_out_of_bounds_range() {
+        // Test that text changes with out-of-bounds ranges don't panic
+        let source = Rope::from("Short text");
+        let total_utf16_len = source.len_utf16_cu();
+
+        // Change with end position beyond document - should be clamped
+        let change = TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position::new(0, 0),
+                end: Position::new(0, (total_utf16_len + 50) as u32),
+            }),
+            range_length: None,
+            text: "Replacement".to_string(),
+        };
+
+        let result = lsp_textdocchange_to_ts_inputedit(&source, &change);
+        assert!(
+            result.is_ok(),
+            "Should handle out-of-bounds range gracefully"
+        );
     }
 }
