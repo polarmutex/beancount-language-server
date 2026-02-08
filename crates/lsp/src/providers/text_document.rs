@@ -567,6 +567,7 @@ fn handle_diagnostics(
         snapshot.beancount_data,
         checker.as_ref(),
         &root_journal_path,
+        &snapshot.config.diagnostic_flags,
     );
 
     sender.send(Task::Progress(ProgressMsg::BeanCheck {

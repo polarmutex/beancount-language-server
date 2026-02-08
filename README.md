@@ -220,7 +220,8 @@ The language server accepts configuration via LSP initialization options:
     "currency_column": 60,
     "account_amount_spacing": 2,
     "number_currency_spacing": 1
-  }
+  },
+  "diagnostic_flags": ["!"]  // Optional: flags that generate warnings (default: ["!"])
 }
 ```
 
@@ -368,6 +369,46 @@ If the PyO3 embedded checker is not working:
 
    Check your configuration if you need to explicitly set a method.
 
+### Diagnostic Flags Configuration
+
+By default, the language server generates warnings for all flagged transactions (entries with flags like `!`, `P`, etc.). You can configure which flags should generate diagnostics to reduce noise from intentional flags.
+
+| Option             | Type     | Description                                                      | Default |
+| ------------------ | -------- | ---------------------------------------------------------------- | ------- |
+| `diagnostic_flags` | string[] | List of transaction flags that should generate warning diagnostics | `["!"]` |
+
+**Default behavior** (only `!` flag generates warnings):
+
+```json
+{
+  "diagnostic_flags": ["!"]
+}
+```
+
+This means padding transactions with `P` flag, or other custom flags, won't generate warnings.
+
+**Include multiple flags:**
+
+```json
+{
+  "diagnostic_flags": ["!", "P"]
+}
+```
+
+This generates warnings for both `!` (needs attention) and `P` (padding) flags.
+
+**Disable all flag diagnostics:**
+
+```json
+{
+  "diagnostic_flags": []
+}
+```
+
+This completely disables warnings for flagged transactions.
+
+**Use case**: Some users intentionally use flags like `P` for padding transactions that will persist forever in the ledger. With the default configuration, these won't generate noise in your diagnostics panel, while `!` flags (which typically indicate transactions needing review) will still show warnings.
+
 ### Formatting Options
 
 | Option                    | Type   | Description                                                 | Default            | Bean-format Equivalent     |
@@ -465,7 +506,9 @@ This controls the whitespace between numbers and currency codes:
        "prefix_width": 30,
        "currency_column": 60,
        "number_currency_spacing": 1
-     }
+     },
+     // Optional: flags that generate warnings (default: ["!"])
+     "beancountLangServer.diagnosticFlags": ["!"]
    }
    ```
 
@@ -493,6 +536,8 @@ return {
     init_options = {
         -- Optional: Only needed for multi-file projects with include directives
         journal_file = "main.bean",
+        -- Optional: flags that generate warnings (default: ["!"])
+        diagnostic_flags = { "!" },
     },
     settings = {
         beancount = {
@@ -521,6 +566,8 @@ lspconfig.beancount.setup({
       currency_column = 60,
       number_currency_spacing = 1,
     },
+    -- Optional: flags that generate warnings (default: {"!"})
+    diagnostic_flags = { "!" },
   },
 })
 

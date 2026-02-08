@@ -95,13 +95,8 @@ fn get_note_query() -> &'static tree_sitter::Query {
 pub struct FlaggedEntry {
     _file: String,
     pub line: u32,
+    pub flag: String,
 }
-
-//impl FlaggedEntry {
-//    pub fn new(file: String, line: u32) -> Self {
-//        Self { file, line }
-//    }
-//}
 
 #[derive(Clone, Debug)]
 pub struct BeancountData {
@@ -170,10 +165,16 @@ impl BeancountData {
                         links_set.insert(text_for_tree_sitter_node(content, &capture.node));
                     }
                     idx if idx == flag_idx => {
-                        tracing::debug!("adding flag entry: {:?}", capture.node);
+                        let flag_text = text_for_tree_sitter_node(content, &capture.node);
+                        tracing::debug!(
+                            "adding flag entry: {:?} with flag '{}'",
+                            capture.node,
+                            flag_text
+                        );
                         flagged_entries.push(FlaggedEntry {
                             _file: "".to_string(),
                             line: capture.node.start_position().row as u32,
+                            flag: flag_text,
                         });
                     }
                     idx if idx == account_idx => {

@@ -48,6 +48,7 @@ pub fn diagnostics(
     beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
     checker: &dyn BeancountChecker,
     root_journal_file: &Path,
+    diagnostic_flags: &[String],
 ) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
     tracing::info!("Starting diagnostics for: {}", root_journal_file.display());
     tracing::debug!("Using checker: {}", checker.name());
@@ -79,7 +80,11 @@ pub fn diagnostics(
             #[cfg(not(test))]
             {
                 let mut diagnostics_map = HashMap::new();
-                merge_flagged_entries_from_parsed_data(&mut diagnostics_map, beancount_data);
+                merge_flagged_entries_from_parsed_data(
+                    &mut diagnostics_map,
+                    beancount_data,
+                    diagnostic_flags,
+                );
                 return diagnostics_map;
             }
 
@@ -99,7 +104,7 @@ pub fn diagnostics(
 
     // Add diagnostics for flagged entries from parsed beancount data
     // (These are additional to any flagged entries returned by the checker)
-    merge_flagged_entries_from_parsed_data(&mut diagnostics_map, beancount_data);
+    merge_flagged_entries_from_parsed_data(&mut diagnostics_map, beancount_data, diagnostic_flags);
 
     debug!("Generated diagnostics for {} files", diagnostics_map.len());
     diagnostics_map
@@ -172,15 +177,28 @@ fn merge_flagged_entries_from_checker(
 }
 
 /// Merge flagged entries from parsed beancount data into diagnostics map.
+/// Only includes entries whose flags are in the diagnostic_flags list.
 fn merge_flagged_entries_from_parsed_data(
     diagnostics_map: &mut HashMap<PathBuf, Vec<lsp_types::Diagnostic>>,
     beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
+    diagnostic_flags: &[String],
 ) {
     for (file_path, data) in beancount_data.iter() {
         for flagged_entry in &data.flagged_entries {
+            // Only create diagnostic if this flag is in the diagnostic_flags list
+            if !diagnostic_flags.contains(&flagged_entry.flag) {
+                tracing::debug!(
+                    "Skipping flag '{}' at {}:{} (not in diagnostic_flags)",
+                    flagged_entry.flag,
+                    file_path.display(),
+                    flagged_entry.line
+                );
+                continue;
+            }
+
             let diagnostic = lsp_types::Diagnostic {
                 range: full_line_range(flagged_entry.line),
-                message: "Transaction flagged for review".to_string(),
+                message: format!("Transaction flagged for review ({})", flagged_entry.flag),
                 severity: Some(lsp_types::DiagnosticSeverity::WARNING),
                 source: Some("beancount-lsp".to_string()),
                 code: Some(lsp_types::NumberOrString::String(
@@ -287,7 +305,7 @@ mod tests {
         let mock_bean_check = create_mock_bean_check_success();
         let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &checker, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path, &["!".to_string()]);
 
         assert!(
             result.is_empty(),
@@ -304,7 +322,7 @@ mod tests {
         let mock_bean_check = create_mock_bean_check_with_errors();
         let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &checker, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path, &["!".to_string()]);
 
         // Since /bin/false doesn't output structured errors, we expect empty result
         // but the test verifies that the function handles command failures gracefully
@@ -325,7 +343,7 @@ mod tests {
         let mock_bean_check = create_mock_bean_check_success();
         let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &checker, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path, &["!".to_string()]);
 
         assert!(
             !result.is_empty(),
@@ -357,7 +375,7 @@ mod tests {
                 "flagged-entry".to_string()
             ))
         );
-        assert_eq!(diagnostic.message, "Transaction flagged for review");
+        assert_eq!(diagnostic.message, "Transaction flagged for review (!)");
         assert_eq!(diagnostic.range.start.character, 0);
     }
 
@@ -371,7 +389,7 @@ mod tests {
         let mock_bean_check = create_mock_bean_check_with_errors();
         let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &checker, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path, &["!".to_string()]);
 
         assert!(
             !result.is_empty(),
@@ -407,7 +425,7 @@ mod tests {
         let invalid_command = PathBuf::from("/nonexistent/command/that/does/not/exist");
         let checker = SystemCallChecker::new(invalid_command);
 
-        let result = diagnostics(beancount_data, &checker, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path, &["!".to_string()]);
 
         assert!(
             result.is_empty(),
@@ -424,7 +442,7 @@ mod tests {
         let mock_bean_check = create_mock_bean_check_with_errors();
         let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &checker, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path, &["!".to_string()]);
 
         // Should handle command failures gracefully (no panics)
         assert!(
@@ -451,7 +469,7 @@ mod tests {
         let mock_bean_check = create_mock_bean_check_success();
         let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &checker, &file_path1);
+        let result = diagnostics(beancount_data, &checker, &file_path1, &["!".to_string()]);
 
         // Should have diagnostics for files with flagged entries
         assert!(
@@ -502,7 +520,7 @@ mod tests {
         let mock_bean_check = create_mock_bean_check_success();
         let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &checker, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path, &["!".to_string()]);
 
         assert!(
             result.is_empty(),
@@ -519,7 +537,7 @@ mod tests {
         let mock_bean_check = create_mock_bean_check_success();
         let checker = SystemCallChecker::new(mock_bean_check);
 
-        let result = diagnostics(beancount_data, &checker, &file_path);
+        let result = diagnostics(beancount_data, &checker, &file_path, &["!".to_string()]);
 
         // Since we're not testing actual bean-check error parsing here,
         // we just verify that the function works without crashing
@@ -546,5 +564,109 @@ mod tests {
         } else {
             panic!("Regex should match line 0 error format");
         }
+    }
+
+    #[test]
+    fn test_configurable_diagnostic_flags_default() {
+        use crate::checkers::SystemCallChecker;
+
+        // Test with only '!' flag (default configuration)
+        let flagged_content = r#"2023-01-01 ! "Needs attention"
+  Assets:Cash  100 USD
+  Expenses:Food
+
+2023-01-02 P "Padding transaction"
+  Assets:Checking  24.94 USD
+  Equity:Opening-Balances"#;
+
+        let (_temp_dir, file_path) = create_temp_beancount_file(flagged_content);
+        let beancount_data = create_mock_beancount_data_with_flags(&file_path, flagged_content);
+        let mock_bean_check = create_mock_bean_check_success();
+        let checker = SystemCallChecker::new(mock_bean_check);
+
+        // Test with default config (only '!' flag)
+        let result = diagnostics(
+            beancount_data.clone(),
+            &checker,
+            &file_path,
+            &["!".to_string()],
+        );
+
+        // Should have diagnostic for '!' but not for 'P'
+        let file_diagnostics = result.get(&file_path);
+        assert!(file_diagnostics.is_some(), "Should have diagnostics");
+
+        let diags = file_diagnostics.unwrap();
+        assert_eq!(
+            diags.len(),
+            1,
+            "Should have exactly 1 diagnostic for '!' flag"
+        );
+        assert!(
+            diags[0].message.contains("!"),
+            "Diagnostic should mention the '!' flag"
+        );
+    }
+
+    #[test]
+    fn test_configurable_diagnostic_flags_multiple() {
+        use crate::checkers::SystemCallChecker;
+
+        // Test with multiple flags configured
+        let flagged_content = r#"2023-01-01 ! "Needs attention"
+  Assets:Cash  100 USD
+  Expenses:Food
+
+2023-01-02 P "Padding transaction"
+  Assets:Checking  24.94 USD
+  Equity:Opening-Balances"#;
+
+        let (_temp_dir, file_path) = create_temp_beancount_file(flagged_content);
+        let beancount_data = create_mock_beancount_data_with_flags(&file_path, flagged_content);
+        let mock_bean_check = create_mock_bean_check_success();
+        let checker = SystemCallChecker::new(mock_bean_check);
+
+        // Test with both '!' and 'P' flags configured
+        let result = diagnostics(
+            beancount_data,
+            &checker,
+            &file_path,
+            &["!".to_string(), "P".to_string()],
+        );
+
+        // Should have diagnostics for both flags
+        let file_diagnostics = result.get(&file_path);
+        assert!(file_diagnostics.is_some(), "Should have diagnostics");
+
+        let diags = file_diagnostics.unwrap();
+        assert_eq!(
+            diags.len(),
+            2,
+            "Should have 2 diagnostics for '!' and 'P' flags"
+        );
+    }
+
+    #[test]
+    fn test_configurable_diagnostic_flags_empty() {
+        use crate::checkers::SystemCallChecker;
+
+        // Test with empty diagnostic_flags (no flags should generate diagnostics)
+        let flagged_content = r#"2023-01-01 ! "Needs attention"
+  Assets:Cash  100 USD
+  Expenses:Food"#;
+
+        let (_temp_dir, file_path) = create_temp_beancount_file(flagged_content);
+        let beancount_data = create_mock_beancount_data_with_flags(&file_path, flagged_content);
+        let mock_bean_check = create_mock_bean_check_success();
+        let checker = SystemCallChecker::new(mock_bean_check);
+
+        // Test with empty diagnostic_flags
+        let result = diagnostics(beancount_data, &checker, &file_path, &[]);
+
+        // Should have no diagnostics when diagnostic_flags is empty
+        assert!(
+            result.is_empty() || result.get(&file_path).is_none_or(|d| d.is_empty()),
+            "Should have no diagnostics with empty diagnostic_flags"
+        );
     }
 }
