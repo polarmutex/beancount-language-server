@@ -12,6 +12,8 @@ pub struct Config {
     pub journal_root: Option<PathBuf>,
     pub formatting: FormattingConfig,
     pub bean_check: BeancountCheckConfig,
+    /// Flags that should generate diagnostics (e.g., ["!"] for only exclamation mark)
+    pub diagnostic_flags: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +64,7 @@ impl Config {
             journal_root: None,
             formatting: FormattingConfig::default(),
             bean_check: BeancountCheckConfig::new(),
+            diagnostic_flags: vec!["!".to_string()],
         }
     }
     pub fn update(&mut self, json: serde_json::Value) -> Result<()> {
@@ -126,6 +129,11 @@ impl Config {
             }
         }
 
+        // Update diagnostic_flags configuration
+        if let Some(diagnostic_flags) = beancount_lsp_settings.diagnostic_flags {
+            self.diagnostic_flags = diagnostic_flags;
+        }
+
         Ok(())
     }
 }
@@ -135,6 +143,8 @@ pub struct BeancountLspOptions {
     pub journal_file: Option<String>,
     pub formatting: Option<FormattingOptions>,
     pub bean_check: Option<BeancountCheckOptions>,
+    /// Flags that should generate diagnostics (e.g., ["!"] for only exclamation mark)
+    pub diagnostic_flags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -488,5 +498,32 @@ mod tests {
             config.bean_check.python_cmd,
             Some(PathBuf::from("/usr/bin/python3"))
         );
+    }
+
+    #[test]
+    fn test_diagnostic_flags_default() {
+        let config = Config::new(PathBuf::new());
+        assert_eq!(config.diagnostic_flags, vec!["!".to_string()]);
+    }
+
+    #[test]
+    fn test_diagnostic_flags_custom() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(serde_json::from_str(r#"{"diagnostic_flags": ["!", "P"]}"#).unwrap())
+            .unwrap();
+        assert_eq!(
+            config.diagnostic_flags,
+            vec!["!".to_string(), "P".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_diagnostic_flags_empty() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(serde_json::from_str(r#"{"diagnostic_flags": []}"#).unwrap())
+            .unwrap();
+        assert_eq!(config.diagnostic_flags, Vec::<String>::new());
     }
 }
