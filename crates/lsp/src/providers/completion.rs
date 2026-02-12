@@ -3016,4 +3016,133 @@ A"#;
             );
         }
     }
+
+    #[test]
+    fn test_completion_with_renamed_accounts() {
+        // Test for issue #672: Support option "name_..." for renamed account types
+        use lsp_types::{TextDocumentIdentifier, TextDocumentPositionParams};
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::str::FromStr;
+        use std::sync::Arc;
+        use tree_sitter::Parser;
+
+        // Create test data with renamed account types (German)
+        let test_data = r#"
+option "name_assets" "Aktiva"
+option "name_expenses" "Aufwendungen"
+
+2025-01-01 open Aktiva:Bank USD
+2025-01-01 open Aufwendungen:Food USD
+"#;
+
+        // Parse the test data
+        let rope = Rope::from_str(test_data);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(test_data, None).unwrap();
+        let bean_data = BeancountData::new(&Arc::new(tree), &rope);
+
+        // Verify that accounts are extracted with custom names
+        let accounts = bean_data.get_accounts();
+        assert!(
+            accounts.contains(&"Aktiva:Bank".to_string()),
+            "Should extract account with custom name 'Aktiva:Bank'"
+        );
+        assert!(
+            accounts.contains(&"Aufwendungen:Food".to_string()),
+            "Should extract account with custom name 'Aufwendungen:Food'"
+        );
+
+        // Create snapshot with test data
+        let mut beancount_data: HashMap<PathBuf, Arc<BeancountData>> = HashMap::new();
+        let (path, uri) = if cfg!(windows) {
+            let path = PathBuf::from("C:\\test.bean");
+            let url = url::Url::from_file_path(&path).unwrap();
+            let uri = lsp_types::Uri::from_str(url.as_str()).unwrap();
+            (path, uri)
+        } else {
+            let path = PathBuf::from("/test.bean");
+            let url = url::Url::from_file_path(&path).unwrap();
+            let uri = lsp_types::Uri::from_str(url.as_str()).unwrap();
+            (path, uri)
+        };
+        beancount_data.insert(path.clone(), Arc::new(bean_data));
+
+        // Parse the document being edited - transaction with posting line
+        let edit_text = r#"2025-01-02 * "Shopping"
+  Akti"#;
+        let edit_rope = Rope::from_str(edit_text);
+        let mut edit_parser = Parser::new();
+        edit_parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let edit_tree = edit_parser.parse(edit_text, None).unwrap();
+
+        let mut forest = HashMap::new();
+        forest.insert(path.clone(), Arc::new(edit_tree));
+
+        let mut open_docs = HashMap::new();
+        open_docs.insert(
+            path.clone(),
+            crate::document::Document {
+                content: edit_rope.clone(),
+                version: 0,
+            },
+        );
+
+        let snapshot = LspServerStateSnapshot {
+            beancount_data,
+            config: crate::config::Config::new(PathBuf::from("/test")),
+            forest,
+            open_docs,
+            checker: None,
+        };
+
+        // Cursor position after "Akti"
+        // Line 1: '  Akti'
+        //          012345
+        //                ^6 = after "Akti"
+        let position = TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: lsp_types::Position {
+                line: 1,
+                character: 6,
+            },
+        };
+
+        // Call the completion function
+        let result = completion(snapshot, None, position).unwrap();
+        assert!(
+            result.is_some(),
+            "Should return completion items for custom account name prefix 'Akti'"
+        );
+
+        let items = result.unwrap();
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+
+        println!("Completion items for 'Akti' prefix: {:?}", labels);
+
+        // Should contain the custom account name
+        assert!(
+            labels.contains(&"Aktiva:Bank"),
+            "Should contain 'Aktiva:Bank' for prefix 'Akti'. Found: {:?}",
+            labels
+        );
+
+        // Verify Aktiva:Bank is ranked highly (should be first or near first)
+        let aktiva_pos = labels.iter().position(|&l| l == "Aktiva:Bank");
+        assert!(
+            aktiva_pos.is_some(),
+            "Aktiva:Bank should be in completion results"
+        );
+        assert!(
+            aktiva_pos.unwrap() < 3,
+            "Aktiva:Bank should be ranked in top 3 for prefix 'Akti', found at position {:?}",
+            aktiva_pos
+        );
+    }
 }
