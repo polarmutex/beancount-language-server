@@ -62,6 +62,8 @@ fn extract_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbol> {
         "commodity" => extract_commodity_symbol(node, content),
         "event" => extract_event_symbol(node, content),
         "option" => extract_option_symbol(node, content),
+        "comment" => extract_heading_symbol(node, content),
+        "section" => extract_section_symbol(node, content),
         _ => None,
     }
 }
@@ -396,6 +398,117 @@ fn extract_option_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbol> 
     })
 }
 
+/// Extract section symbol (org-mode and markdown sections parsed by tree-sitter-beancount).
+/// Sections are hierarchical with "headline" and nested "section" children.
+/// Supports both org-mode (* headers) and markdown (# headers).
+fn extract_section_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbol> {
+    let mut cursor = node.walk();
+    let mut headline_text = String::new();
+    let mut level = 0;
+    let mut section_type = "Section";
+    let mut children = Vec::new();
+
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "headline" => {
+                let text = text_for_tree_sitter_node(content, &child);
+                let trimmed = text.trim();
+
+                // Check for org-mode style (* headers)
+                if trimmed.starts_with('*') {
+                    level = trimmed.chars().take_while(|&c| c == '*').count();
+                    if level > 0 {
+                        headline_text = trimmed[level..].trim().to_string();
+                        section_type = "Section";
+                    }
+                }
+                // Check for markdown style (# headers)
+                else if trimmed.starts_with('#') {
+                    level = trimmed.chars().take_while(|&c| c == '#').count();
+                    if level > 0 {
+                        headline_text = trimmed[level..].trim().to_string();
+                        section_type = "Heading";
+                    }
+                }
+            }
+            "section" => {
+                // Recursively extract nested sections as children
+                if let Some(child_symbol) = extract_section_symbol(&child, content) {
+                    children.push(child_symbol);
+                }
+            }
+            _ => {
+                // Extract other directives (open, transaction, etc.) as children
+                if let Some(child_symbol) = extract_symbol(&child, content) {
+                    children.push(child_symbol);
+                }
+            }
+        }
+    }
+
+    if headline_text.is_empty() {
+        return None;
+    }
+
+    let detail = format!("{} (Level {})", section_type, level);
+    Some(DocumentSymbol {
+        name: headline_text,
+        detail: Some(detail),
+        kind: SymbolKind::NAMESPACE,
+        range: node_to_range(node),
+        selection_range: node_to_range(node),
+        children: if children.is_empty() {
+            None
+        } else {
+            Some(children)
+        },
+        #[allow(deprecated)]
+        deprecated: None,
+        tags: None,
+    })
+}
+
+/// Extract heading symbol from comment lines (markdown style).
+/// Markdown: `# Heading`, `## Subheading`
+fn extract_heading_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbol> {
+    let text = text_for_tree_sitter_node(content, node);
+    let trimmed = text.trim();
+
+    // Check for markdown style (# headers)
+    if let Some(stripped) = trimmed.strip_prefix('#') {
+        let mut level = 1;
+        let mut remaining = stripped;
+
+        // Count additional hashes
+        while let Some(rest) = remaining.strip_prefix('#') {
+            level += 1;
+            remaining = rest;
+        }
+
+        // Extract the heading text after hashes and any whitespace
+        let heading_text = remaining.trim();
+        if heading_text.is_empty() {
+            return None;
+        }
+
+        let detail = format!("Heading (Level {})", level);
+        return Some(DocumentSymbol {
+            name: heading_text.to_string(),
+            detail: Some(detail),
+            kind: SymbolKind::NAMESPACE,
+            range: node_to_range(node),
+            selection_range: node_to_range(node),
+            children: None,
+            #[allow(deprecated)]
+            deprecated: None,
+            tags: None,
+        });
+    }
+
+    // Not a heading comment, ignore regular comments
+    None
+}
+
 /// Convert a tree-sitter node to an LSP Range.
 fn node_to_range(node: &Node) -> lsp_types::Range {
     lsp_types::Range {
@@ -677,6 +790,218 @@ mod tests {
 
         if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
             assert_eq!(symbols.len(), 0);
+        }
+    }
+
+    #[test]
+    fn test_org_mode_headers() {
+        let content = r#"* Top Level Section
+** Subsection Level 2
+*** Subsection Level 3
+
+2024-01-01 open Assets:Checking USD
+"#;
+        let state = TestState::new(content).unwrap();
+
+        let uri =
+            lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref()).unwrap();
+        let params = DocumentSymbolParams {
+            text_document: lsp_types::TextDocumentIdentifier { uri },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result = document_symbols(state.snapshot, params).unwrap();
+        assert!(result.is_some());
+
+        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+            // Should have 1 top-level section with nested children
+            assert_eq!(symbols.len(), 1);
+
+            // Check top level section
+            let section1 = &symbols[0];
+            assert_eq!(section1.kind, SymbolKind::NAMESPACE);
+            assert_eq!(section1.name, "Top Level Section");
+            assert_eq!(section1.detail, Some("Section (Level 1)".to_string()));
+
+            // Check nested children - only level 2 section (open is nested deeper)
+            let children = section1.children.as_ref().unwrap();
+            assert_eq!(children.len(), 1);
+
+            // Check second level section
+            let section2 = &children[0];
+            assert_eq!(section2.kind, SymbolKind::NAMESPACE);
+            assert_eq!(section2.name, "Subsection Level 2");
+            assert_eq!(section2.detail, Some("Section (Level 2)".to_string()));
+
+            // Check third level section nested in second
+            let section2_children = section2.children.as_ref().unwrap();
+            assert_eq!(section2_children.len(), 1); // Level 3 section
+
+            let section3 = &section2_children[0];
+            assert_eq!(section3.kind, SymbolKind::NAMESPACE);
+            assert_eq!(section3.name, "Subsection Level 3");
+            assert_eq!(section3.detail, Some("Section (Level 3)".to_string()));
+
+            // Check open directive at level 3
+            let section3_children = section3.children.as_ref().unwrap();
+            assert_eq!(section3_children.len(), 1);
+            let open = &section3_children[0];
+            assert_eq!(open.kind, SymbolKind::FILE);
+            assert_eq!(open.name, "Assets:Checking");
+        } else {
+            panic!("Expected nested document symbols");
+        }
+    }
+
+    #[test]
+    fn test_markdown_headers() {
+        let content = r#"# Markdown Header 1
+## Markdown Header 2
+### Markdown Header 3
+
+2024-01-01 open Assets:Checking USD
+"#;
+        let state = TestState::new(content).unwrap();
+
+        let uri =
+            lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref()).unwrap();
+        let params = DocumentSymbolParams {
+            text_document: lsp_types::TextDocumentIdentifier { uri },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result = document_symbols(state.snapshot, params).unwrap();
+        assert!(result.is_some());
+
+        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+            // Should have 1 top-level section with nested children
+            assert_eq!(symbols.len(), 1);
+
+            // Check top level header
+            let header1 = &symbols[0];
+            assert_eq!(header1.kind, SymbolKind::NAMESPACE);
+            assert_eq!(header1.name, "Markdown Header 1");
+            assert_eq!(header1.detail, Some("Heading (Level 1)".to_string()));
+
+            // Check nested children
+            let children = header1.children.as_ref().unwrap();
+            assert_eq!(children.len(), 1); // Level 2 header
+
+            // Check second level header
+            let header2 = &children[0];
+            assert_eq!(header2.kind, SymbolKind::NAMESPACE);
+            assert_eq!(header2.name, "Markdown Header 2");
+            assert_eq!(header2.detail, Some("Heading (Level 2)".to_string()));
+
+            // Check third level header nested in second
+            let header2_children = header2.children.as_ref().unwrap();
+            assert_eq!(header2_children.len(), 1);
+
+            let header3 = &header2_children[0];
+            assert_eq!(header3.kind, SymbolKind::NAMESPACE);
+            assert_eq!(header3.name, "Markdown Header 3");
+            assert_eq!(header3.detail, Some("Heading (Level 3)".to_string()));
+
+            // Check open directive at level 3
+            let header3_children = header3.children.as_ref().unwrap();
+            assert_eq!(header3_children.len(), 1);
+            let open = &header3_children[0];
+            assert_eq!(open.kind, SymbolKind::FILE);
+            assert_eq!(open.name, "Assets:Checking");
+        } else {
+            panic!("Expected nested document symbols");
+        }
+    }
+
+    #[test]
+    fn test_regular_comments_ignored() {
+        let content = r#"; Regular comment
+;; Another comment
+; Not a header
+
+2024-01-01 open Assets:Checking USD
+"#;
+        let state = TestState::new(content).unwrap();
+
+        let uri =
+            lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref()).unwrap();
+        let params = DocumentSymbolParams {
+            text_document: lsp_types::TextDocumentIdentifier { uri },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result = document_symbols(state.snapshot, params).unwrap();
+        assert!(result.is_some());
+
+        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+            // Only the open directive should be returned, regular comments are ignored
+            assert_eq!(symbols.len(), 1);
+            assert_eq!(symbols[0].kind, SymbolKind::FILE);
+            assert_eq!(symbols[0].name, "Assets:Checking");
+        } else {
+            panic!("Expected nested document symbols");
+        }
+    }
+
+    #[test]
+    fn test_mixed_headers_and_directives() {
+        let content = r#"* Income
+
+2024-01-01 open Income:Salary USD
+
+** Salary Details
+
+2024-01-15 * "Employer" "Monthly salary"
+  Income:Salary   -5000.00 USD
+  Assets:Checking  5000.00 USD
+
+# Expenses
+
+2024-01-01 open Expenses:Groceries USD
+"#;
+        let state = TestState::new(content).unwrap();
+
+        let uri =
+            lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref()).unwrap();
+        let params = DocumentSymbolParams {
+            text_document: lsp_types::TextDocumentIdentifier { uri },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result = document_symbols(state.snapshot, params).unwrap();
+        assert!(result.is_some());
+
+        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+            // Should have 2 top-level sections: Income (org-mode) and Expenses (markdown)
+            assert_eq!(symbols.len(), 2);
+
+            // Check org-mode Income section
+            assert_eq!(symbols[0].name, "Income");
+            assert_eq!(symbols[0].detail, Some("Section (Level 1)".to_string()));
+
+            // Income section should have: open directive, Salary Details subsection
+            let income_children = symbols[0].children.as_ref().unwrap();
+            assert!(income_children.len() >= 2);
+            assert_eq!(income_children[0].name, "Income:Salary");
+            assert_eq!(income_children[1].name, "Salary Details");
+            assert_eq!(
+                income_children[1].detail,
+                Some("Section (Level 2)".to_string())
+            );
+
+            // Check markdown Expenses section
+            assert_eq!(symbols[1].name, "Expenses");
+            assert_eq!(symbols[1].detail, Some("Heading (Level 1)".to_string()));
+
+            // Expenses section should have open directive
+            let expenses_children = symbols[1].children.as_ref().unwrap();
+            assert_eq!(expenses_children[0].name, "Expenses:Groceries");
+        } else {
+            panic!("Expected nested document symbols");
         }
     }
 }
