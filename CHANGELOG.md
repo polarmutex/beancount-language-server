@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.2] - 2026-02-12
+
+### Bug Fixes
+
+- Allow diagnotics when journal_root not set #822
+
 ## [1.9.1] - 2026-02-08
 
 ### Bug Fixes
