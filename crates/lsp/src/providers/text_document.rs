@@ -520,7 +520,7 @@ pub(crate) fn did_change(
 fn handle_diagnostics(
     snapshot: LspServerStateSnapshot,
     sender: Sender<Task>,
-    _uri: lsp_types::Uri,
+    uri: lsp_types::Uri,
 ) -> Result<()> {
     tracing::debug!("text_document::handle_diagnostics");
 
@@ -539,10 +539,20 @@ fn handle_diagnostics(
     );
 
     let root_journal_path = match snapshot.config.journal_root.clone() {
-        Some(path) => path,
+        Some(path) => {
+            tracing::debug!("Using configured journal_root: {}", path.display());
+            path
+        }
         None => {
-            tracing::warn!("No journal_root configured; skipping diagnostics");
-            return Ok(());
+            // Fallback to using the current file as the root journal
+            let path = uri
+                .to_file_path()
+                .map_err(|_| anyhow!("Failed to convert URI to file path: {}", uri.as_str()))?;
+            tracing::debug!(
+                "No journal_root configured; using current file as root: {}",
+                path.display()
+            );
+            path
         }
     };
 
@@ -930,5 +940,170 @@ mod tests {
             result <= doc.content.len_chars(),
             "Should clamp to valid char position"
         );
+    }
+
+    #[test]
+    fn test_handle_diagnostics_without_journal_root() {
+        // Regression test for issue #822
+        // Verify that diagnostics work even when journal_root is not configured
+        use super::handle_diagnostics;
+        use crate::checkers::SystemCallChecker;
+        use crate::config::Config;
+        use crate::server::LspServerStateSnapshot;
+        use crossbeam_channel;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::str::FromStr;
+        use std::sync::Arc;
+
+        // Create a temporary test file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let test_file = temp_dir.path().join("test.beancount");
+        std::fs::write(&test_file, "2023-01-01 open Assets:Cash\n").unwrap();
+
+        // Create URI from the test file
+        let url = url::Url::from_file_path(&test_file).unwrap();
+        let uri = lsp_types::Uri::from_str(url.as_ref()).unwrap();
+
+        // Create config WITHOUT journal_root (this is the bug scenario)
+        let mut config = Config::new(temp_dir.path().to_path_buf());
+        config.journal_root = None; // Explicitly set to None
+
+        // Create a mock checker that succeeds
+        let checker = SystemCallChecker::new(PathBuf::from("/bin/true"));
+
+        // Create snapshot
+        let snapshot = LspServerStateSnapshot {
+            beancount_data: HashMap::new(),
+            config,
+            forest: HashMap::new(),
+            open_docs: HashMap::new(),
+            checker: Some(Arc::new(checker)),
+        };
+
+        // Create channel for task communication using crossbeam_channel
+        let (sender, receiver) = crossbeam_channel::unbounded();
+
+        // Call handle_diagnostics - this should NOT skip diagnostics
+        let result = handle_diagnostics(snapshot, sender, uri.clone());
+
+        // The function should succeed (not return error about missing journal_root)
+        assert!(
+            result.is_ok(),
+            "handle_diagnostics should succeed without journal_root configured"
+        );
+
+        // Verify that tasks were sent (diagnostics were run, not skipped)
+        let mut task_count = 0;
+        while let Ok(_task) = receiver.try_recv() {
+            task_count += 1;
+        }
+
+        // Should have at least progress messages (start + end)
+        assert!(
+            task_count > 0,
+            "Should send tasks when running diagnostics (got {} tasks)",
+            task_count
+        );
+    }
+
+    #[test]
+    fn test_handle_diagnostics_with_journal_root() {
+        // Verify that diagnostics still work correctly when journal_root IS configured
+        use super::handle_diagnostics;
+        use crate::checkers::SystemCallChecker;
+        use crate::config::Config;
+        use crate::server::LspServerStateSnapshot;
+        use crossbeam_channel;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::str::FromStr;
+        use std::sync::Arc;
+
+        // Create temporary test files
+        let temp_dir = tempfile::tempdir().unwrap();
+        let root_journal = temp_dir.path().join("main.beancount");
+        let other_file = temp_dir.path().join("accounts.beancount");
+        std::fs::write(&root_journal, "2023-01-01 open Assets:Cash\n").unwrap();
+        std::fs::write(&other_file, "2023-01-01 open Assets:Bank\n").unwrap();
+
+        // Create URI from the other file (not the root)
+        let url = url::Url::from_file_path(&other_file).unwrap();
+        let uri = lsp_types::Uri::from_str(url.as_ref()).unwrap();
+
+        // Create config WITH journal_root (traditional multi-file setup)
+        let mut config = Config::new(temp_dir.path().to_path_buf());
+        config.journal_root = Some(root_journal.clone());
+
+        // Create a mock checker
+        let checker = SystemCallChecker::new(PathBuf::from("/bin/true"));
+
+        // Create snapshot
+        let snapshot = LspServerStateSnapshot {
+            beancount_data: HashMap::new(),
+            config,
+            forest: HashMap::new(),
+            open_docs: HashMap::new(),
+            checker: Some(Arc::new(checker)),
+        };
+
+        // Create channel for task communication using crossbeam_channel
+        let (sender, receiver) = crossbeam_channel::unbounded();
+
+        // Call handle_diagnostics with a different file than journal_root
+        let result = handle_diagnostics(snapshot, sender, uri.clone());
+
+        // Should succeed
+        assert!(
+            result.is_ok(),
+            "handle_diagnostics should succeed with journal_root configured"
+        );
+
+        // Verify that tasks were sent
+        let mut task_count = 0;
+        while let Ok(_task) = receiver.try_recv() {
+            task_count += 1;
+        }
+
+        assert!(
+            task_count > 0,
+            "Should send tasks when running diagnostics with journal_root"
+        );
+    }
+
+    #[test]
+    fn test_handle_diagnostics_without_checker() {
+        // Verify that diagnostics gracefully handle missing checker
+        use super::handle_diagnostics;
+        use crate::config::Config;
+        use crate::server::LspServerStateSnapshot;
+        use crossbeam_channel;
+        use std::collections::HashMap;
+        use std::str::FromStr;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let test_file = temp_dir.path().join("test.beancount");
+        std::fs::write(&test_file, "2023-01-01 open Assets:Cash\n").unwrap();
+
+        let url = url::Url::from_file_path(&test_file).unwrap();
+        let uri = lsp_types::Uri::from_str(url.as_ref()).unwrap();
+
+        let config = Config::new(temp_dir.path().to_path_buf());
+
+        // Create snapshot WITHOUT checker
+        let snapshot = LspServerStateSnapshot {
+            beancount_data: HashMap::new(),
+            config,
+            forest: HashMap::new(),
+            open_docs: HashMap::new(),
+            checker: None, // No checker available
+        };
+
+        let (sender, _receiver) = crossbeam_channel::unbounded();
+
+        // Should succeed but skip diagnostics
+        let result = handle_diagnostics(snapshot, sender, uri);
+
+        assert!(result.is_ok(), "Should handle missing checker gracefully");
     }
 }
