@@ -50,6 +50,7 @@ use tree_sitter_beancount::tree_sitter;
 static UNIFIED_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
 static CURRENCY_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
 static NOTE_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
+static OPTION_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
 
 /// Get or compile the unified query (tags, links, flags, accounts, transactions)
 pub(crate) fn get_unified_query() -> &'static tree_sitter::Query {
@@ -91,6 +92,17 @@ fn get_note_query() -> &'static tree_sitter::Query {
     })
 }
 
+/// Get or compile the option query (option directives with key and value)
+fn get_option_query() -> &'static tree_sitter::Query {
+    OPTION_QUERY.get_or_init(|| {
+        let query_string = r#"
+            (option key: (string) @key value: (string) @value)
+        "#;
+        tree_sitter::Query::new(&tree_sitter_beancount::language(), query_string)
+            .expect("Failed to compile option query")
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct FlaggedEntry {
     _file: String,
@@ -108,6 +120,8 @@ pub struct BeancountData {
     tags: Arc<Vec<String>>,
     links: Arc<Vec<String>>,
     commodities: Arc<Vec<String>>,
+    /// Mapping from original account type names to custom names (e.g., "Assets" -> "Aktiva")
+    account_name_mappings: Arc<std::collections::HashMap<String, String>>,
 }
 
 impl BeancountData {
@@ -306,6 +320,57 @@ impl BeancountData {
             }
         }
 
+        // Extract account name mappings from options (e.g., name_assets, name_expenses)
+        tracing::debug!("beancount_data:: get option directives");
+        let option_query = get_option_query();
+        let mut cursor_qry = tree_sitter::QueryCursor::new();
+        let mut matches = cursor_qry.matches(option_query, tree.root_node(), content_bytes);
+
+        let key_idx = option_query
+            .capture_index_for_name("key")
+            .expect("option query should have 'key' capture");
+        let value_idx = option_query
+            .capture_index_for_name("value")
+            .expect("option query should have 'value' capture");
+
+        let mut account_name_mappings: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+
+        while let Some(qmatch) = matches.next() {
+            let mut key: Option<String> = None;
+            let mut value: Option<String> = None;
+
+            for capture in qmatch.captures {
+                if capture.index == key_idx {
+                    let raw = text_for_tree_sitter_node(content, &capture.node);
+                    key = Some(clean_note_text(&raw)); // Reuse clean_note_text to remove quotes
+                } else if capture.index == value_idx {
+                    let raw = text_for_tree_sitter_node(content, &capture.node);
+                    value = Some(clean_note_text(&raw));
+                }
+            }
+
+            // Process name_* options to create reverse mappings (custom name -> original)
+            if let (Some(key), Some(value)) = (key, value) {
+                let original_name = match key.as_str() {
+                    "name_assets" => Some("Assets"),
+                    "name_liabilities" => Some("Liabilities"),
+                    "name_equity" => Some("Equity"),
+                    "name_income" => Some("Income"),
+                    "name_expenses" => Some("Expenses"),
+                    _ => None,
+                };
+
+                if let Some(original) = original_name {
+                    // Store bidirectional mapping
+                    // Custom -> Original (for account parsing)
+                    account_name_mappings.insert(value.clone(), original.to_string());
+                    // Original -> Custom (for completion suggestions)
+                    account_name_mappings.insert(original.to_string(), value);
+                }
+            }
+        }
+
         Self {
             accounts: Arc::new(accounts),
             payees: Arc::new(payees),
@@ -315,6 +380,7 @@ impl BeancountData {
             tags: Arc::new(tags),
             links: Arc::new(links),
             commodities: Arc::new(commodities),
+            account_name_mappings: Arc::new(account_name_mappings),
         }
     }
 
@@ -344,6 +410,60 @@ impl BeancountData {
 
     pub fn get_commodities(&self) -> Arc<Vec<String>> {
         Arc::clone(&self.commodities)
+    }
+
+    pub fn get_account_name_mappings(&self) -> Arc<std::collections::HashMap<String, String>> {
+        Arc::clone(&self.account_name_mappings)
+    }
+
+    /// Normalizes an account name by applying reverse mappings from custom names to original names.
+    /// For example, if "name_assets" is set to "Aktiva", this converts "Aktiva:Bank" to "Assets:Bank".
+    pub fn normalize_account_name(&self, account: &str) -> String {
+        if self.account_name_mappings.is_empty() {
+            return account.to_string();
+        }
+
+        // Split account into parts (e.g., "Aktiva:Bank:Checking" -> ["Aktiva", "Bank", "Checking"])
+        let parts: Vec<&str> = account.split(':').collect();
+        if parts.is_empty() {
+            return account.to_string();
+        }
+
+        // Check if the first part needs to be mapped to the original name
+        let first_part = parts[0];
+        if let Some(original) = self.account_name_mappings.get(first_part) {
+            // Replace the first part with the original name
+            let mut normalized_parts = vec![original.as_str()];
+            normalized_parts.extend_from_slice(&parts[1..]);
+            normalized_parts.join(":")
+        } else {
+            account.to_string()
+        }
+    }
+
+    /// Denormalizes an account name by applying mappings from original names to custom names.
+    /// For example, if "name_assets" is set to "Aktiva", this converts "Assets:Bank" to "Aktiva:Bank".
+    pub fn denormalize_account_name(&self, account: &str) -> String {
+        if self.account_name_mappings.is_empty() {
+            return account.to_string();
+        }
+
+        // Split account into parts (e.g., "Assets:Bank:Checking" -> ["Assets", "Bank", "Checking"])
+        let parts: Vec<&str> = account.split(':').collect();
+        if parts.is_empty() {
+            return account.to_string();
+        }
+
+        // Check if the first part needs to be mapped to the custom name
+        let first_part = parts[0];
+        if let Some(custom) = self.account_name_mappings.get(first_part) {
+            // Replace the first part with the custom name
+            let mut denormalized_parts = vec![custom.as_str()];
+            denormalized_parts.extend_from_slice(&parts[1..]);
+            denormalized_parts.join(":")
+        } else {
+            account.to_string()
+        }
     }
 }
 
@@ -567,5 +687,147 @@ mod tests {
 
         let commodities = data.get_commodities();
         assert!(!commodities.is_empty(), "Commodities should not be empty");
+    }
+
+    #[test]
+    fn test_explore_option_directive_ast() {
+        // Explore how option directives are represented in the AST
+        let sample = r#"
+option "name_assets" "Aktiva"
+option "name_expenses" "Aufwendungen"
+option "title" "My Ledger"
+        "#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(sample, None).unwrap();
+
+        println!("\n=== Full S-expression ===");
+        println!("{}", tree.root_node().to_sexp());
+
+        println!("\n=== Walking tree ===");
+        let mut cursor = tree.root_node().walk();
+        for child in tree.root_node().children(&mut cursor) {
+            println!("\nNode kind: {}", child.kind());
+            println!("Node text: {}", &sample[child.byte_range()]);
+
+            if child.kind() == "option" {
+                let mut opt_cursor = child.walk();
+                for opt_child in child.children(&mut opt_cursor) {
+                    println!("  Child kind: {}", opt_child.kind());
+                    println!("  Child text: '{}'", &sample[opt_child.byte_range()]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_account_name_mappings() {
+        // Test that account name mappings are extracted correctly
+        let sample = r#"
+option "name_assets" "Aktiva"
+option "name_expenses" "Aufwendungen"
+option "name_liabilities" "Verbindlichkeiten"
+option "name_income" "Erträge"
+option "name_equity" "Eigenkapital"
+
+2025-01-01 open Aktiva:Bank USD
+2025-01-01 open Aufwendungen:Food USD
+        "#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(sample, None).unwrap();
+        let content = ropey::Rope::from_str(sample);
+
+        let data = BeancountData::new(&tree, &content);
+
+        // Verify that account name mappings are created
+        let mappings = data.get_account_name_mappings();
+
+        // Check bidirectional mappings
+        assert_eq!(mappings.get("Aktiva"), Some(&"Assets".to_string()));
+        assert_eq!(mappings.get("Assets"), Some(&"Aktiva".to_string()));
+
+        assert_eq!(mappings.get("Aufwendungen"), Some(&"Expenses".to_string()));
+        assert_eq!(mappings.get("Expenses"), Some(&"Aufwendungen".to_string()));
+
+        assert_eq!(
+            mappings.get("Verbindlichkeiten"),
+            Some(&"Liabilities".to_string())
+        );
+        assert_eq!(
+            mappings.get("Liabilities"),
+            Some(&"Verbindlichkeiten".to_string())
+        );
+
+        assert_eq!(mappings.get("Erträge"), Some(&"Income".to_string()));
+        assert_eq!(mappings.get("Income"), Some(&"Erträge".to_string()));
+
+        assert_eq!(mappings.get("Eigenkapital"), Some(&"Equity".to_string()));
+        assert_eq!(mappings.get("Equity"), Some(&"Eigenkapital".to_string()));
+
+        // Verify that accounts are still extracted with custom names
+        let accounts = data.get_accounts();
+        assert!(
+            accounts.contains(&"Aktiva:Bank".to_string()),
+            "Should extract account with custom name"
+        );
+        assert!(
+            accounts.contains(&"Aufwendungen:Food".to_string()),
+            "Should extract account with custom name"
+        );
+    }
+
+    #[test]
+    fn test_normalize_denormalize_account_names() {
+        // Test account name normalization and denormalization
+        let sample = r#"
+option "name_assets" "Aktiva"
+option "name_expenses" "Aufwendungen"
+        "#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(sample, None).unwrap();
+        let content = ropey::Rope::from_str(sample);
+
+        let data = BeancountData::new(&tree, &content);
+
+        // Test normalization (custom -> original)
+        assert_eq!(
+            data.normalize_account_name("Aktiva:Bank:Checking"),
+            "Assets:Bank:Checking"
+        );
+        assert_eq!(
+            data.normalize_account_name("Aufwendungen:Food:Groceries"),
+            "Expenses:Food:Groceries"
+        );
+
+        // Test denormalization (original -> custom)
+        assert_eq!(
+            data.denormalize_account_name("Assets:Bank:Checking"),
+            "Aktiva:Bank:Checking"
+        );
+        assert_eq!(
+            data.denormalize_account_name("Expenses:Food:Groceries"),
+            "Aufwendungen:Food:Groceries"
+        );
+
+        // Test that unmapped accounts pass through unchanged
+        assert_eq!(
+            data.normalize_account_name("Other:Account"),
+            "Other:Account"
+        );
+        assert_eq!(
+            data.denormalize_account_name("Other:Account"),
+            "Other:Account"
+        );
     }
 }
