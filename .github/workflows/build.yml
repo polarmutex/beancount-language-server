@@ -59,7 +59,7 @@ jobs:
 
             - name: Upload CLI artifact
               if: "!matrix.no-run"
-              uses: actions/upload-artifact@v6
+              uses: actions/upload-artifact@v7
               with:
                   name: beancount-language-server.${{ matrix.platform }}
                   path: target/${{ matrix.target }}/release/beancount-language-server${{ contains(matrix.target, 'windows') && '.exe' || '' }}
