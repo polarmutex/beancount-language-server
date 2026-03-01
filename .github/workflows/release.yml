@@ -52,7 +52,7 @@ jobs:
                   ls -l target/
 
             - name: Generate attestations
-              uses: actions/attest-build-provenance@v3
+              uses: actions/attest-build-provenance@v4
               with:
                   subject-path: |
                       target/beancount-language-server-*.gz
