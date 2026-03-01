@@ -75,7 +75,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 env_logger = "0.11"
 insta.workspace = true
 test-log = { version = "0.2", features = ["trace"] }
-tempfile = "3.0"
+tempfile = "3.26"
 
 # Benchmarking
 criterion = "0.8"
