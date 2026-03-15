@@ -10,6 +10,7 @@ use anyhow::Context;
 use anyhow::Result;
 use lsp_types::GotoDefinitionResponse;
 use lsp_types::Location;
+use lsp_types::LocationLink;
 use ropey::Rope;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -44,12 +45,25 @@ pub(crate) fn definition(
         return Ok(None);
     }
 
+    let origin_selection_range = tree_sitter_node_to_lsp_range(&content, &node);
+
     let node_text = text_for_tree_sitter_node(&content, &node);
     let locs = find_account_open_definitions(&snapshot.forest, &snapshot.open_docs, node_text);
     if locs.is_empty() {
         return Ok(None);
     }
-    Ok(Some(GotoDefinitionResponse::Array(locs)))
+
+    let links: Vec<LocationLink> = locs
+        .into_iter()
+        .map(|loc| LocationLink {
+            origin_selection_range: Some(origin_selection_range),
+            target_uri: loc.uri,
+            target_range: loc.range,
+            target_selection_range: loc.range,
+        })
+        .collect();
+
+    Ok(Some(GotoDefinitionResponse::Link(links)))
 }
 
 fn find_account_open_definitions(
