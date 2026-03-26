@@ -28,8 +28,11 @@ Instead of overwhelming you with every possible completion, the system provides 
 
 ### Account Completions
 - **Trigger**: Typing in posting areas or after `:`
-- **Features**: 
+- **Features**:
   - Fuzzy search with nucleo-matcher (6x faster than alternatives)
+  - Cross-segment fuzzy matching (configurable via `completion.fuzzy_match_accounts`):
+    - `BankCheck` → Matches "Assets:US:Bank:Checking" across segments
+    - `SavRetire` → Matches "Assets:Savings:Retirement" without typing each segment
   - Capitalization-based filtering:
     - `A` → All accounts starting with "A" (Assets:*, Accounts:*)
     - `a` → Fuzzy search across all accounts

@@ -11,6 +11,7 @@ pub struct Config {
     /// path to root journal file
     pub journal_root: Option<PathBuf>,
     pub formatting: FormattingConfig,
+    pub completion: CompletionConfig,
     pub bean_check: BeancountCheckConfig,
     /// Flags that should generate diagnostics (e.g., ["!"] for only exclamation mark)
     pub diagnostic_flags: Vec<String>,
@@ -57,12 +58,28 @@ impl FormattingConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct CompletionConfig {
+    /// Enable cross-segment fuzzy matching for account completions.
+    /// When true, typing "BankCheck" can match "Assets:US:Bank:Checking".
+    pub fuzzy_match_accounts: bool,
+}
+
+impl CompletionConfig {
+    pub fn default() -> Self {
+        Self {
+            fuzzy_match_accounts: false,
+        }
+    }
+}
+
 impl Config {
     pub fn new(root_dir: PathBuf) -> Self {
         Self {
             root_dir,
             journal_root: None,
             formatting: FormattingConfig::default(),
+            completion: CompletionConfig::default(),
             bean_check: BeancountCheckConfig::new(),
             diagnostic_flags: vec!["!".to_string()],
         }
@@ -129,6 +146,13 @@ impl Config {
             }
         }
 
+        // Update completion configuration
+        if let Some(completion) = beancount_lsp_settings.completion
+            && let Some(fuzzy) = completion.fuzzy_match_accounts
+        {
+            self.completion.fuzzy_match_accounts = fuzzy;
+        }
+
         // Update diagnostic_flags configuration
         if let Some(diagnostic_flags) = beancount_lsp_settings.diagnostic_flags {
             self.diagnostic_flags = diagnostic_flags;
@@ -142,6 +166,7 @@ impl Config {
 pub struct BeancountLspOptions {
     pub journal_file: Option<String>,
     pub formatting: Option<FormattingOptions>,
+    pub completion: Option<CompletionOptions>,
     pub bean_check: Option<BeancountCheckOptions>,
     /// Flags that should generate diagnostics (e.g., ["!"] for only exclamation mark)
     pub diagnostic_flags: Option<Vec<String>>,
@@ -166,6 +191,12 @@ pub struct FormattingOptions {
 
     /// Enforce consistent indentation width for postings and directives.
     pub indent_width: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct CompletionOptions {
+    /// Enable cross-segment fuzzy matching for account completions.
+    pub fuzzy_match_accounts: Option<bool>,
 }
 
 #[serde_as]
@@ -525,5 +556,31 @@ mod tests {
             .update(serde_json::from_str(r#"{"diagnostic_flags": []}"#).unwrap())
             .unwrap();
         assert_eq!(config.diagnostic_flags, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_completion_config_default() {
+        let config = Config::new(PathBuf::new());
+        assert!(!config.completion.fuzzy_match_accounts);
+    }
+
+    #[test]
+    fn test_completion_fuzzy_match_disabled() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(
+                serde_json::from_str(r#"{"completion": {"fuzzy_match_accounts": false}}"#).unwrap(),
+            )
+            .unwrap();
+        assert!(!config.completion.fuzzy_match_accounts);
+    }
+
+    #[test]
+    fn test_completion_fuzzy_match_omitted_preserves_default() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(serde_json::from_str(r#"{"completion": {}}"#).unwrap())
+            .unwrap();
+        assert!(!config.completion.fuzzy_match_accounts);
     }
 }

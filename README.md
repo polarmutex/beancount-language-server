@@ -221,6 +221,9 @@ The language server accepts configuration via LSP initialization options:
     "account_amount_spacing": 2,
     "number_currency_spacing": 1
   },
+  "completion": {
+    "fuzzy_match_accounts": true  // Optional: cross-segment fuzzy matching (default: false)
+  },
   "diagnostic_flags": ["!"]  // Optional: flags that generate warnings (default: ["!"])
 }
 ```
@@ -492,6 +495,24 @@ This controls the whitespace between numbers and currency codes:
 }
 ```
 
+### Completion Options
+
+| Option                              | Type    | Description                                                                                                  | Default |
+| ----------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------ | ------- |
+| `completion.fuzzy_match_accounts`   | boolean | Enable cross-segment fuzzy matching for account completions. When enabled, typing "BankCheck" can match "Assets:US:Bank:Checking" without typing each segment hierarchically. | `false` |
+
+**Disable cross-segment fuzzy matching:**
+
+```json
+{
+  "completion": {
+    "fuzzy_match_accounts": false
+  }
+}
+```
+
+When disabled, account completions use standard prefix matching only (e.g., you must type "Assets:US:Bank" to match accounts under that path).
+
 ## 🖥️ Editor Setup
 
 ### Visual Studio Code
@@ -538,6 +559,10 @@ return {
         journal_file = "main.bean",
         -- Optional: flags that generate warnings (default: ["!"])
         diagnostic_flags = { "!" },
+        -- Optional: completion behavior
+        completion = {
+            fuzzy_match_accounts = true, -- cross-segment fuzzy matching (default: false)
+        },
     },
     settings = {
         beancount = {
@@ -566,6 +591,10 @@ lspconfig.beancount.setup({
       currency_column = 60,
       number_currency_spacing = 1,
     },
+    -- Optional: completion behavior
+    -- completion = {
+    --   fuzzy_match_accounts = true, -- cross-segment fuzzy matching (default: false)
+    -- },
     -- Optional: flags that generate warnings (default: {"!"})
     diagnostic_flags = { "!" },
   },
@@ -632,6 +661,10 @@ args = ["--stdio"]
 # [language-server.beancount-language-server.config.bean_check]
 # method = "python-embedded"  # or "python-system" or "system"
 
+# Optional: completion behavior
+# [language-server.beancount-language-server.config.completion]
+# fuzzy_match_accounts = true  # cross-segment fuzzy matching (default: false)
+
 # Optional: formatting configuration
 [language-server.beancount-language-server.config.formatting]
 prefix_width = 30
@@ -662,6 +695,10 @@ Add to your `settings.json` (access via `Zed > Settings > Open Settings`):
           "prefix_width": 30,
           "currency_column": 60,
           "number_currency_spacing": 1
+        },
+        // Optional: completion behavior
+        "completion": {
+          "fuzzy_match_accounts": true  // cross-segment fuzzy matching (default: true)
         }
       }
     }
@@ -710,6 +747,8 @@ Using [lsp-mode](https://github.com/emacs-lsp/lsp-mode):
                 ;; :journal_file "/path/to/main.beancount"
                 ;; Optional: bean_check config (uses python-embedded by default)
                 ;; :bean_check '(:method "python-embedded")
+                ;; Optional: completion behavior
+                ;; :completion '(:fuzzy_match_accounts t)
                 :formatting '(:prefix_width 30 :currency_column 60 :number_currency_spacing 1))))))
 ```
 
@@ -780,7 +819,11 @@ Add to LSP settings:
           "prefix_width": 30,
           "currency_column": 60,
           "number_currency_spacing": 1
-        }
+        },
+        // Optional: completion behavior
+        // "completion": {
+        //   "fuzzy_match_accounts": true
+        // }
       }
     }
   }
