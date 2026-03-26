@@ -102,7 +102,13 @@ pub(crate) fn completion(
     debug!("Determined context: {:?}", context);
 
     // Generate completions based on context
-    generate_completions(&snapshot.beancount_data, &context, content, cursor.position)
+    generate_completions(
+        &snapshot.beancount_data,
+        &context,
+        content,
+        cursor.position,
+        &snapshot.config,
+    )
 }
 
 /// Determine completion context using left-context-aware traversal.
@@ -632,6 +638,7 @@ fn generate_completions(
     context: &CompletionContext,
     content: &ropey::Rope,
     position: Position,
+    config: &crate::config::Config,
 ) -> Result<Option<Vec<CompletionItem>>> {
     match context {
         CompletionContext::DocumentRoot => {
@@ -650,23 +657,35 @@ fn generate_completions(
             data, "", content, position, false,
         )?)),
 
-        CompletionContext::PostingAccount { prefix } => {
-            Ok(Some(complete_account(data, prefix, content, position)?))
-        }
+        CompletionContext::PostingAccount { prefix } => Ok(Some(complete_account(
+            data,
+            prefix,
+            content,
+            position,
+            config.completion.fuzzy_match_accounts,
+        )?)),
 
         CompletionContext::PostingAmount => Ok(Some(complete_amount()?)),
 
         CompletionContext::PostingCurrency => Ok(Some(complete_currency(data, content, position)?)),
 
-        CompletionContext::OpenAccount { prefix } => {
-            Ok(Some(complete_account(data, prefix, content, position)?))
-        }
+        CompletionContext::OpenAccount { prefix } => Ok(Some(complete_account(
+            data,
+            prefix,
+            content,
+            position,
+            config.completion.fuzzy_match_accounts,
+        )?)),
 
         CompletionContext::OpenCurrency => Ok(Some(complete_currency(data, content, position)?)),
 
-        CompletionContext::BalanceAccount { prefix } => {
-            Ok(Some(complete_account(data, prefix, content, position)?))
-        }
+        CompletionContext::BalanceAccount { prefix } => Ok(Some(complete_account(
+            data,
+            prefix,
+            content,
+            position,
+            config.completion.fuzzy_match_accounts,
+        )?)),
 
         CompletionContext::PriceContext => Ok(Some(complete_currency(data, content, position)?)),
 
@@ -795,6 +814,7 @@ fn complete_account(
     prefix: &str,
     content: &ropey::Rope,
     position: Position,
+    fuzzy_filter: bool,
 ) -> Result<Vec<CompletionItem>> {
     let mut all_accounts: Vec<String> = Vec::new();
 
@@ -817,15 +837,22 @@ fn complete_account(
         .into_iter()
         .take(50)
         .map(|(account, score)| {
-            create_completion_with_insert_replace(
-                account,
+            let mut item = create_completion_with_insert_replace(
+                account.clone(),
                 "Beancount Account".to_string(),
                 CompletionItemKind::Enum,
                 insert_range,
                 replace_range,
                 score,
                 vec![":".to_string()], // Commit character for flow
-            )
+            );
+            if fuzzy_filter {
+                // Append colon-stripped version so client-side fuzzy matchers
+                // can match cross-segment queries like "BankCheck"
+                let stripped = account.replace(':', "");
+                item.filter_text = Some(format!("{} {}", account, stripped));
+            }
+            item
         })
         .collect())
 }
@@ -3143,6 +3170,83 @@ option "name_expenses" "Aufwendungen"
             aktiva_pos.unwrap() < 3,
             "Aktiva:Bank should be ranked in top 3 for prefix 'Akti', found at position {:?}",
             aktiva_pos
+        );
+    }
+
+    // ========================================================================
+    // Account Completion filter_text Tests
+    // ========================================================================
+
+    #[test]
+    fn test_complete_account_fuzzy_filter_sets_filter_text() {
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let test_data = r#"
+2026-01-01 open Assets:US:Bank:Checking
+2026-01-01 open Expenses:Food:Groceries
+"#;
+
+        let mut data_map = HashMap::new();
+        let bean_data = create_test_beancount_data(test_data);
+        data_map.insert(PathBuf::from("test.bean"), Arc::new(bean_data));
+
+        let content = Rope::from_str("  Assets");
+        let position = Position {
+            line: 0,
+            character: 8,
+        };
+
+        let items = complete_account(&data_map, "Assets", &content, position, true).unwrap();
+
+        let checking = items.iter().find(|i| i.label == "Assets:US:Bank:Checking");
+        assert!(checking.is_some(), "Should find Assets:US:Bank:Checking");
+
+        // With fuzzy_filter=true, filter_text should contain both the original and stripped version
+        let ft = checking.unwrap().filter_text.as_ref().unwrap();
+        assert!(
+            ft.contains("Assets:US:Bank:Checking"),
+            "filter_text should contain the original account"
+        );
+        assert!(
+            ft.contains("AssetsUSBankChecking"),
+            "filter_text should contain the colon-stripped version for cross-segment matching"
+        );
+    }
+
+    #[test]
+    fn test_complete_account_no_fuzzy_filter_preserves_default_filter_text() {
+        use ropey::Rope;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let test_data = r#"
+2026-01-01 open Assets:US:Bank:Checking
+"#;
+
+        let mut data_map = HashMap::new();
+        let bean_data = create_test_beancount_data(test_data);
+        data_map.insert(PathBuf::from("test.bean"), Arc::new(bean_data));
+
+        let content = Rope::from_str("  Assets");
+        let position = Position {
+            line: 0,
+            character: 8,
+        };
+
+        let items = complete_account(&data_map, "Assets", &content, position, false).unwrap();
+
+        let checking = items.iter().find(|i| i.label == "Assets:US:Bank:Checking");
+        assert!(checking.is_some(), "Should find Assets:US:Bank:Checking");
+
+        // With fuzzy_filter=false, filter_text should be the default (label), not the augmented version
+        let ft = checking.unwrap().filter_text.as_ref().unwrap();
+        assert!(
+            !ft.contains("AssetsUSBankChecking"),
+            "filter_text should NOT contain the colon-stripped version when fuzzy is off"
         );
     }
 }
