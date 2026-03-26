@@ -110,6 +110,20 @@
             }
           }
         },
+        "beancountLangServer.completion": {
+          "scope": "resource",
+          "description": "Completion behavior options",
+          "type": "object",
+          "default": {},
+          "additionalProperties": true,
+          "properties": {
+            "fuzzy_match_accounts": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable cross-segment fuzzy matching for account completions. When enabled, typing 'BankCheck' can match 'Assets:US:Bank:Checking'."
+            }
+          }
+        },
         "beancountLangServer.beanCheck": {
           "scope": "resource",
           "description": "Bean-check execution options",
