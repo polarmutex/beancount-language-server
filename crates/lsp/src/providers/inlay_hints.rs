@@ -291,6 +291,8 @@ fn extract_amount_from_node(
     }
 
     if !number_str.is_empty() && !currency_str.is_empty() {
+        // Strip comma thousands separators before parsing (beancount allows them)
+        let number_str = number_str.replace(',', "");
         // Try to evaluate the expression if it's a calculation
         let value = if number_str.contains('*')
             || number_str.contains('+')
@@ -384,6 +386,8 @@ fn extract_compound_amount(
     }
 
     if !number_str.is_empty() && !currency_str.is_empty() {
+        // Strip comma thousands separators before parsing (beancount allows them)
+        let number_str = number_str.replace(',', "");
         // Try to evaluate the expression if it's a calculation
         let value = if number_str.contains('*')
             || number_str.contains('+')
@@ -1425,6 +1429,105 @@ mod tests {
             assert!(
                 balancing_hint.is_some(),
                 "Should show balancing hint with calculated amount (-150 USD)"
+            );
+        } else {
+            panic!("No transaction found");
+        }
+    }
+
+    #[test]
+    fn test_comma_thousands_separator_balanced() {
+        // Amounts with comma thousands separators should be parsed correctly
+        // and recognized as balanced (no spurious inlay hint)
+        let content = r#"2024-01-15 * "Payment"
+  Liabilities:CreditCard    19,987.73 USD
+  Assets:Checking          -19987.73 USD
+"#;
+        let rope_content = ropey::Rope::from_str(content);
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(content, None).unwrap();
+
+        let txn_query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let content_bytes = content.as_bytes();
+        let mut matches = cursor.matches(&txn_query, tree.root_node(), content_bytes);
+
+        if let Some(qmatch) = matches.next() {
+            let txn_node = qmatch.captures[0].node;
+            let hints = process_transaction(&txn_node, &rope_content).unwrap();
+
+            // Should not have a warning hint - transaction is balanced
+            let has_warning = hints.iter().any(|h| {
+                if let InlayHintLabel::String(label) = &h.label {
+                    label.contains("⚠")
+                } else {
+                    false
+                }
+            });
+            assert!(
+                !has_warning,
+                "Transaction with comma-formatted amounts should not show unbalanced warning"
+            );
+
+            // Should not have a balancing hint - both postings have explicit amounts
+            let has_balancing = hints.iter().any(|h| {
+                if let InlayHintLabel::String(label) = &h.label {
+                    label.contains("USD") && !label.contains("⚠")
+                } else {
+                    false
+                }
+            });
+            assert!(
+                !has_balancing,
+                "Transaction with comma-formatted amounts should not show spurious balancing hint"
+            );
+        } else {
+            panic!("No transaction found");
+        }
+    }
+
+    #[test]
+    fn test_comma_thousands_separator_with_implicit_posting() {
+        // When one posting is implicit, comma-formatted amounts should still
+        // calculate the correct balancing amount
+        let content = r#"2024-01-15 * "Payment"
+  Liabilities:CreditCard    19,987.73 USD
+  Assets:Checking
+"#;
+        let rope_content = ropey::Rope::from_str(content);
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(content, None).unwrap();
+
+        let txn_query =
+            tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let content_bytes = content.as_bytes();
+        let mut matches = cursor.matches(&txn_query, tree.root_node(), content_bytes);
+
+        if let Some(qmatch) = matches.next() {
+            let txn_node = qmatch.captures[0].node;
+            let hints = process_transaction(&txn_node, &rope_content).unwrap();
+
+            // Should have a balancing hint showing -19987.73
+            let balancing_hint = hints.iter().find(|h| {
+                if let InlayHintLabel::String(label) = &h.label {
+                    label.contains("-19987.73")
+                } else {
+                    false
+                }
+            });
+            assert!(
+                balancing_hint.is_some(),
+                "Should show correct balancing hint for comma-formatted amount"
             );
         } else {
             panic!("No transaction found");
