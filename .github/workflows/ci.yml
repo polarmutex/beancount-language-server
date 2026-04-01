@@ -73,7 +73,7 @@ jobs:
           RUST_BACKTRACE: "1"
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         if: github.repository == 'polarmutex/beancount-language-server'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -135,7 +135,7 @@ jobs:
           RUST_BACKTRACE: "1"
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         if: github.repository == 'polarmutex/beancount-language-server'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
