@@ -407,8 +407,12 @@ fn generate_template_edits(
         // Create formatted line using bean-format's template logic with custom number-currency spacing
         // Extract currency part from rest and apply custom spacing
         let rest_content = line.rest.trim_start();
-        let formatted_rest = if let Some(currency_start) = rest_content.find(char::is_alphabetic) {
-            // Custom spacing between number and currency
+        let formatted_rest = if rest_content.starts_with('"') {
+            // Quoted string (e.g. booking method like "FIFO" on an open directive) —
+            // preserve verbatim with a single space; do not strip the leading quote.
+            format!(" {rest_content}")
+        } else if let Some(currency_start) = rest_content.find(char::is_alphabetic) {
+            // Currency or other alphabetic token — apply configured number-currency spacing
             format!(
                 "{}{}",
                 " ".repeat(number_currency_spacing),
@@ -2380,6 +2384,45 @@ mod tests {
             edits2.len(),
             0,
             "Second format should generate no edits (idempotent after single pass)"
+        );
+    }
+
+    #[test]
+    fn test_open_directive_booking_method_preserved() {
+        // Regression test for issue #836: formatter was stripping the leading
+        // quote from booking method strings on `open` directives, e.g.
+        //   open Assets:Foo FXAIX "FIFO"
+        // was being mangled to:
+        //   open Assets:Foo FXAIX FIFO"
+        let content = r#"2024-01-01 open Assets:Investment:Retirement:Fidelity-Roth-IRA:FXAIX FXAIX "FIFO"
+2024-01-01 open Assets:Investment:Retirement:Fidelity-Roth-IRA:VTSAX VTSAX "FIFO"
+2024-01-01 open Assets:Checking USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+        println!("Formatted with booking methods:\n{formatted}");
+
+        // The booking method string must appear intact (with its leading quote)
+        assert!(
+            formatted.contains("\"FIFO\""),
+            "Booking method string must be preserved with leading quote: got\n{formatted}"
+        );
+
+        // The mangled form must not appear
+        assert!(
+            !formatted.contains("FIFO\"") || formatted.contains("\"FIFO\""),
+            "Formatter must not strip the leading quote from the booking method"
+        );
+
+        // Idempotency: formatting again should produce no further edits
+        let state2 = TestState::new(&formatted).unwrap();
+        let edits2 = state2.format().unwrap().unwrap();
+        assert_eq!(
+            edits2.len(),
+            0,
+            "Second format should produce no edits (idempotent): got\n{formatted}"
         );
     }
 }
