@@ -1,130 +1,59 @@
-use crate::beancount_data::BeancountData;
-use crate::document::Document;
+use crate::forest;
 use crate::providers::diagnostics;
 use crate::server::LspServerState;
 use crate::server::LspServerStateSnapshot;
 use crate::server::ProgressMsg;
 use crate::server::Task;
 use crate::to_json;
-use crate::treesitter_utils::lsp_textdocchange_to_ts_inputedit;
 use anyhow::{Context, Result, anyhow};
 use crossbeam_channel::Sender;
-use glob::glob;
 use lsp_types::Notification;
-use lsp_types::TextDocumentContentChangeEvent;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
 use tracing::{debug, warn};
 use tree_sitter_beancount::tree_sitter;
 
-/// Process included files recursively from a given beancount file
+/// Process included files recursively from a given beancount file.
+///
+/// Uses `forest::extract_include_paths` for include discovery (shared logic
+/// with the background forest initialiser) and `doc_store.insert_parsed` for
+/// consistent state updates.
 fn process_includes(
     state: &mut LspServerState,
     file_path: &PathBuf,
     processed: &mut HashSet<PathBuf>,
 ) -> Result<()> {
-    // Avoid infinite loops in case of circular includes
     if processed.contains(file_path) {
         return Ok(());
     }
     processed.insert(file_path.clone());
 
-    // Get the tree for this file (should already be parsed)
-    let tree = match state.forest.get(file_path) {
+    // Get the tree for this file (should already be parsed).
+    let tree = match state.doc_store.get_tree(file_path) {
         Some(tree) => tree.clone(),
-        None => return Ok(()), // File not parsed yet, skip
+        None => return Ok(()),
     };
 
-    // Find all include directives in this file using tree-sitter query
     let text = fs::read_to_string(file_path)?;
-    let bytes = text.as_bytes();
+    let include_paths = forest::extract_include_paths(&tree, text.as_bytes(), file_path);
 
-    let include_query_string = r#"
-    (include (string) @string)
-    "#;
-    let include_query =
-        tree_sitter::Query::new(&tree_sitter_beancount::language(), include_query_string)
-            .unwrap_or_else(|_| panic!("Invalid query for includes: {include_query_string}"));
-    let mut cursor_qry = tree_sitter::QueryCursor::new();
-    let mut include_matches = cursor_qry.matches(&include_query, tree.root_node(), bytes);
-
-    let include_paths: Vec<PathBuf> = {
-        use tree_sitter::StreamingIterator;
-        let mut paths = Vec::new();
-
-        while let Some(qmatch) = include_matches.next() {
-            for capture in qmatch.captures {
-                let filename = capture
-                    .node
-                    .utf8_text(bytes)
-                    .ok()
-                    .map(|s| s.trim_start_matches('"').trim_end_matches('"'));
-
-                if let Some(filename) = filename {
-                    let path = std::path::Path::new(filename);
-                    let resolved_path = if path.is_absolute() {
-                        path.to_path_buf()
-                    } else if let Some(parent) = file_path.parent() {
-                        parent.join(path)
-                    } else {
-                        continue;
-                    };
-
-                    paths.push(resolved_path);
-                }
-            }
+    for path in include_paths {
+        if state.doc_store.has_tree(&path) {
+            continue;
         }
 
-        paths
-    };
-
-    // Process each included file
-    for include_path in include_paths {
-        // Handle glob patterns
-        for path in glob(include_path.to_str().unwrap_or(""))
-            .unwrap_or_else(|_| {
-                // If glob fails, try the path as-is
-                glob::glob_with(
-                    &include_path.to_string_lossy(),
-                    glob::MatchOptions::default(),
-                )
-                .unwrap_or_else(|e| {
-                    tracing::error!("Failed to create glob pattern: {}", e);
-                    glob("").expect("empty glob pattern should always work")
-                })
-            })
-            .flatten()
-        {
-            // Skip if already processed
-            if state.forest.contains_key(&path) {
-                continue;
-            }
-
-            // Parse the included file
-            if let Ok(text) = fs::read_to_string(&path) {
-                let mut parser = tree_sitter::Parser::new();
-                if parser
-                    .set_language(&tree_sitter_beancount::language())
-                    .is_ok()
-                    && let Some(tree) = parser.parse(&text, None)
-                {
-                    let content = ropey::Rope::from_str(&text);
-                    let beancount_data = BeancountData::new(&tree, &content);
-
-                    // Add to state
-                    state.forest.insert(path.clone(), Arc::new(tree));
-                    state
-                        .beancount_data
-                        .insert(path.clone(), Arc::new(beancount_data));
-
-                    debug!("Processed included file: {:?}", path);
-
-                    // Recursively process includes in this file
-                    process_includes(state, &path, processed)?;
-                }
+        if let Ok(content) = fs::read_to_string(&path) {
+            let mut parser = tree_sitter::Parser::new();
+            if parser
+                .set_language(&tree_sitter_beancount::language())
+                .is_ok()
+                && let Some(tree) = parser.parse(&content, None)
+            {
+                state.doc_store.insert_parsed(path.clone(), tree, &content);
+                debug!("Processed included file: {:?}", path);
+                process_includes(state, &path, processed)?;
             }
         }
     }
@@ -149,42 +78,13 @@ pub(crate) fn did_open(
         }
     };
 
-    let document = Document::open(params.clone());
     tracing::debug!("text_document::did_open - adding {:#?}", &uri);
-    state.open_docs.insert(uri.clone(), document);
-
-    state.parsers.entry(uri.clone()).or_insert_with(|| {
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_beancount::language())
-            .expect("Failed to set language for tree-sitter parser");
-        parser
-    });
-    let parser = state
-        .parsers
-        .get_mut(&uri)
-        .expect("parser should exist after insertion");
-
-    // Always parse fresh content - the file may have been modified externally
-    // between close and reopen, so we can't rely on cached trees
-    let tree = Arc::new(
-        parser
-            .parse(&params.text_document.text, None)
-            .expect("Failed to parse document"),
-    );
-    state.forest.insert(uri.clone(), tree);
-
-    // Always extract fresh beancount data from the newly parsed tree
-    let content = ropey::Rope::from_str(&params.text_document.text);
-    state.beancount_data.insert(
+    state.doc_store.open(
         uri.clone(),
-        Arc::new(BeancountData::new(
-            state.forest.get(&uri).unwrap(),
-            &content,
-        )),
+        &params.text_document.text,
+        params.text_document.version,
     );
 
-    // Process any included files from this document
     let mut processed = HashSet::new();
     if let Err(e) = process_includes(state, &uri, &mut processed) {
         debug!("Error processing includes for {:?}: {}", uri, e);
@@ -206,9 +106,8 @@ pub(crate) fn did_save(
 ) -> Result<()> {
     tracing::debug!("text_document::did_save");
 
-    // Lazy extraction: Ensure BeancountData is extracted before diagnostics
     if let Ok(uri) = params.text_document.uri.to_file_path() {
-        state.ensure_beancount_data(&uri);
+        state.doc_store.ensure_beancount_data(&uri);
     }
 
     let snapshot = state.snapshot();
@@ -236,12 +135,7 @@ pub(crate) fn did_close(
             return Ok(());
         }
     };
-    state.open_docs.remove(&uri);
-    // Clear cached parse tree and beancount data to ensure fresh parsing on reopen.
-    // This handles external modifications made while the file was closed.
-    // Note: We keep parsers for reuse as they are stateless.
-    state.forest.remove(&uri);
-    state.beancount_data.remove(&uri);
+    state.doc_store.close(&uri);
     Ok(())
 }
 
@@ -274,20 +168,14 @@ pub(crate) fn did_change_watched_files(
                 );
 
                 // Skip if file is currently open in editor (editor manages its own state)
-                if state.open_docs.contains_key(&uri) {
+                if state.doc_store.has_open_doc(&uri) {
                     tracing::debug!("Skipping {:?} - file is open in editor", uri);
                     continue;
                 }
 
-                // Clear stale cache so next access will re-parse
-                if state.forest.remove(&uri).is_some() {
-                    tracing::debug!("Cleared stale tree for {:?}", uri);
-                }
-                if state.beancount_data.remove(&uri).is_some() {
-                    tracing::debug!("Cleared stale beancount_data for {:?}", uri);
-                }
+                state.doc_store.invalidate_external(&uri);
+                tracing::debug!("Cleared stale cache for {:?}", uri);
 
-                // If this file is part of our forest (included files), re-parse it
                 if let Ok(content) = fs::read_to_string(&uri) {
                     let mut parser = tree_sitter::Parser::new();
                     if parser
@@ -295,25 +183,14 @@ pub(crate) fn did_change_watched_files(
                         .is_ok()
                         && let Some(tree) = parser.parse(&content, None)
                     {
-                        let rope_content = ropey::Rope::from_str(&content);
-                        let beancount_data = BeancountData::new(&tree, &rope_content);
-
-                        state.forest.insert(uri.clone(), Arc::new(tree));
-                        state
-                            .beancount_data
-                            .insert(uri.clone(), Arc::new(beancount_data));
-
+                        state.doc_store.insert_parsed(uri.clone(), tree, &content);
                         tracing::debug!("Re-parsed external file: {:?}", uri);
                     }
                 }
             }
             lsp_types::FileChangeType::Deleted => {
                 tracing::debug!("External file deleted: {:?}", uri);
-
-                // Remove from all caches
-                state.forest.remove(&uri);
-                state.beancount_data.remove(&uri);
-                state.parsers.remove(&uri);
+                state.doc_store.remove_external(&uri);
             }
         }
     }
@@ -324,7 +201,7 @@ pub(crate) fn did_change_watched_files(
         let task_sender = state.task_sender.clone();
 
         // Find an open document to use for diagnostics URI
-        if let Some(open_uri) = state.open_docs.keys().next().cloned() {
+        if let Some(open_uri) = state.doc_store.open_doc_keys().next().cloned() {
             let url = match url::Url::from_file_path(&open_uri) {
                 Ok(url) => url,
                 Err(_) => {
@@ -375,148 +252,11 @@ pub(crate) fn did_change(
         }
     };
     tracing::debug!("text_document::did_change - requesting {:#?}", uri);
-    let doc = match state.open_docs.get_mut(&uri) {
-        Some(doc) => doc,
-        None => {
-            tracing::warn!("Document not found in open_docs: {:?}", uri);
-            return Ok(());
-        }
-    };
-
-    // Version tracking for synchronization validation
-    let new_version = params.text_document.version;
-    if new_version <= doc.version {
-        tracing::warn!(
-            "Received out-of-order or duplicate change: current version={}, received version={}",
-            doc.version,
-            new_version
-        );
-    }
-    tracing::trace!("Document version: {} -> {}", doc.version, new_version);
-
-    tracing::debug!("text_document::did_change - convert edits and apply changes");
-
-    // Calculate tree-sitter edits before modifying the document
-    // This must be done first since edits are based on the old content
-    let ts_edits = params
-        .content_changes
-        .iter()
-        .map(|change| lsp_textdocchange_to_ts_inputedit(&doc.content, change))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // Apply changes to document content
-    // We reuse position calculations to avoid redundant UTF-16 conversions
-    for change in &params.content_changes {
-        let (text, range) = match change {
-            TextDocumentContentChangeEvent::TextDocumentContentChangePartial(change) => {
-                (change.text.as_str(), change.range)
-            }
-            TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(change) => {
-                // Full document replacement: range should cover entire current document
-                let end_line = (doc.content.len_lines().saturating_sub(1)) as u32;
-                let end_line_len = if doc.content.len_lines() > 0 {
-                    // Get the character length of the last line (excluding newline)
-                    let last_line = doc.content.line(end_line as usize);
-                    last_line.len_chars().saturating_sub(1) as u32
-                } else {
-                    0
-                };
-                let range = lsp_types::Range {
-                    start: lsp_types::Position::new(0, 0),
-                    end: lsp_types::Position::new(end_line, end_line_len),
-                };
-                (change.text.as_str(), range)
-            }
-        };
-
-        // Convert LSP positions (line, UTF-16 column) to rope character indices
-        // LSP positions use UTF-16 code units for columns, rope uses UTF-8 characters
-        let start_row_char_idx = doc.content.line_to_char(range.start.line as usize);
-        let end_row_char_idx = doc.content.line_to_char(range.end.line as usize);
-
-        // Convert UTF-16 column offsets to character offsets within the line
-        // CRITICAL: range.start.character is UTF-16 offset *within the line*, not document-wide
-        let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
-        let start_utf16_idx = start_line_utf16_cu + range.start.character as usize;
-        // Clamp to document bounds to prevent panic if client sends invalid positions
-        let start_utf16_idx = start_utf16_idx.min(doc.content.len_utf16_cu());
-        let start_col_char_idx = doc.content.utf16_cu_to_char(start_utf16_idx) - start_row_char_idx;
-
-        let end_line_utf16_cu = doc.content.char_to_utf16_cu(end_row_char_idx);
-        let end_utf16_idx = end_line_utf16_cu + range.end.character as usize;
-        // Clamp to document bounds to prevent panic if client sends invalid positions
-        let end_utf16_idx = end_utf16_idx.min(doc.content.len_utf16_cu());
-        let end_col_char_idx = doc.content.utf16_cu_to_char(end_utf16_idx) - end_row_char_idx;
-
-        let start_char_idx = start_row_char_idx + start_col_char_idx;
-        let end_char_idx = end_row_char_idx + end_col_char_idx;
-
-        tracing::trace!(
-            "Applying change: range={}:{}-{}:{}, char_idx={}-{}, text_len={}",
-            range.start.line,
-            range.start.character,
-            range.end.line,
-            range.end.character,
-            start_char_idx,
-            end_char_idx,
-            text.len()
-        );
-
-        doc.content.remove(start_char_idx..end_char_idx);
-
-        if !text.is_empty() {
-            doc.content.insert(start_char_idx, text);
-        }
-    }
-
-    debug!("text_document::did_change - incremental tree parse");
-    let result = {
-        let parser = match state.parsers.get_mut(&uri) {
-            Some(p) => p,
-            None => {
-                tracing::warn!("Parser not found for document: {:?}", uri);
-                return Ok(());
-            }
-        };
-        let old_tree_arc = match state.forest.get(&uri) {
-            Some(t) => t,
-            None => {
-                tracing::warn!("Tree not found in forest: {:?}", uri);
-                return Ok(());
-            }
-        };
-
-        // Avoid cloning the tree when possible - tree-sitter's edit() takes &mut
-        // We clone here because we need to preserve the old tree in the Arc
-        // until we've successfully parsed the new tree
-        let mut old_tree = (**old_tree_arc).clone();
-
-        // Apply all edits to the tree to prepare for incremental parsing
-        for edit in &ts_edits {
-            old_tree.edit(edit);
-        }
-
-        // Parse with incremental tree
-        // Note: We could avoid the string allocation by implementing a custom TextProvider
-        // that yields rope chunks, but the current tree-sitter bindings make this complex
-        parser.parse(doc.text_string(), Some(&old_tree))
-    };
-
-    debug!("text_document::did_change - save tree");
-    if let Some(tree) = result {
-        let tree_arc = Arc::new(tree);
-        *state
-            .forest
-            .get_mut(&uri)
-            .expect("tree should exist in forest") = tree_arc.clone();
-        // Lazy extraction: Don't extract BeancountData on every keystroke
-        // It will be extracted on-demand when needed (e.g., for completion)
-        state.beancount_data.remove(&uri);
-    }
-
-    // Update document version after successfully applying changes
-    doc.version = new_version;
-
+    state.doc_store.apply_change(
+        &uri,
+        &params.content_changes,
+        params.text_document.version,
+    )?;
     debug!("text_document::did_change - done");
     Ok(())
 }

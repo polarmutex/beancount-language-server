@@ -1,5 +1,6 @@
 pub mod beancount_data;
 mod capabilities;
+mod document_store;
 pub mod checkers;
 mod config;
 mod dispatcher;
