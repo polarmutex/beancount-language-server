@@ -5,6 +5,8 @@ use crate::config::Config;
 use crate::dispatcher::NotificationDispatcher;
 use crate::dispatcher::RequestRouter;
 use crate::document::Document;
+use crate::document_store::DocumentStore;
+use crate::document_store::DocumentStoreMaps;
 use crate::forest;
 use crate::handlers;
 use crate::progress::Progress;
@@ -57,17 +59,11 @@ struct LspServer {
 */
 
 pub(crate) struct LspServerState {
-    pub beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
+    /// Owns open_docs, parsers (private), forest, and beancount_data with coordinated updates.
+    pub doc_store: DocumentStore,
 
     // the lsp server config options
     pub config: Config,
-
-    pub forest: HashMap<PathBuf, Arc<tree_sitter::Tree>>,
-
-    // Documents that are currently kept in memory from the client
-    pub open_docs: HashMap<PathBuf, Document>,
-
-    pub parsers: HashMap<PathBuf, tree_sitter::Parser>,
 
     // The request queue keeps track of all incoming and outgoing requests.
     pub req_queue: lsp_server::ReqQueue<(String, Instant), RequestHandler>,
@@ -139,11 +135,8 @@ impl LspServerState {
         //let (event_tx, event_rx) = crossbeam_channel::unbounded();
         let request_router = Arc::new(Self::build_request_router());
         Self {
-            beancount_data: HashMap::new(),
+            doc_store: DocumentStore::new(),
             config,
-            forest: HashMap::new(),
-            open_docs: HashMap::new(),
-            parsers: HashMap::new(),
             req_queue: lsp_server::ReqQueue::default(),
             sender,
             shutdown_requested: false,
@@ -309,8 +302,7 @@ impl LspServerState {
             }
             ProgressMsg::ForestInit { total, done, data } => {
                 if let Some(data) = *data {
-                    self.forest.insert(data.0.clone(), data.1);
-                    self.beancount_data.insert(data.0, data.2);
+                    self.doc_store.insert_tree_and_data(data.0, data.1, data.2);
                 }
                 let progress_state = if done == 0 {
                     Progress::Begin
@@ -466,11 +458,16 @@ impl LspServerState {
     }
 
     pub(crate) fn snapshot(&self) -> LspServerStateSnapshot {
+        let DocumentStoreMaps {
+            open_docs,
+            forest,
+            beancount_data,
+        } = self.doc_store.snapshot_maps();
         LspServerStateSnapshot {
-            beancount_data: self.beancount_data.clone(),
+            beancount_data,
             config: self.config.clone(),
-            forest: self.forest.clone(),
-            open_docs: self.open_docs.clone(),
+            forest,
+            open_docs,
             checker: self.checker.clone(),
         }
     }
@@ -630,18 +627,7 @@ impl LspServerState {
     /// Ensure BeancountData is extracted for the given URI.
     /// Lazily extracts on first access after tree changes (lazy extraction for #757).
     pub(crate) fn ensure_beancount_data(&mut self, uri: &PathBuf) {
-        // If data already exists, no need to extract
-        if self.beancount_data.contains_key(uri) {
-            return;
-        }
-
-        // Extract on-demand
-        if let (Some(tree), Some(doc)) = (self.forest.get(uri), self.open_docs.get(uri)) {
-            let beancount_data = BeancountData::new(tree, &doc.content);
-            self.beancount_data
-                .insert(uri.clone(), Arc::new(beancount_data));
-            tracing::debug!("Lazy extraction: BeancountData extracted for {:?}", uri);
-        }
+        self.doc_store.ensure_beancount_data(uri);
     }
 
     fn ensure_beancount_data_for_text_document(
@@ -665,10 +651,8 @@ impl LspServerState {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::document::Document;
-    use ropey::Rope;
     use std::path::PathBuf;
-    use tree_sitter::Parser;
+    use tree_sitter_beancount::tree_sitter::Parser;
 
     fn create_test_state() -> LspServerState {
         let (sender, _receiver) = crossbeam_channel::unbounded();
@@ -684,35 +668,25 @@ mod tests {
         parser.parse(content, None).expect("Failed to parse")
     }
 
+    /// Thin delegation tests for `ensure_beancount_data` on `LspServerState`.
+    /// Exhaustive behaviour tests live in `document_store::tests`.
+
     #[test]
     fn test_lazy_extraction_skips_if_data_exists() {
         let mut state = create_test_state();
         let uri = PathBuf::from("/test/file.beancount");
-
-        // Create test data
         let content = "2024-01-01 open Assets:Checking USD\n";
-        let tree = create_test_tree(content);
-        let doc = Document {
-            content: Rope::from_str(content),
-            version: 1,
-        };
 
-        // Setup state
-        state.forest.insert(uri.clone(), Arc::new(tree));
-        state.open_docs.insert(uri.clone(), doc);
+        // open() populates beancount_data eagerly
+        state.doc_store.open(uri.clone(), content, 1);
+        let maps = state.doc_store.snapshot_maps();
+        let first_ptr = Arc::as_ptr(maps.beancount_data.get(&uri).unwrap());
 
-        // Extract once
-        state.ensure_beancount_data(&uri);
-        assert!(state.beancount_data.contains_key(&uri));
-
-        // Get pointer to the Arc
-        let first_ptr = Arc::as_ptr(state.beancount_data.get(&uri).unwrap());
-
-        // Call again - should skip extraction
+        // ensure should be a no-op — data is already present
         state.ensure_beancount_data(&uri);
 
-        // Verify same Arc (pointer equality means no re-extraction)
-        let second_ptr = Arc::as_ptr(state.beancount_data.get(&uri).unwrap());
+        let maps2 = state.doc_store.snapshot_maps();
+        let second_ptr = Arc::as_ptr(maps2.beancount_data.get(&uri).unwrap());
         assert_eq!(first_ptr, second_ptr, "Data should not be re-extracted");
     }
 
@@ -720,67 +694,46 @@ mod tests {
     fn test_lazy_extraction_extracts_if_missing() {
         let mut state = create_test_state();
         let uri = PathBuf::from("/test/file.beancount");
-
-        // Create test data
         let content = "2024-01-01 open Assets:Checking USD\n";
-        let tree = create_test_tree(content);
-        let doc = Document {
-            content: Rope::from_str(content),
-            version: 1,
+
+        // open() then apply_change() removes beancount_data (lazy invalidation)
+        state.doc_store.open(uri.clone(), content, 1);
+        let change = lsp_types::TextDocumentContentChangeEvent {
+            range: Some(lsp_types::Range {
+                start: lsp_types::Position::new(0, 0),
+                end: lsp_types::Position::new(0, 0),
+            }),
+            range_length: None,
+            text: "".to_string(),
         };
+        state.doc_store.apply_change(&uri, &[change], 2).unwrap();
+        // beancount_data is now absent
+        assert!(state.doc_store.snapshot_maps().beancount_data.get(&uri).is_none());
 
-        // Setup state without data
-        state.forest.insert(uri.clone(), Arc::new(tree));
-        state.open_docs.insert(uri.clone(), doc);
-
-        // Verify data doesn't exist yet
-        assert!(!state.beancount_data.contains_key(&uri));
-
-        // Extract on-demand
         state.ensure_beancount_data(&uri);
 
-        // Verify data was extracted
-        assert!(state.beancount_data.contains_key(&uri));
-        let data = state.beancount_data.get(&uri).unwrap();
-        let accounts = data.get_accounts();
+        let maps = state.doc_store.snapshot_maps();
+        assert!(maps.beancount_data.contains_key(&uri));
+        let accounts = maps.beancount_data.get(&uri).unwrap().get_accounts();
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0], "Assets:Checking");
     }
 
     #[test]
     fn test_lazy_extraction_handles_missing_tree() {
+        // No tree → ensure is a no-op. Detailed tests in document_store::tests.
         let mut state = create_test_state();
         let uri = PathBuf::from("/test/file.beancount");
-
-        // Create doc but no tree
-        let content = "2024-01-01 open Assets:Checking USD\n";
-        let doc = Document {
-            content: Rope::from_str(content),
-            version: 1,
-        };
-        state.open_docs.insert(uri.clone(), doc);
-
-        // Try to extract - should not panic
-        state.ensure_beancount_data(&uri);
-
-        // Data should not be extracted
-        assert!(!state.beancount_data.contains_key(&uri));
+        state.ensure_beancount_data(&uri); // must not panic
+        assert!(state.doc_store.snapshot_maps().beancount_data.get(&uri).is_none());
     }
 
     #[test]
     fn test_lazy_extraction_handles_missing_doc() {
+        // Calling ensure on a URI that was never opened must not panic.
+        // Detailed behaviour test (tree-without-doc) is in document_store::tests.
         let mut state = create_test_state();
-        let uri = PathBuf::from("/test/file.beancount");
-
-        // Create tree but no doc
-        let content = "2024-01-01 open Assets:Checking USD\n";
-        let tree = create_test_tree(content);
-        state.forest.insert(uri.clone(), Arc::new(tree));
-
-        // Try to extract - should not panic
-        state.ensure_beancount_data(&uri);
-
-        // Data should not be extracted
-        assert!(!state.beancount_data.contains_key(&uri));
+        let uri = PathBuf::from("/test/never-opened.beancount");
+        state.ensure_beancount_data(&uri); // must not panic
     }
 }

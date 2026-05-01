@@ -58,6 +58,76 @@ fn read_file_cached(path: &PathBuf, cache: &mut FileCacheMap) -> anyhow::Result<
     Ok(content)
 }
 
+/// Extract all included file paths from a parsed beancount file.
+///
+/// Queries the tree for `include` directives, resolves each path relative to
+/// `containing_file`, and expands glob patterns. Returns deduplicated absolute
+/// `PathBuf`s ready to be added to the parse queue.
+pub(crate) fn extract_include_paths(
+    tree: &tree_sitter::Tree,
+    source: &[u8],
+    containing_file: &path::Path,
+) -> HashSet<PathBuf> {
+    let include_query_string = r#"(include (string) @string)"#;
+    let include_query =
+        tree_sitter::Query::new(&tree_sitter_beancount::language(), include_query_string)
+            .unwrap_or_else(|_| panic!("Invalid query for includes: {include_query_string}"));
+    let mut cursor_qry = tree_sitter::QueryCursor::new();
+    let mut include_matches = cursor_qry.matches(&include_query, tree.root_node(), source);
+
+    let mut patterns: Vec<String> = Vec::new();
+    {
+        use tree_sitter::StreamingIterator;
+        while let Some(qmatch) = include_matches.next() {
+            for capture in qmatch.captures {
+                let filename = match capture.node.utf8_text(source) {
+                    Ok(text) => text.trim_start_matches('"').trim_end_matches('"'),
+                    Err(e) => {
+                        tracing::warn!("Failed to extract include filename: {}", e);
+                        continue;
+                    }
+                };
+
+                let raw = path::Path::new(filename);
+                let resolved = if raw.is_absolute() {
+                    raw.to_path_buf()
+                } else if containing_file.is_absolute() {
+                    match containing_file.parent() {
+                        Some(parent) => parent.join(raw),
+                        None => {
+                            tracing::warn!("File has no parent directory: {:?}", containing_file);
+                            raw.to_path_buf()
+                        }
+                    }
+                } else {
+                    raw.to_path_buf()
+                };
+
+                patterns.push(resolved.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    let mut discovered = HashSet::new();
+    for pattern in patterns {
+        match glob(&pattern) {
+            Ok(paths) => {
+                for entry in paths {
+                    match entry {
+                        Ok(path) => {
+                            discovered.insert(path);
+                        }
+                        Err(e) => error!("Glob entry error: {:?}", e),
+                    }
+                }
+            }
+            Err(e) => error!("Glob pattern error for '{}': {:?}", pattern, e),
+        }
+    }
+
+    discovered
+}
+
 // Issus to look at if running into issues with this
 // https://github.com/silvanshade/lspower/issues/8
 pub(crate) fn parse_initial_forest(
@@ -118,70 +188,8 @@ pub(crate) fn parse_initial_forest(
             tracing::error!("Failed to send forest init progress with data: {}", e);
         }
 
-        // Extract include patterns using tree-sitter query
-        let include_query_string = r#"
-        (include (string) @string)
-        "#;
-        let include_query =
-            tree_sitter::Query::new(&tree_sitter_beancount::language(), include_query_string)
-                .unwrap_or_else(|_| panic!("Invalid query for includes: {include_query_string}"));
-        let mut cursor_qry = tree_sitter::QueryCursor::new();
-        let mut include_matches = cursor_qry.matches(&include_query, tree_arc.root_node(), bytes);
-
-        let include_patterns: Vec<String> = {
-            use tree_sitter::StreamingIterator;
-            let mut patterns = Vec::new();
-
-            while let Some(qmatch) = include_matches.next() {
-                for capture in qmatch.captures {
-                    let filename = match capture.node.utf8_text(bytes) {
-                        Ok(text) => text.trim_start_matches('"').trim_end_matches('"'),
-                        Err(e) => {
-                            tracing::warn!("Failed to extract include filename: {}", e);
-                            continue;
-                        }
-                    };
-
-                    let path = path::Path::new(filename);
-
-                    let path = if path.is_absolute() {
-                        path.to_path_buf()
-                    } else if file.is_absolute() {
-                        match file.parent() {
-                            Some(parent) => parent.join(path),
-                            None => {
-                                tracing::warn!("File has no parent directory: {:?}", file);
-                                path.to_path_buf()
-                            }
-                        }
-                    } else {
-                        path.to_path_buf()
-                    };
-
-                    patterns.push(path.to_string_lossy().to_string());
-                }
-            }
-
-            patterns
-        };
-
-        // Process all include patterns and deduplicate results
-        let mut discovered_files = HashSet::new();
-        for pattern in include_patterns {
-            match glob(&pattern) {
-                Ok(paths) => {
-                    for entry in paths {
-                        match entry {
-                            Ok(path) => {
-                                discovered_files.insert(path);
-                            }
-                            Err(e) => error!("Glob entry error: {:?}", e),
-                        }
-                    }
-                }
-                Err(e) => error!("Glob pattern error for '{}': {:?}", pattern, e),
-            }
-        }
+        // Extract and resolve all include paths (tree-sitter query + path resolution + glob)
+        let discovered_files = extract_include_paths(&tree_arc, bytes, &file);
 
         // Convert discovered files to URLs and add to processing queue
         for path in discovered_files {
@@ -720,6 +728,89 @@ include "{}"
         }
 
         assert_eq!(parsed_files.len(), 2);
+    }
+
+    // ========================================================================
+    // extract_include_paths tests
+    // ========================================================================
+
+    fn parse_beancount(text: &str) -> tree_sitter::Tree {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        parser.parse(text, None).unwrap()
+    }
+
+    #[test]
+    fn test_extract_include_paths_no_includes() {
+        let text = "2023-01-01 open Assets:Cash\n";
+        let tree = parse_beancount(text);
+        let result = extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_include_paths_absolute() {
+        let temp_dir = TempDir::new().unwrap();
+        let included = create_temp_file(&temp_dir, "included.bean", "");
+        let abs = included.to_str().unwrap();
+        let text = format!("include \"{abs}\"\n");
+        let tree = parse_beancount(&text);
+        let result =
+            extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&included));
+    }
+
+    #[test]
+    fn test_extract_include_paths_relative() {
+        let temp_dir = TempDir::new().unwrap();
+        let included = create_temp_file(&temp_dir, "sub.bean", "");
+        // Containing file is in the same temp dir
+        let root = temp_dir.path().join("root.bean");
+        let text = "include \"sub.bean\"\n".to_string();
+        let tree = parse_beancount(&text);
+        let result = extract_include_paths(&tree, text.as_bytes(), &root);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&included));
+    }
+
+    #[test]
+    fn test_extract_include_paths_glob() {
+        let temp_dir = TempDir::new().unwrap();
+        let f1 = create_temp_file(&temp_dir, "a.bean", "");
+        let f2 = create_temp_file(&temp_dir, "b.bean", "");
+        let pattern = temp_dir.path().join("*.bean");
+        let text = format!("include \"{}\"\n", pattern.to_str().unwrap());
+        let tree = parse_beancount(&text);
+        let result =
+            extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
+        assert!(result.contains(&f1));
+        assert!(result.contains(&f2));
+    }
+
+    #[test]
+    fn test_extract_include_paths_deduplicates() {
+        let temp_dir = TempDir::new().unwrap();
+        let included = create_temp_file(&temp_dir, "same.bean", "");
+        let abs = included.to_str().unwrap();
+        // Include the same file twice
+        let text = format!("include \"{abs}\"\ninclude \"{abs}\"\n");
+        let tree = parse_beancount(&text);
+        let result =
+            extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_include_paths_nonexistent_glob() {
+        // A glob that matches nothing should return empty, not panic
+        let text = "include \"/nonexistent/path/*.bean\"\n";
+        let tree = parse_beancount(text);
+        let result =
+            extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
+        assert!(result.is_empty());
     }
 
     #[test]
