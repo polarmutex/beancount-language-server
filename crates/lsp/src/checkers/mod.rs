@@ -282,77 +282,63 @@ fn create_system_call_checker(config: &BeancountCheckConfig, root_dir: &Path) ->
     SystemCallChecker::new(bean_check_cmd)
 }
 
+/// An ordered list of checker candidates; returns the first available one.
+///
+/// Enables deterministic, testable fallback without nested match arms.
+pub(crate) struct CheckerChain {
+    candidates: Vec<Box<dyn BeancountChecker>>,
+}
+
+impl CheckerChain {
+    pub(crate) fn new(candidates: Vec<Box<dyn BeancountChecker>>) -> Self {
+        Self { candidates }
+    }
+
+    /// Return the first checker where `is_available()` is true, consuming the chain.
+    pub(crate) fn first_available(self) -> Option<Box<dyn BeancountChecker>> {
+        self.candidates.into_iter().find(|c| c.is_available())
+    }
+}
+
+fn build_chain(
+    config: &BeancountCheckConfig,
+    root_dir: &Path,
+) -> Vec<Box<dyn BeancountChecker>> {
+    let mut candidates: Vec<Box<dyn BeancountChecker>> = Vec::new();
+    match config.method {
+        Some(BeancountCheckMethod::SystemCall) => {
+            candidates.push(Box::new(create_system_call_checker(config, root_dir)));
+        }
+        Some(BeancountCheckMethod::PythonSystem) => {
+            if let Some(c) = create_python_checker(config, root_dir) {
+                candidates.push(Box::new(c));
+            }
+            candidates.push(Box::new(create_system_call_checker(config, root_dir)));
+        }
+        Some(BeancountCheckMethod::PythonEmbedded) | None => {
+            candidates.push(Box::new(PyO3EmbeddedChecker::new()));
+            if let Some(c) = create_python_checker(config, root_dir) {
+                candidates.push(Box::new(c));
+            }
+            candidates.push(Box::new(create_system_call_checker(config, root_dir)));
+        }
+    }
+    candidates
+}
+
 pub fn create_checker(
     config: &BeancountCheckConfig,
     root_dir: &Path,
 ) -> Option<Box<dyn BeancountChecker>> {
     tracing::debug!("Creating bean checker with method: {:?}", config.method);
 
-    let method = config.method;
+    let checker = CheckerChain::new(build_chain(config, root_dir)).first_available();
 
-    let checker: Option<Box<dyn BeancountChecker>> = match method {
-        Some(BeancountCheckMethod::PythonEmbedded) => {
-            let pyo3 = PyO3EmbeddedChecker::new();
-            if pyo3.is_available() {
-                tracing::debug!("Using PyO3EmbeddedChecker");
-                Some(Box::new(pyo3))
-            } else if let Some(python_checker) = create_python_checker(config, root_dir) {
-                tracing::debug!("PyO3EmbeddedChecker unavailable; using SystemPythonChecker");
-                Some(Box::new(python_checker))
-            } else {
-                let system_checker = create_system_call_checker(config, root_dir);
-                if system_checker.is_available() {
-                    Some(Box::new(system_checker))
-                } else {
-                    None
-                }
-            }
-        }
-        Some(BeancountCheckMethod::PythonSystem) => {
-            if let Some(python_checker) = create_python_checker(config, root_dir) {
-                tracing::debug!("Using SystemPythonChecker");
-                Some(Box::new(python_checker))
-            } else {
-                let system_checker = create_system_call_checker(config, root_dir);
-                if system_checker.is_available() {
-                    Some(Box::new(system_checker))
-                } else {
-                    None
-                }
-            }
-        }
-        Some(BeancountCheckMethod::SystemCall) => {
-            let system_checker = create_system_call_checker(config, root_dir);
-            if system_checker.is_available() {
-                Some(Box::new(system_checker))
-            } else {
-                None
-            }
-        }
-        None => {
-            let pyo3 = PyO3EmbeddedChecker::new();
-            if pyo3.is_available() {
-                tracing::debug!("Using PyO3EmbeddedChecker (preferred order)");
-                Some(Box::new(pyo3))
-            } else if let Some(python_checker) = create_python_checker(config, root_dir) {
-                tracing::debug!("Using SystemPythonChecker (preferred order)");
-                Some(Box::new(python_checker))
-            } else {
-                let system_checker = create_system_call_checker(config, root_dir);
-                if system_checker.is_available() {
-                    Some(Box::new(system_checker))
-                } else {
-                    None
-                }
-            }
-        }
-    };
-
-    if let Some(checker) = &checker {
+    if let Some(ref c) = checker {
         tracing::info!(
             "Selected checker: {}, availability: {}",
-            checker.name(),
-            checker.is_available()
+            c.name(),
+            c.is_available()
         );
     } else {
         tracing::info!(
@@ -361,6 +347,61 @@ pub fn create_checker(
     }
 
     checker
+}
+
+#[cfg(test)]
+mod chain_tests {
+    use super::*;
+
+    struct MockChecker {
+        name: &'static str,
+        available: bool,
+    }
+
+    impl BeancountChecker for MockChecker {
+        fn check(&self, _: &Path) -> Result<crate::checkers::types::BeancountCheckResult> {
+            Ok(Default::default())
+        }
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn is_available(&self) -> bool {
+            self.available
+        }
+    }
+
+    fn avail(name: &'static str) -> Box<dyn BeancountChecker> {
+        Box::new(MockChecker { name, available: true })
+    }
+    fn unavail(name: &'static str) -> Box<dyn BeancountChecker> {
+        Box::new(MockChecker { name, available: false })
+    }
+
+    #[test]
+    fn test_chain_returns_first_available() {
+        let chain = CheckerChain::new(vec![unavail("A"), avail("B"), avail("C")]);
+        let result = chain.first_available().expect("should find B");
+        assert_eq!(result.name(), "B");
+    }
+
+    #[test]
+    fn test_chain_returns_none_when_all_unavailable() {
+        let chain = CheckerChain::new(vec![unavail("A"), unavail("B")]);
+        assert!(chain.first_available().is_none());
+    }
+
+    #[test]
+    fn test_empty_chain_returns_none() {
+        let chain = CheckerChain::new(vec![]);
+        assert!(chain.first_available().is_none());
+    }
+
+    #[test]
+    fn test_chain_picks_first_not_second() {
+        let chain = CheckerChain::new(vec![avail("A"), avail("B")]);
+        let result = chain.first_available().expect("should find A");
+        assert_eq!(result.name(), "A");
+    }
 }
 
 #[cfg(test)]
