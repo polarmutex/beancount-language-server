@@ -99,7 +99,7 @@ fn detect_closing_quote(content: &ropey::Rope, position: Position) -> bool {
     let line = content.line(position.line as usize).to_string();
     let chars: Vec<char> = line.chars().collect();
     let col = position.character as usize;
-    chars.get(col..).map_or(false, |rest| rest.contains(&'"'))
+    chars.get(col..).is_some_and(|rest| rest.contains(&'"'))
 }
 
 // ============================================================================

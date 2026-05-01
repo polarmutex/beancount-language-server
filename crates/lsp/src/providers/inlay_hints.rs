@@ -1463,7 +1463,7 @@ mod tests {
 
             // Should not have a warning hint - transaction is balanced
             let has_warning = hints.iter().any(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("⚠")
                 } else {
                     false
@@ -1476,7 +1476,7 @@ mod tests {
 
             // Should not have a balancing hint - both postings have explicit amounts
             let has_balancing = hints.iter().any(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("USD") && !label.contains("⚠")
                 } else {
                     false
@@ -1519,7 +1519,7 @@ mod tests {
 
             // Should have a balancing hint showing -19987.73
             let balancing_hint = hints.iter().find(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("-19987.73")
                 } else {
                     false

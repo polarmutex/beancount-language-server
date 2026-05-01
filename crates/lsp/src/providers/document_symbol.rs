@@ -811,7 +811,7 @@ mod tests {
         let result = document_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+        if let Some(DocumentSymbolResponse::DocumentSymbolList(symbols)) = result {
             // Should have 1 top-level section with nested children
             assert_eq!(symbols.len(), 1);
 
@@ -844,7 +844,7 @@ mod tests {
             let section3_children = section3.children.as_ref().unwrap();
             assert_eq!(section3_children.len(), 1);
             let open = &section3_children[0];
-            assert_eq!(open.kind, SymbolKind::FILE);
+            assert_eq!(open.kind, SymbolKind::File);
             assert_eq!(open.name, "Assets:Checking");
         } else {
             panic!("Expected nested document symbols");
@@ -872,7 +872,7 @@ mod tests {
         let result = document_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+        if let Some(DocumentSymbolResponse::DocumentSymbolList(symbols)) = result {
             // Should have 1 top-level section with nested children
             assert_eq!(symbols.len(), 1);
 
@@ -905,7 +905,7 @@ mod tests {
             let header3_children = header3.children.as_ref().unwrap();
             assert_eq!(header3_children.len(), 1);
             let open = &header3_children[0];
-            assert_eq!(open.kind, SymbolKind::FILE);
+            assert_eq!(open.kind, SymbolKind::File);
             assert_eq!(open.name, "Assets:Checking");
         } else {
             panic!("Expected nested document symbols");
@@ -933,10 +933,10 @@ mod tests {
         let result = document_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+        if let Some(DocumentSymbolResponse::DocumentSymbolList(symbols)) = result {
             // Only the open directive should be returned, regular comments are ignored
             assert_eq!(symbols.len(), 1);
-            assert_eq!(symbols[0].kind, SymbolKind::FILE);
+            assert_eq!(symbols[0].kind, SymbolKind::File);
             assert_eq!(symbols[0].name, "Assets:Checking");
         } else {
             panic!("Expected nested document symbols");
@@ -972,7 +972,7 @@ mod tests {
         let result = document_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+        if let Some(DocumentSymbolResponse::DocumentSymbolList(symbols)) = result {
             // Should have 2 top-level sections: Income (org-mode) and Expenses (markdown)
             assert_eq!(symbols.len(), 2);
 

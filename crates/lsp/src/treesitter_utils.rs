@@ -1,5 +1,15 @@
 use tree_sitter_beancount::tree_sitter;
 
+/// Parse a beancount document from scratch.
+/// Returns `None` only if tree-sitter itself fails (extremely rare).
+pub(crate) fn parse_beancount(text: &str) -> Option<tree_sitter::Tree> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_beancount::language())
+        .ok()?;
+    parser.parse(text, None)
+}
+
 /// Convert an LSP UTF-16 position into a tree-sitter `Point` (byte-based column).
 pub fn lsp_position_to_tree_sitter_point(
     source: &ropey::Rope,

@@ -137,7 +137,7 @@ impl DocumentStore {
                         let end_line = (doc.content.len_lines().saturating_sub(1)) as u32;
                         let end_line_len = if doc.content.len_lines() > 0 {
                             let last_line = doc.content.line(end_line as usize);
-                            last_line.len_chars().saturating_sub(1).max(0) as u32
+                            last_line.len_chars().saturating_sub(1) as u32
                         } else {
                             0
                         };
@@ -311,12 +311,12 @@ impl DocumentStore {
         self.open_docs.contains_key(uri)
     }
 
-    pub(crate) fn has_tree(&self, uri: &PathBuf) -> bool {
-        self.forest.contains_key(uri)
-    }
-
     pub(crate) fn open_doc_keys(&self) -> impl Iterator<Item = &PathBuf> {
         self.open_docs.keys()
+    }
+
+    pub(crate) fn forest_keys(&self) -> impl Iterator<Item = &PathBuf> {
+        self.forest.keys()
     }
 
     // ── Snapshot ─────────────────────────────────────────────────────────────
@@ -374,14 +374,16 @@ mod tests {
         let uri = PathBuf::from("/test/file.beancount");
         store.open(uri.clone(), CONTENT, 1);
 
-        let change = lsp_types::TextDocumentContentChangeEvent {
-            range: Some(lsp_types::Range {
-                start: lsp_types::Position::new(0, 0),
-                end: lsp_types::Position::new(0, 0),
-            }),
-            range_length: None,
-            text: "".to_string(),
-        };
+        #[allow(deprecated)]
+        let change = lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+            lsp_types::TextDocumentContentChangePartial {
+                range: lsp_types::Range {
+                    start: lsp_types::Position::new(0, 0),
+                    end: lsp_types::Position::new(0, 0),
+                },
+                range_length: None,
+                text: "".to_string(),
+            });
         store.apply_change(&uri, &[change], 2).unwrap();
 
         // beancount_data should be invalidated after change
@@ -397,14 +399,16 @@ mod tests {
         let uri = PathBuf::from("/test/file.beancount");
         store.open(uri.clone(), "hello", 1);
 
-        let change = lsp_types::TextDocumentContentChangeEvent {
-            range: Some(lsp_types::Range {
-                start: lsp_types::Position::new(0, 0),
-                end: lsp_types::Position::new(0, 5),
-            }),
-            range_length: None,
-            text: "world".to_string(),
-        };
+        #[allow(deprecated)]
+        let change = lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+            lsp_types::TextDocumentContentChangePartial {
+                range: lsp_types::Range {
+                    start: lsp_types::Position::new(0, 0),
+                    end: lsp_types::Position::new(0, 5),
+                },
+                range_length: None,
+                text: "world".to_string(),
+            });
         store.apply_change(&uri, &[change], 2).unwrap();
 
         let doc = store.open_docs.get(&uri).unwrap();
@@ -449,14 +453,16 @@ mod tests {
         store.open(uri.clone(), CONTENT, 1);
 
         // Simulate post-edit state: data absent, tree present
-        let change = lsp_types::TextDocumentContentChangeEvent {
-            range: Some(lsp_types::Range {
-                start: lsp_types::Position::new(0, 0),
-                end: lsp_types::Position::new(0, 0),
-            }),
-            range_length: None,
-            text: "".to_string(),
-        };
+        #[allow(deprecated)]
+        let change = lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+            lsp_types::TextDocumentContentChangePartial {
+                range: lsp_types::Range {
+                    start: lsp_types::Position::new(0, 0),
+                    end: lsp_types::Position::new(0, 0),
+                },
+                range_length: None,
+                text: "".to_string(),
+            });
         store.apply_change(&uri, &[change], 2).unwrap();
         assert!(!store.beancount_data.contains_key(&uri));
 
@@ -531,7 +537,7 @@ mod tests {
 
         store.remove_external(&uri);
 
-        assert!(!store.has_tree(&uri));
+        assert!(store.get_tree(&uri).is_none());
         assert!(!store.beancount_data.contains_key(&uri));
     }
 
@@ -544,7 +550,7 @@ mod tests {
 
         store.invalidate_external(&uri);
 
-        assert!(!store.has_tree(&uri));
+        assert!(store.get_tree(&uri).is_none());
         assert!(!store.beancount_data.contains_key(&uri));
     }
 

@@ -112,31 +112,6 @@ pub(crate) struct LspServerStateSnapshot {
     pub checker: Option<Arc<dyn BeancountChecker>>,
 }
 
-/// A snapshot bundled with data pre-computed on the main thread.
-///
-/// Produced by `RequestRouter::on_computed` — the `compute` hook runs
-/// synchronously on the main thread (where mutable state is safe), produces a
-/// value of type `T`, and that value is then carried alongside the cheap-to-clone
-/// snapshot into the thread-pool handler.  This eliminates ad-hoc map lookups in
-/// handlers and makes the data contract visible in function signatures.
-///
-/// # Example
-///
-/// ```ignore
-/// router.on_computed::<HoverRequest, _>(
-///     |state, params| state.doc_store.get_data(&params.uri),
-///     |SnapshotWithData { snapshot, data }, params| {
-///         // `data` is the pre-fetched value; no map lookup needed here
-///         hover_with_data(snapshot, data, params)
-///     },
-/// );
-/// ```
-#[allow(dead_code)]
-pub(crate) struct SnapshotWithData<T> {
-    pub snapshot: LspServerStateSnapshot,
-    pub data: T,
-}
-
 impl LspServerStateSnapshot {
     pub fn tree_and_document_for_uri(
         &self,
@@ -688,7 +663,6 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use std::path::PathBuf;
-    use tree_sitter_beancount::tree_sitter::Parser;
 
     fn create_test_state() -> LspServerState {
         let (sender, _receiver) = crossbeam_channel::unbounded();
@@ -696,15 +670,7 @@ mod tests {
         LspServerState::new(sender, config)
     }
 
-    fn create_test_tree(content: &str) -> tree_sitter::Tree {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_beancount::language())
-            .expect("Failed to set language");
-        parser.parse(content, None).expect("Failed to parse")
-    }
-
-    /// Thin delegation tests for `ensure_beancount_data` on `LspServerState`.
+/// Thin delegation tests for `ensure_beancount_data` on `LspServerState`.
     /// Exhaustive behaviour tests live in `document_store::tests`.
 
     #[test]
@@ -734,14 +700,16 @@ mod tests {
 
         // open() then apply_change() removes beancount_data (lazy invalidation)
         state.doc_store.open(uri.clone(), content, 1);
-        let change = lsp_types::TextDocumentContentChangeEvent {
-            range: Some(lsp_types::Range {
-                start: lsp_types::Position::new(0, 0),
-                end: lsp_types::Position::new(0, 0),
-            }),
-            range_length: None,
-            text: "".to_string(),
-        };
+        #[allow(deprecated)]
+        let change = lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+            lsp_types::TextDocumentContentChangePartial {
+                range: lsp_types::Range {
+                    start: lsp_types::Position::new(0, 0),
+                    end: lsp_types::Position::new(0, 0),
+                },
+                range_length: None,
+                text: "".to_string(),
+            });
         state.doc_store.apply_change(&uri, &[change], 2).unwrap();
         // beancount_data is now absent
         assert!(state.doc_store.snapshot_maps().beancount_data.get(&uri).is_none());
