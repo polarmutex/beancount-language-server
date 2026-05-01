@@ -4,7 +4,6 @@ mod items;
 use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::lsp_position_to_tree_sitter_point;
 use anyhow::Result;
-use lsp_types::CompletionItem;
 use tracing::debug;
 
 pub use items::{add_one_month, sub_one_month};
@@ -15,9 +14,11 @@ pub use items::{add_one_month, sub_one_month};
 /// the syntax tree is in an ERROR state due to incomplete input.
 pub(crate) fn completion(
     snapshot: LspServerStateSnapshot,
-    trigger_character: Option<char>,
-    cursor: lsp_types::TextDocumentPositionParams,
-) -> Result<Option<Vec<CompletionItem>>> {
+    params: lsp_types::CompletionParams,
+) -> Result<Option<lsp_types::CompletionResponse>> {
+    let trigger_character = extract_trigger_char(&params);
+    let cursor = params.text_document_position_params;
+
     debug!("=== Completion Request ===");
     debug!("Trigger character: {:?}", trigger_character);
     debug!(
@@ -37,13 +38,47 @@ pub(crate) fn completion(
     debug!("Determined context: {:?}", ctx);
 
     // Generate completions based on context
-    items::generate_completions(
+    let items = items::generate_completions(
         &snapshot.beancount_data,
         &ctx,
         content,
         cursor.position,
         &snapshot.config,
-    )
+    )?;
+
+    Ok(items.map(|items| {
+        // Return CompletionList instead of Array to signal that server-side
+        // filtering is preferred. Setting `is_incomplete: true` tells clients
+        // like Zed to re-query on each keystroke rather than filtering internally.
+        lsp_types::CompletionResponse::CompletionList(lsp_types::CompletionList {
+            is_incomplete: true,
+            item_defaults: None,
+            apply_kind: None,
+            items,
+        })
+    }))
+}
+
+/// Extract the effective trigger character from completion params.
+///
+/// The "2" character is treated as a trigger only at the start of a line
+/// (character position <= 1); otherwise it is ignored so that typing a year
+/// like "2024" does not falsely trigger date completion mid-number.
+fn extract_trigger_char(params: &lsp_types::CompletionParams) -> Option<char> {
+    let trigger = params
+        .context
+        .as_ref()
+        .and_then(|ctx| ctx.trigger_character.as_deref())?;
+
+    if trigger == "2" {
+        if params.text_document_position_params.position.character > 1 {
+            None
+        } else {
+            trigger.chars().last()
+        }
+    } else {
+        trigger.chars().last()
+    }
 }
 
 #[cfg(test)]
@@ -105,10 +140,10 @@ mod tests {
         );
 
         let snapshot = LspServerStateSnapshot {
-            beancount_data,
+            beancount_data: Arc::new(beancount_data),
             config: crate::config::Config::new(PathBuf::from("/test")),
-            forest,
-            open_docs,
+            forest: Arc::new(forest),
+            open_docs: Arc::new(open_docs),
             checker: None,
         };
 
@@ -137,11 +172,18 @@ mod tests {
             },
         };
 
-        let result = completion(snapshot, None, position).unwrap();
+        let result = completion(snapshot, lsp_types::CompletionParams {
+            text_document_position_params: position,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: None,
+        }).unwrap();
         assert!(result.is_some(), "Should return completion items");
 
-        let items = result.unwrap();
-        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        let lsp_types::CompletionResponse::CompletionList(list) = result.unwrap() else {
+            panic!("Expected CompletionResponse::CompletionList");
+        };
+        let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
 
         // Should contain NARRATIONS
         assert!(
@@ -198,14 +240,21 @@ mod tests {
             },
         };
 
-        let result = completion(snapshot, None, position).unwrap();
+        let result = completion(snapshot, lsp_types::CompletionParams {
+            text_document_position_params: position,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: None,
+        }).unwrap();
         assert!(
             result.is_some(),
             "Should return completion items for lowercase prefix"
         );
 
-        let items = result.unwrap();
-        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        let lsp_types::CompletionResponse::CompletionList(list) = result.unwrap() else {
+            panic!("Expected CompletionResponse::CompletionList");
+        };
+        let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
 
         // Should contain Liabilities accounts (case-insensitive match)
         assert!(
@@ -273,14 +322,21 @@ option "name_expenses" "Aufwendungen"
             },
         };
 
-        let result = completion(snapshot, None, position).unwrap();
+        let result = completion(snapshot, lsp_types::CompletionParams {
+            text_document_position_params: position,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: None,
+        }).unwrap();
         assert!(
             result.is_some(),
             "Should return completion items for custom account name prefix 'Akti'"
         );
 
-        let items = result.unwrap();
-        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        let lsp_types::CompletionResponse::CompletionList(list) = result.unwrap() else {
+            panic!("Expected CompletionResponse::CompletionList");
+        };
+        let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
 
         println!("Completion items for 'Akti' prefix: {:?}", labels);
 

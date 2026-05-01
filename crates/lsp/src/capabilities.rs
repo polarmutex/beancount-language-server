@@ -391,110 +391,110 @@ mod tests {
         // This is a compile-time check that prevents advertising capabilities
         // without implementing them (like the willSaveWaitUntil bug in issue #741).
 
-        use crate::handlers;
+        use crate::providers;
         use crate::server::LspServerStateSnapshot;
 
         // Get the advertised capabilities
         let caps = server_capabilities();
 
-        // Completion capability -> handlers::text_document::completion
+        // Completion capability -> providers::completion::completion
         if caps.completion_provider.is_some() {
-            // Verify the handler function exists and has the correct signature
+            // Verify the provider function exists and has the correct signature
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::CompletionParams,
             ) -> anyhow::Result<Option<lsp_types::CompletionResponse>> =
-                handlers::text_document::completion;
+                providers::completion::completion;
         }
 
-        // Formatting capability -> handlers::text_document::formatting
+        // Formatting capability -> providers::formatting::formatting
         if caps.document_formatting_provider.is_some() {
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::DocumentFormattingParams,
             ) -> anyhow::Result<Option<Vec<lsp_types::TextEdit>>> =
-                handlers::text_document::formatting;
+                providers::formatting::formatting;
         }
 
-        // References capability -> handlers::text_document::handle_references
+        // References capability -> providers::references::references
         if caps.references_provider.is_some() {
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::ReferenceParams,
             ) -> anyhow::Result<Option<Vec<lsp_types::Location>>> =
-                handlers::text_document::handle_references;
+                providers::references::references;
         }
 
-        // Definition capability -> handlers::text_document::handle_definition
+        // Definition capability -> providers::definition::definition
         if caps.definition_provider.is_some() {
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::DefinitionParams,
             ) -> anyhow::Result<Option<lsp_types::DefinitionResponse>> =
-                handlers::text_document::handle_definition;
+                providers::definition::definition;
         }
-        // Hover capability -> handlers::text_document::hover
+        // Hover capability -> providers::hover::hover
         if caps.hover_provider.is_some() {
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::HoverParams,
-            ) -> anyhow::Result<Option<lsp_types::Hover>> = handlers::text_document::hover;
+            ) -> anyhow::Result<Option<lsp_types::Hover>> = providers::hover::hover;
         }
 
-        // Rename capability -> handlers::text_document::handle_rename
+        // Rename capability -> providers::references::rename
         if caps.rename_provider.is_some() {
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::RenameParams,
             ) -> anyhow::Result<Option<lsp_types::WorkspaceEdit>> =
-                handlers::text_document::handle_rename;
+                providers::references::rename;
         }
 
-        // Semantic tokens capability -> handlers::text_document::semantic_tokens_full
+        // Semantic tokens capability -> providers::semantic_tokens::semantic_tokens_full
         if caps.semantic_tokens_provider.is_some() {
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::SemanticTokensParams,
             ) -> anyhow::Result<Option<lsp_types::SemanticTokens>> =
-                handlers::text_document::semantic_tokens_full;
+                providers::semantic_tokens::semantic_tokens_full;
         }
 
-        // Inlay hint capability -> handlers::text_document::inlay_hint
+        // Inlay hint capability -> providers::inlay_hints::inlay_hints
         if caps.inlay_hint_provider.is_some() {
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::InlayHintParams,
             ) -> anyhow::Result<Option<Vec<lsp_types::InlayHint>>> =
-                handlers::text_document::inlay_hint;
+                providers::inlay_hints::inlay_hints;
         }
 
-        // Folding range capability -> handlers::text_document::folding_range
+        // Folding range capability -> providers::folding_range::folding_ranges
         if caps.folding_range_provider.is_some() {
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::FoldingRangeParams,
             ) -> anyhow::Result<Option<Vec<lsp_types::FoldingRange>>> =
-                handlers::text_document::folding_range;
+                providers::folding_range::folding_ranges;
         }
 
-        // Document symbol capability -> handlers::text_document::document_symbol
+        // Document symbol capability -> providers::document_symbol::document_symbols
         if caps.document_symbol_provider.is_some() {
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::DocumentSymbolParams,
             )
                 -> anyhow::Result<Option<lsp_types::DocumentSymbolResponse>> =
-                handlers::text_document::document_symbol;
+                providers::document_symbol::document_symbols;
         }
 
-        // Workspace symbol capability -> handlers::text_document::workspace_symbol
+        // Workspace symbol capability -> providers::workspace_symbol::workspace_symbols
         if caps.workspace_symbol_provider.is_some() {
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::WorkspaceSymbolParams,
             )
                 -> anyhow::Result<Option<lsp_types::WorkspaceSymbolResponse>> =
-                handlers::text_document::workspace_symbol;
+                providers::workspace_symbol::workspace_symbols;
         }
 
         // Text document sync notifications (these don't return responses)
@@ -504,7 +504,7 @@ mod tests {
                 let _handler: fn(
                     &mut crate::server::LspServerState,
                     lsp_types::DidOpenTextDocumentParams,
-                ) -> anyhow::Result<()> = handlers::text_document::did_open;
+                ) -> anyhow::Result<()> = providers::text_document::did_open;
             }
 
             // did_close handler
@@ -512,7 +512,7 @@ mod tests {
                 let _handler: fn(
                     &mut crate::server::LspServerState,
                     lsp_types::DidCloseTextDocumentParams,
-                ) -> anyhow::Result<()> = handlers::text_document::did_close;
+                ) -> anyhow::Result<()> = providers::text_document::did_close;
             }
 
             // did_change handler
@@ -520,7 +520,7 @@ mod tests {
                 let _handler: fn(
                     &mut crate::server::LspServerState,
                     lsp_types::DidChangeTextDocumentParams,
-                ) -> anyhow::Result<()> = handlers::text_document::did_change;
+                ) -> anyhow::Result<()> = providers::text_document::did_change;
             }
 
             // did_save handler
@@ -528,7 +528,7 @@ mod tests {
                 let _handler: fn(
                     &mut crate::server::LspServerState,
                     lsp_types::DidSaveTextDocumentParams,
-                ) -> anyhow::Result<()> = handlers::text_document::did_save;
+                ) -> anyhow::Result<()> = providers::text_document::did_save;
             }
 
             // will_save and will_save_wait_until are not implemented
@@ -548,12 +548,12 @@ mod tests {
             let _handler: fn(
                 &mut crate::server::LspServerState,
                 lsp_types::DidChangeWatchedFilesParams,
-            ) -> anyhow::Result<()> = handlers::workspace::did_change_watched_files;
+            ) -> anyhow::Result<()> = providers::text_document::did_change_watched_files;
         }
 
         // This test will fail to compile if:
-        // 1. A capability is advertised but the handler function doesn't exist
-        // 2. A handler function exists but has the wrong signature
-        // 3. A handler is imported from the wrong module
+        // 1. A capability is advertised but the provider function doesn't exist
+        // 2. A provider function exists but has the wrong signature
+        // 3. A provider is imported from the wrong module
     }
 }

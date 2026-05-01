@@ -318,7 +318,7 @@ fn handle_diagnostics(
     }))?;
 
     let diags = diagnostics::diagnostics(
-        snapshot.beancount_data,
+        &snapshot.beancount_data,
         checker.as_ref(),
         &root_journal_path,
         &snapshot.config.diagnostic_flags,
@@ -700,10 +700,10 @@ mod tests {
 
         // Create snapshot
         let snapshot = LspServerStateSnapshot {
-            beancount_data: HashMap::new(),
+            beancount_data: Arc::new(HashMap::new()),
             config,
-            forest: HashMap::new(),
-            open_docs: HashMap::new(),
+            forest: Arc::new(HashMap::new()),
+            open_docs: Arc::new(HashMap::new()),
             checker: Some(Arc::new(checker)),
         };
 
@@ -766,10 +766,10 @@ mod tests {
 
         // Create snapshot
         let snapshot = LspServerStateSnapshot {
-            beancount_data: HashMap::new(),
+            beancount_data: Arc::new(HashMap::new()),
             config,
-            forest: HashMap::new(),
-            open_docs: HashMap::new(),
+            forest: Arc::new(HashMap::new()),
+            open_docs: Arc::new(HashMap::new()),
             checker: Some(Arc::new(checker)),
         };
 
@@ -806,6 +806,7 @@ mod tests {
         use crossbeam_channel;
         use std::collections::HashMap;
         use std::str::FromStr;
+        use std::sync::Arc;
 
         let temp_dir = tempfile::tempdir().unwrap();
         let test_file = temp_dir.path().join("test.beancount");
@@ -818,10 +819,10 @@ mod tests {
 
         // Create snapshot WITHOUT checker
         let snapshot = LspServerStateSnapshot {
-            beancount_data: HashMap::new(),
+            beancount_data: Arc::new(HashMap::new()),
             config,
-            forest: HashMap::new(),
-            open_docs: HashMap::new(),
+            forest: Arc::new(HashMap::new()),
+            open_docs: Arc::new(HashMap::new()),
             checker: None, // No checker available
         };
 

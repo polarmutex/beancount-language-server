@@ -7,7 +7,6 @@ mod dispatcher;
 pub mod document;
 //pub mod error;
 pub mod forest;
-pub mod handlers;
 pub mod progress;
 pub mod providers;
 mod query_cache;

@@ -8,8 +8,18 @@ use crate::document::Document;
 use crate::document_store::DocumentStore;
 use crate::document_store::DocumentStoreMaps;
 use crate::forest;
-use crate::handlers;
 use crate::progress::Progress;
+use crate::providers::completion;
+use crate::providers::definition;
+use crate::providers::document_symbol;
+use crate::providers::folding_range;
+use crate::providers::formatting;
+use crate::providers::hover;
+use crate::providers::inlay_hints;
+use crate::providers::references;
+use crate::providers::semantic_tokens;
+use crate::providers::text_document;
+use crate::providers::workspace_symbol;
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender};
 use lsp_types::Notification;
@@ -90,12 +100,15 @@ pub(crate) struct LspServerState {
     pub request_router: Arc<RequestRouter>,
 }
 
-/// A snapshot of the state of the language server
+/// A snapshot of the state of the language server.
+///
+/// The three map fields are `Arc<HashMap<…>>` — cheap to clone and share across
+/// thread-pool tasks.  Access them like plain `HashMap`s via `Deref`.
 pub(crate) struct LspServerStateSnapshot {
-    pub beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
+    pub beancount_data: Arc<HashMap<PathBuf, Arc<BeancountData>>>,
     pub config: Config,
-    pub forest: HashMap<PathBuf, Arc<tree_sitter::Tree>>,
-    pub open_docs: HashMap<PathBuf, Document>,
+    pub forest: Arc<HashMap<PathBuf, Arc<tree_sitter::Tree>>>,
+    pub open_docs: Arc<HashMap<PathBuf, Document>>,
     pub checker: Option<Arc<dyn BeancountChecker>>,
 }
 
@@ -365,14 +378,12 @@ impl LspServerState {
     // Handles a notification from the language server client
     fn on_notification(&mut self, notif: lsp_server::Notification) -> Result<()> {
         NotificationDispatcher::new(self, notif)
-            .on::<lsp_types::DidOpenTextDocumentNotification>(handlers::text_document::did_open)?
-            .on::<lsp_types::DidCloseTextDocumentNotification>(handlers::text_document::did_close)?
-            .on::<lsp_types::DidSaveTextDocumentNotification>(handlers::text_document::did_save)?
-            .on::<lsp_types::DidChangeTextDocumentNotification>(
-                handlers::text_document::did_change,
-            )?
+            .on::<lsp_types::DidOpenTextDocumentNotification>(text_document::did_open)?
+            .on::<lsp_types::DidCloseTextDocumentNotification>(text_document::did_close)?
+            .on::<lsp_types::DidSaveTextDocumentNotification>(text_document::did_save)?
+            .on::<lsp_types::DidChangeTextDocumentNotification>(text_document::did_change)?
             .on::<lsp_types::DidChangeWatchedFilesNotification>(
-                handlers::workspace::did_change_watched_files,
+                text_document::did_change_watched_files,
             )?
             .finish();
         Ok(())
@@ -485,53 +496,53 @@ impl LspServerState {
                 |r, params| {
                     r.ensure_beancount_data_for_position(&params.text_document_position_params);
                 },
-                handlers::text_document::hover,
+                hover::hover,
             )
             .expect("Failed to register Hover handler")
             .on_with::<lsp_types::CompletionRequest>(
                 |r, params| {
                     r.ensure_beancount_data_for_position(&params.text_document_position_params);
                 },
-                handlers::text_document::completion,
+                completion::completion,
             )
             .expect("Failed to register Completion handler")
-            .on::<lsp_types::DocumentFormattingRequest>(handlers::text_document::formatting)
+            .on::<lsp_types::DocumentFormattingRequest>(formatting::formatting)
             .expect("Failed to register Formatting handler")
             .on_with::<lsp_types::RenameRequest>(
                 |r, params| {
                     r.ensure_beancount_data_for_position(&params.text_document_position_params);
                 },
-                handlers::text_document::handle_rename,
+                references::rename,
             )
             .expect("Failed to register Rename handler")
             .on_with::<lsp_types::ReferencesRequest>(
                 |r, params| {
                     r.ensure_beancount_data_for_position(&params.text_document_position_params);
                 },
-                handlers::text_document::handle_references,
+                references::references,
             )
             .expect("Failed to register References handler")
             .on_with::<lsp_types::DefinitionRequest>(
                 |r, params| {
                     r.ensure_beancount_data_for_position(&params.text_document_position_params);
                 },
-                handlers::text_document::handle_definition,
+                definition::definition,
             )
             .expect("Failed to register GotoDefinition handler")
             .on_with::<lsp_types::SemanticTokensRequest>(
                 |r, params| {
                     r.ensure_beancount_data_for_text_document(&params.text_document);
                 },
-                handlers::text_document::semantic_tokens_full,
+                semantic_tokens::semantic_tokens_full,
             )
             .expect("Failed to register SemanticTokens handler")
-            .on::<lsp_types::InlayHintRequest>(handlers::text_document::inlay_hint)
+            .on::<lsp_types::InlayHintRequest>(inlay_hints::inlay_hints)
             .expect("Failed to register InlayHint handler")
-            .on::<lsp_types::FoldingRangeRequest>(handlers::text_document::folding_range)
+            .on::<lsp_types::FoldingRangeRequest>(folding_range::folding_ranges)
             .expect("Failed to register FoldingRange handler")
-            .on::<lsp_types::DocumentSymbolRequest>(handlers::text_document::document_symbol)
+            .on::<lsp_types::DocumentSymbolRequest>(document_symbol::document_symbols)
             .expect("Failed to register DocumentSymbol handler")
-            .on::<lsp_types::WorkspaceSymbolRequest>(handlers::text_document::workspace_symbol)
+            .on::<lsp_types::WorkspaceSymbolRequest>(workspace_symbol::workspace_symbols)
             .expect("Failed to register WorkspaceSymbol handler");
 
         router
