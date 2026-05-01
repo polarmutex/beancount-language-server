@@ -417,7 +417,7 @@ pub(crate) fn did_change(
                 let end_line_len = if doc.content.len_lines() > 0 {
                     // Get the character length of the last line (excluding newline)
                     let last_line = doc.content.line(end_line as usize);
-                    last_line.len_chars().saturating_sub(1).max(0) as u32
+                    last_line.len_chars().saturating_sub(1) as u32
                 } else {
                     0
                 };
@@ -781,7 +781,7 @@ mod tests {
         let end_line = (doc.content.len_lines().saturating_sub(1)) as u32;
         let end_line_len = if doc.content.len_lines() > 0 {
             let last_line = doc.content.line(end_line as usize);
-            last_line.len_chars().saturating_sub(1).max(0) as u32
+            last_line.len_chars().saturating_sub(1) as u32
         } else {
             0
         };

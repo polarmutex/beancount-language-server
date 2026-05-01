@@ -235,11 +235,9 @@ fn extract_amount(
 
     for child in posting_node.children(&mut cursor) {
         match child.kind() {
-            "incomplete_amount" | "amount" => {
-                if amount_opt.is_none() {
-                    // First amount is the posting amount - parse it from structure
-                    amount_opt = extract_amount_from_node(&child, content);
-                }
+            "incomplete_amount" | "amount" if amount_opt.is_none() => {
+                // First amount is the posting amount - parse it from structure
+                amount_opt = extract_amount_from_node(&child, content);
             }
             "at" => {
                 // @ means unit price

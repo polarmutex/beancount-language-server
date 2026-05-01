@@ -48,8 +48,7 @@
         };
         inherit (pkgs) lib;
 
-        # Use latest stable Rust instead of pinning to specific version
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+        rustToolchain = pkgs.rust-bin.stable.${(builtins.fromTOML (builtins.readFile ./rust-toolchain.toml)).toolchain.channel}.default.override {
           extensions = ["rust-src" "rust-analyzer" "llvm-tools-preview"];
           targets = [
             "aarch64-apple-darwin"
@@ -221,7 +220,7 @@
               just
               rustToolchain
               nodejs
-              nodePackages.pnpm
+              pnpm
               python314
             ]
             ++ lib.optionals stdenv.isLinux [systemd];
