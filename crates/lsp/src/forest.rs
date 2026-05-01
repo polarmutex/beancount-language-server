@@ -13,6 +13,7 @@
 //! This is more efficient and clearer than manual tree walking.
 
 use crate::beancount_data::BeancountData;
+use crate::query_cache;
 use crate::server::LspServerStateSnapshot;
 use crate::server::ProgressMsg;
 use crate::server::Task;
@@ -68,12 +69,9 @@ pub(crate) fn extract_include_paths(
     source: &[u8],
     containing_file: &path::Path,
 ) -> HashSet<PathBuf> {
-    let include_query_string = r#"(include (string) @string)"#;
-    let include_query =
-        tree_sitter::Query::new(&tree_sitter_beancount::language(), include_query_string)
-            .unwrap_or_else(|_| panic!("Invalid query for includes: {include_query_string}"));
+    let include_query = query_cache::include_query();
     let mut cursor_qry = tree_sitter::QueryCursor::new();
-    let mut include_matches = cursor_qry.matches(&include_query, tree.root_node(), source);
+    let mut include_matches = cursor_qry.matches(include_query, tree.root_node(), source);
 
     let mut patterns: Vec<String> = Vec::new();
     {

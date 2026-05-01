@@ -40,67 +40,16 @@
 /// - Queries are compiled once and can be reused
 /// - Field queries are more efficient than manual field access
 /// - StreamingIterator avoids allocating a Vec of all matches
+use crate::query_cache;
 use crate::treesitter_utils::text_for_tree_sitter_node;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::tree_sitter;
 
-/// Static compiled queries for beancount data extraction.
-/// Compiled once on first use and reused for all subsequent parses.
-static UNIFIED_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
-static CURRENCY_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
-static NOTE_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
-static OPTION_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
-
-/// Get or compile the unified query (tags, links, flags, accounts, transactions)
+/// Get or compile the unified query (tags, links, flags, accounts, transactions).
+/// Re-exported for callers outside this module (e.g. `providers/definition.rs`).
 pub(crate) fn get_unified_query() -> &'static tree_sitter::Query {
-    UNIFIED_QUERY.get_or_init(|| {
-        let query_string = r#"
-            (tag) @tag
-            (link) @link
-            (flag) @flag
-            (open account: (account) @account)
-            (transaction) @transaction
-        "#;
-        tree_sitter::Query::new(&tree_sitter_beancount::language(), query_string)
-            .expect("Failed to compile unified query")
-    })
-}
-
-/// Get or compile the currency query (open, commodity, all currencies)
-fn get_currency_query() -> &'static tree_sitter::Query {
-    CURRENCY_QUERY.get_or_init(|| {
-        let query_string = r#"
-            (open (currency) @currency)
-            (commodity (currency) @currency)
-            (currency) @currency
-        "#;
-        tree_sitter::Query::new(&tree_sitter_beancount::language(), query_string)
-            .expect("Failed to compile currency query")
-    })
-}
-
-/// Get or compile the note query (note directives with account and string)
-fn get_note_query() -> &'static tree_sitter::Query {
-    NOTE_QUERY.get_or_init(|| {
-        let query_string = r#"
-            (note account: (account) @account (string) @note)
-            (note (account) @account (string) @note)
-        "#;
-        tree_sitter::Query::new(&tree_sitter_beancount::language(), query_string)
-            .expect("Failed to compile note query")
-    })
-}
-
-/// Get or compile the option query (option directives with key and value)
-fn get_option_query() -> &'static tree_sitter::Query {
-    OPTION_QUERY.get_or_init(|| {
-        let query_string = r#"
-            (option key: (string) @key value: (string) @value)
-        "#;
-        tree_sitter::Query::new(&tree_sitter_beancount::language(), query_string)
-            .expect("Failed to compile option query")
-    })
+    query_cache::unified_query()
 }
 
 #[derive(Clone, Debug)]
@@ -139,7 +88,7 @@ impl BeancountData {
 
         // Use unified query to extract accounts, transactions, tags, links, and flags in a single pass
         tracing::debug!("beancount_data:: executing unified query");
-        let unified_query = get_unified_query();
+        let unified_query = query_cache::unified_query();
         let mut cursor_qry = tree_sitter::QueryCursor::new();
         let mut matches = cursor_qry.matches(unified_query, tree.root_node(), content_bytes);
 
@@ -263,7 +212,7 @@ impl BeancountData {
 
         // Extract commodities using unified currency query
         tracing::debug!("beancount_data:: get commodities");
-        let currency_query = get_currency_query();
+        let currency_query = query_cache::currency_query();
         let mut cursor_qry = tree_sitter::QueryCursor::new();
         let mut matches = cursor_qry.matches(currency_query, tree.root_node(), content_bytes);
 
@@ -289,7 +238,7 @@ impl BeancountData {
 
         // Extract notes associated with accounts
         tracing::debug!("beancount_data:: get account notes");
-        let note_query = get_note_query();
+        let note_query = query_cache::note_query();
         let mut cursor_qry = tree_sitter::QueryCursor::new();
         let mut matches = cursor_qry.matches(note_query, tree.root_node(), content_bytes);
 
@@ -322,7 +271,7 @@ impl BeancountData {
 
         // Extract account name mappings from options (e.g., name_assets, name_expenses)
         tracing::debug!("beancount_data:: get option directives");
-        let option_query = get_option_query();
+        let option_query = query_cache::option_query();
         let mut cursor_qry = tree_sitter::QueryCursor::new();
         let mut matches = cursor_qry.matches(option_query, tree.root_node(), content_bytes);
 
@@ -484,9 +433,8 @@ mod tests {
 
     #[test]
     fn test_unified_query_compiled_once() {
-        // Verify that get_unified_query returns the same query instance
-        let q1 = get_unified_query();
-        let q2 = get_unified_query();
+        let q1 = crate::query_cache::unified_query();
+        let q2 = crate::query_cache::unified_query();
         assert!(
             std::ptr::eq(q1, q2),
             "Unified query should be compiled once and reused"
@@ -495,9 +443,8 @@ mod tests {
 
     #[test]
     fn test_currency_query_compiled_once() {
-        // Verify that get_currency_query returns the same query instance
-        let q1 = get_currency_query();
-        let q2 = get_currency_query();
+        let q1 = crate::query_cache::currency_query();
+        let q2 = crate::query_cache::currency_query();
         assert!(
             std::ptr::eq(q1, q2),
             "Currency query should be compiled once and reused"
@@ -506,8 +453,7 @@ mod tests {
 
     #[test]
     fn test_unified_query_has_all_captures() {
-        // Verify all expected captures are present in unified query
-        let query = get_unified_query();
+        let query = crate::query_cache::unified_query();
         assert!(
             query.capture_index_for_name("tag").is_some(),
             "Unified query should have 'tag' capture"
@@ -532,8 +478,7 @@ mod tests {
 
     #[test]
     fn test_currency_query_has_currency_capture() {
-        // Verify currency query has the currency capture
-        let query = get_currency_query();
+        let query = crate::query_cache::currency_query();
         assert!(
             query.capture_index_for_name("currency").is_some(),
             "Currency query should have 'currency' capture"

@@ -1,3 +1,4 @@
+use crate::query_cache;
 use crate::server::LspServerStateSnapshot;
 use anyhow::Result;
 use tracing::debug;
@@ -27,42 +28,6 @@ struct FormatConfig {
     final_num_width: usize,
 }
 
-const QUERY_STR: &str = r#"
-( posting
-    (account) @prefix
-    amount: (incomplete_amount
-        [
-            (number)
-            (unary_number_expr)
-            (binary_number_expr)
-        ] @number
-    )?
-)
-( balance
-    (account) @prefix
-    (amount_tolerance
-        ([
-            (number)
-            (unary_number_expr)
-            (binary_number_expr)
-        ] @number)
-    )
-)
-( price
-    currency: (_) @prefix
-    amount: (amount
-        ([
-            (number)
-            (unary_number_expr)
-            (binary_number_expr)
-        ] @number)
-    )
-)
-( open
-    (account) @prefix
-    (currency) @number
-)
-"#;
 
 // Adapter to convert rope chunks to bytes
 struct ChunksBytes<'a> {
@@ -182,20 +147,14 @@ fn extract_formateable_lines(
     doc: &crate::document::Document,
     tree: &tree_sitter::Tree,
 ) -> Result<Vec<FormatableLine>> {
-    let query = match tree_sitter::Query::new(&tree.language(), QUERY_STR) {
-        Ok(query) => query,
-        Err(e) => {
-            debug!("Failed to create tree-sitter query: {}", e);
-            return Ok(vec![]);
-        }
-    };
+    let query = query_cache::format_query();
 
     let mut query_cursor = tree_sitter::QueryCursor::new();
     let rope_slice = doc
         .content
         .get_slice(..)
         .ok_or_else(|| anyhow::anyhow!("Failed to get rope slice for document"))?;
-    let mut matches = query_cursor.matches(&query, tree.root_node(), RopeProvider(rope_slice));
+    let mut matches = query_cursor.matches(query, tree.root_node(), RopeProvider(rope_slice));
 
     let mut formateable_lines = Vec::new();
 
