@@ -1,77 +1,81 @@
 use crate::providers::semantic_tokens;
-use lsp_types::FoldingRangeProviderCapability;
-use lsp_types::InlayHintOptions;
-use lsp_types::InlayHintServerCapabilities;
-use lsp_types::RenameOptions;
-use lsp_types::SemanticTokensFullOptions;
-use lsp_types::SemanticTokensOptions;
-use lsp_types::SemanticTokensServerCapabilities;
-use lsp_types::WorkDoneProgressOptions;
 use lsp_types::{
-    CompletionOptions, OneOf, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions,
+    CompletionOptions, InlayHintOptions, RenameOptions, SemanticTokensOptions, ServerCapabilities,
+    TextDocumentSyncKind, TextDocumentSyncOptions, WorkDoneProgressOptions,
 };
 
 pub(crate) fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Options(
+        text_document_sync: Some(
             TextDocumentSyncOptions {
                 open_close: Some(true),
-                change: Some(TextDocumentSyncKind::INCREMENTAL),
+                change: Some(TextDocumentSyncKind::Incremental),
                 will_save: None,
                 will_save_wait_until: None,
-                save: Some(lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
+                save: Some(
                     lsp_types::SaveOptions {
                         include_text: Some(false),
-                    },
-                )),
-            },
-        )),
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+        ),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec![
-                "2".into(),
-                "\"".into(),
-                "#".into(),
-                "^".into(),
-                ":".into(),
+                '2'.into(),
+                '\"'.into(),
+                '#'.into(),
+                '^'.into(),
+                ':'.into(),
             ]),
             ..Default::default()
         }),
-        document_formatting_provider: Some(OneOf::Left(true)),
-        definition_provider: Some(OneOf::Left(true)),
-        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
-        references_provider: Some(OneOf::Left(true)),
-        rename_provider: Some(OneOf::Right(RenameOptions {
-            prepare_provider: Some(false),
-            work_done_progress_options: WorkDoneProgressOptions {
-                work_done_progress: None,
-            },
-        })),
-        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+        document_formatting_provider: Some(true.into()),
+        definition_provider: Some(true.into()),
+        hover_provider: Some(true.into()),
+        references_provider: Some(true.into()),
+        rename_provider: Some(
+            RenameOptions {
+                prepare_provider: Some(false),
+                work_done_progress_options: WorkDoneProgressOptions {
+                    work_done_progress: None,
+                },
+            }
+            .into(),
+        ),
+        semantic_tokens_provider: Some(
             SemanticTokensOptions {
                 legend: semantic_tokens::legend(),
-                full: Some(SemanticTokensFullOptions::Bool(true)),
+                full: Some(true.into()),
                 range: None,
                 ..Default::default()
-            },
-        )),
-        inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
+            }
+            .into(),
+        ),
+        inlay_hint_provider: Some(
             InlayHintOptions {
                 resolve_provider: Some(false),
                 work_done_progress_options: WorkDoneProgressOptions {
                     work_done_progress: None,
                 },
-            },
-        ))),
-        folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
-        document_symbol_provider: Some(OneOf::Left(true)),
-        workspace_symbol_provider: Some(OneOf::Left(true)),
+            }
+            .into(),
+        ),
+        folding_range_provider: Some(true.into()),
+        document_symbol_provider: Some(true.into()),
+        workspace_symbol_provider: Some(true.into()),
         ..Default::default()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use lsp_types::{
+        DefinitionProvider, DocumentFormattingProvider, Full, ReferencesProvider, RenameProvider,
+        SemanticTokensProvider, TextDocumentSync,
+    };
+
     use super::*;
 
     #[test]
@@ -84,7 +88,7 @@ mod tests {
             .expect("text_document_sync should be set");
 
         match sync {
-            TextDocumentSyncCapability::Options(options) => {
+            TextDocumentSync::Options(options) => {
                 assert_eq!(
                     options.open_close,
                     Some(true),
@@ -92,7 +96,7 @@ mod tests {
                 );
                 assert_eq!(
                     options.change,
-                    Some(TextDocumentSyncKind::INCREMENTAL),
+                    Some(TextDocumentSyncKind::Incremental),
                     "incremental sync should be enabled"
                 );
                 assert!(options.save.is_some(), "save should be configured");
@@ -112,7 +116,7 @@ mod tests {
             .expect("text_document_sync should be set");
 
         match sync {
-            TextDocumentSyncCapability::Options(options) => {
+            TextDocumentSync::Options(options) => {
                 assert_eq!(
                     options.will_save, None,
                     "will_save should be disabled (not implemented)"
@@ -176,7 +180,7 @@ mod tests {
         );
 
         match caps.document_formatting_provider {
-            Some(OneOf::Left(enabled)) => {
+            Some(DocumentFormattingProvider::Bool(enabled)) => {
                 assert!(enabled, "formatting should be enabled by default");
             }
             _ => panic!("Expected simple boolean for formatting capability"),
@@ -193,7 +197,7 @@ mod tests {
         );
 
         match caps.definition_provider {
-            Some(OneOf::Left(enabled)) => {
+            Some(DefinitionProvider::Bool(enabled)) => {
                 assert!(enabled, "definition should be enabled");
             }
             _ => panic!("Expected simple boolean for definition capability"),
@@ -210,7 +214,7 @@ mod tests {
         );
 
         match caps.references_provider {
-            Some(OneOf::Left(enabled)) => {
+            Some(ReferencesProvider::Bool(enabled)) => {
                 assert!(enabled, "references should be enabled");
             }
             _ => panic!("Expected simple boolean for references capability"),
@@ -224,7 +228,7 @@ mod tests {
         let rename = caps.rename_provider.expect("rename_provider should be set");
 
         match rename {
-            OneOf::Right(options) => {
+            RenameProvider::RenameOptions(options) => {
                 assert_eq!(
                     options.prepare_provider,
                     Some(false),
@@ -244,10 +248,10 @@ mod tests {
             .expect("semantic_tokens_provider should be set");
 
         match semantic {
-            SemanticTokensServerCapabilities::SemanticTokensOptions(options) => {
+            SemanticTokensProvider::SemanticTokensOptions(options) => {
                 // Verify full document semantic tokens is enabled
                 match options.full {
-                    Some(SemanticTokensFullOptions::Bool(enabled)) => {
+                    Some(Full::Bool(enabled)) => {
                         assert!(enabled, "full semantic tokens should be enabled");
                     }
                     _ => panic!("Expected boolean for full semantic tokens"),
@@ -425,9 +429,8 @@ mod tests {
         if caps.definition_provider.is_some() {
             let _handler: fn(
                 LspServerStateSnapshot,
-                lsp_types::GotoDefinitionParams,
-            )
-                -> anyhow::Result<Option<lsp_types::GotoDefinitionResponse>> =
+                lsp_types::DefinitionParams,
+            ) -> anyhow::Result<Option<lsp_types::DefinitionResponse>> =
                 handlers::text_document::handle_definition;
         }
         // Hover capability -> handlers::text_document::hover
@@ -452,8 +455,7 @@ mod tests {
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::SemanticTokensParams,
-            )
-                -> anyhow::Result<Option<lsp_types::SemanticTokensResult>> =
+            ) -> anyhow::Result<Option<lsp_types::SemanticTokens>> =
                 handlers::text_document::semantic_tokens_full;
         }
 
@@ -496,7 +498,7 @@ mod tests {
         }
 
         // Text document sync notifications (these don't return responses)
-        if let Some(TextDocumentSyncCapability::Options(sync_options)) = &caps.text_document_sync {
+        if let Some(TextDocumentSync::Options(sync_options)) = &caps.text_document_sync {
             // did_open handler
             if sync_options.open_close == Some(true) {
                 let _handler: fn(

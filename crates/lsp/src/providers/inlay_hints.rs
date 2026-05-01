@@ -6,7 +6,7 @@
 use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::text_for_tree_sitter_node;
 use anyhow::{Context, Result};
-use lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams, Position};
+use lsp_types::{InlayHint, InlayHintKind, InlayHintParams, Label, Position};
 use std::collections::HashMap;
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::tree_sitter;
@@ -528,10 +528,10 @@ fn calculate_balancing_hint(postings: &[Posting]) -> Option<InlayHint> {
 
     Some(InlayHint {
         position,
-        label: InlayHintLabel::String(label),
-        kind: Some(InlayHintKind::PARAMETER),
+        label: Label::String(label),
+        kind: Some(InlayHintKind::Parameter),
         text_edits: None,
-        tooltip: Some(lsp_types::InlayHintTooltip::String(
+        tooltip: Some(lsp_types::Tooltip::String(
             "Calculated balancing amount".to_string(),
         )),
         padding_left: Some(false),
@@ -622,10 +622,10 @@ fn calculate_total_hint(postings: &[Posting], position: Position) -> Option<Inla
 
     Some(InlayHint {
         position,
-        label: InlayHintLabel::String(label),
-        kind: Some(InlayHintKind::TYPE),
+        label: Label::String(label),
+        kind: Some(InlayHintKind::Type),
         text_edits: None,
-        tooltip: Some(lsp_types::InlayHintTooltip::String(
+        tooltip: Some(lsp_types::Tooltip::String(
             "Transaction does not balance".to_string(),
         )),
         padding_left: Some(true),
@@ -668,7 +668,7 @@ mod tests {
 
             // Check that one hint is for balancing amount - plain format, no comment markers
             let balancing_hint = hints.iter().find(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("-45.23") && !label.contains("/*")
                 } else {
                     false
@@ -688,7 +688,7 @@ mod tests {
             );
 
             // Verify hint label starts with spaces for alignment
-            if let InlayHintLabel::String(label) = &hint.label {
+            if let Label::String(label) = &hint.label {
                 assert!(
                     label.starts_with(' '),
                     "Hint label should start with spaces for alignment, got: '{}'",
@@ -736,7 +736,7 @@ mod tests {
 
             // Check for warning symbol in hint with comment style
             let unbalanced_hint = hints.iter().find(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("⚠") && label.contains("500.00") && label.contains("total =")
                 } else {
                     false
@@ -785,7 +785,7 @@ mod tests {
 
             // Should not have a warning hint for balanced transaction
             let has_warning = hints.iter().any(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("⚠")
                 } else {
                     false
@@ -827,7 +827,7 @@ mod tests {
 
             // Should have balancing hint
             let balancing_hint = hints.iter().find(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("-1000.00") && !label.contains("⚠")
                 } else {
                     false
@@ -847,7 +847,7 @@ mod tests {
             );
 
             // Verify hint label starts with spaces for alignment
-            if let InlayHintLabel::String(label) = &hint.label {
+            if let Label::String(label) = &hint.label {
                 assert!(
                     label.starts_with(' '),
                     "Hint label should start with spaces for alignment, got: '{}'",
@@ -863,7 +863,7 @@ mod tests {
 
             // Should not have warning
             let has_warning = hints.iter().any(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("⚠")
                 } else {
                     false
@@ -905,7 +905,7 @@ mod tests {
 
             // Find the balancing hint (positive amount)
             let balancing_hint = hints.iter().find(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("50.00") && !label.contains("-")
                 } else {
                     false
@@ -917,7 +917,7 @@ mod tests {
             );
 
             // Verify the hint has proper spacing for positive amount
-            if let InlayHintLabel::String(label) = &balancing_hint.unwrap().label {
+            if let Label::String(label) = &balancing_hint.unwrap().label {
                 // Positive amounts should have extra space (no minus sign)
                 assert!(
                     label.starts_with(' '),
@@ -967,7 +967,7 @@ mod tests {
 
             // Find the balancing hint (negative amount)
             let balancing_hint = hints.iter().find(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("-50.00")
                 } else {
                     false
@@ -979,7 +979,7 @@ mod tests {
             );
 
             // Verify the hint has reduced spacing for negative amount
-            if let InlayHintLabel::String(label) = &balancing_hint.unwrap().label {
+            if let Label::String(label) = &balancing_hint.unwrap().label {
                 assert!(
                     label.contains("-50.00 USD"),
                     "Should contain negative amount -50.00 USD"
@@ -1034,7 +1034,7 @@ mod tests {
             );
 
             // Verify it has spacing (at least 2 spaces minimum)
-            if let InlayHintLabel::String(label) = &balancing_hint.label {
+            if let Label::String(label) = &balancing_hint.label {
                 let leading_spaces = label.chars().take_while(|c| *c == ' ').count();
                 assert!(
                     leading_spaces >= 2,
@@ -1074,7 +1074,7 @@ mod tests {
 
             // Should not have warning hint - transaction should balance with conversion
             let has_warning = hints.iter().any(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("⚠")
                 } else {
                     false
@@ -1116,7 +1116,7 @@ mod tests {
 
             // Should not have warning hint - transaction should balance with conversion
             let has_warning = hints.iter().any(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("⚠")
                 } else {
                     false
@@ -1158,7 +1158,7 @@ mod tests {
 
             // Should have warning hint - different currencies without conversion
             let has_warning = hints.iter().any(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("⚠")
                 } else {
                     false
@@ -1200,7 +1200,7 @@ mod tests {
 
             // Should not have warning hint - transaction should balance with cost basis
             let has_warning = hints.iter().any(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("⚠")
                 } else {
                     false
@@ -1242,7 +1242,7 @@ mod tests {
 
             // Should have balancing hint showing the converted cost amount
             let balancing_hint = hints.iter().find(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     // 25 * 1 USD = 25 USD
                     label.contains("-25") && label.contains("USD")
                 } else {
@@ -1285,7 +1285,7 @@ mod tests {
 
             // Should have warning hint - different commodities without conversion
             let has_warning = hints.iter().any(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("⚠")
                 } else {
                     false
@@ -1327,7 +1327,7 @@ mod tests {
 
             // Should have balancing hint showing the converted amount
             let balancing_hint = hints.iter().find(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     // 50 * 0.85 = 42.5 EUR
                     label.contains("-42.5") && label.contains("EUR")
                 } else {
@@ -1372,7 +1372,7 @@ mod tests {
                 println!("Hints: {:?}", hints);
                 // Should have balancing hint with calculated amount (300 * 4 = 1200)
                 let balancing_hint = hints.iter().find(|h| {
-                    if let InlayHintLabel::String(label) = &h.label {
+                    if let Label::String(label) = &h.label {
                         println!("Label: {}", label);
                         label.contains("-1200") && label.contains("USD")
                     } else {
@@ -1418,7 +1418,7 @@ mod tests {
 
             // Should have balancing hint with calculated amount (100 + 50 = 150)
             let balancing_hint = hints.iter().find(|h| {
-                if let InlayHintLabel::String(label) = &h.label {
+                if let Label::String(label) = &h.label {
                     label.contains("-150") && label.contains("USD")
                 } else {
                     false

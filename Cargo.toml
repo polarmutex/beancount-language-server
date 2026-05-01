@@ -17,7 +17,7 @@ tracing = "0.1"
 
 # LSP and server functionality
 lsp-server = "=0.7.9" # Pinned due to Dependabot updater bug
-lsp-types = "0.97"
+lsp-types = { package = "gen-lsp-types", version = "0.5.0", features = ["url"] }
 crossbeam-channel = "0.5"
 
 # Text processing

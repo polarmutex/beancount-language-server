@@ -3,6 +3,7 @@ use crate::server::LspServerState;
 use crate::server::LspServerStateSnapshot;
 use crate::server::Task;
 use anyhow::Result;
+use lsp_types::LspRequestMethod;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
@@ -12,7 +13,7 @@ fn result_to_response<R>(
     result: Result<R::Result>,
 ) -> lsp_server::Response
 where
-    R: lsp_types::request::Request + 'static,
+    R: lsp_types::Request + 'static,
     R::Params: DeserializeOwned + 'static,
     R::Result: Serialize + 'static,
 {
@@ -28,7 +29,7 @@ where
 
 // A helper struct to dispatch LSP requests to functions.
 pub(crate) struct RequestRouter {
-    handlers: HashMap<String, DispatchHandler>,
+    handlers: HashMap<LspRequestMethod, DispatchHandler>,
 }
 
 type DispatchHandler =
@@ -41,11 +42,11 @@ impl RequestRouter {
         }
     }
 
-    fn insert_handler(&mut self, method: &'static str, handler: DispatchHandler) -> Result<()> {
-        if self.handlers.contains_key(method) {
+    fn insert_handler(&mut self, method: LspRequestMethod, handler: DispatchHandler) -> Result<()> {
+        if self.handlers.contains_key(&method) {
             anyhow::bail!("duplicate handler registered for method: {method}");
         }
-        self.handlers.insert(method.to_string(), handler);
+        self.handlers.insert(method, handler);
         Ok(())
     }
 
@@ -55,14 +56,14 @@ impl RequestRouter {
         f: fn(&mut LspServerState, R::Params) -> Result<R::Result>,
     ) -> Result<&mut Self>
     where
-        R: lsp_types::request::Request + 'static,
+        R: lsp_types::Request + 'static,
         R::Params: DeserializeOwned + 'static,
         R::Result: Serialize + 'static,
     {
         self.insert_handler(
             R::METHOD,
-            Box::new(
-                move |state, req| match from_json::<R::Params>(R::METHOD, req.params) {
+            Box::new(move |state, req| {
+                match from_json::<R::Params>(R::METHOD.as_str(), req.params) {
                     Ok(params) => {
                         let result = f(state, params);
                         let response = result_to_response::<R>(req.id, result);
@@ -76,8 +77,8 @@ impl RequestRouter {
                         );
                         state.respond(response);
                     }
-                },
-            ),
+                }
+            }),
         )?;
         Ok(self)
     }
@@ -88,14 +89,14 @@ impl RequestRouter {
         f: fn(LspServerStateSnapshot, R::Params) -> Result<R::Result>,
     ) -> Result<&mut Self>
     where
-        R: lsp_types::request::Request + 'static,
+        R: lsp_types::Request + 'static,
         R::Params: DeserializeOwned + 'static + Send,
         R::Result: Serialize + 'static,
     {
         self.insert_handler(
             R::METHOD,
-            Box::new(
-                move |state, req| match from_json::<R::Params>(R::METHOD, req.params) {
+            Box::new(move |state, req| {
+                match from_json::<R::Params>(R::METHOD.as_str(), req.params) {
                     Ok(params) => {
                         let id = req.id;
                         let snapshot = state.snapshot();
@@ -117,8 +118,8 @@ impl RequestRouter {
                         );
                         state.respond(response);
                     }
-                },
-            ),
+                }
+            }),
         )?;
         Ok(self)
     }
@@ -131,14 +132,14 @@ impl RequestRouter {
         f: fn(LspServerStateSnapshot, R::Params) -> Result<R::Result>,
     ) -> Result<&mut Self>
     where
-        R: lsp_types::request::Request + 'static,
+        R: lsp_types::Request + 'static,
         R::Params: DeserializeOwned + Send + 'static,
         R::Result: Serialize + 'static,
     {
         self.insert_handler(
             R::METHOD,
-            Box::new(
-                move |state, req| match from_json::<R::Params>(R::METHOD, req.params) {
+            Box::new(move |state, req| {
+                match from_json::<R::Params>(R::METHOD.as_str(), req.params) {
                     Ok(params) => {
                         pre(state, &params);
 
@@ -162,15 +163,18 @@ impl RequestRouter {
                         );
                         state.respond(response);
                     }
-                },
-            ),
+                }
+            }),
         )?;
         Ok(self)
     }
 
     // Dispatches a single request by method.
     pub fn dispatch(&self, state: &mut LspServerState, req: lsp_server::Request) {
-        if let Some(handler) = self.handlers.get(req.method.as_str()) {
+        if let Some(handler) = self
+            .handlers
+            .get(&LspRequestMethod::from(req.method.clone()))
+        {
             handler(state, req);
         } else {
             tracing::error!("unknown request: {:?}", req);
@@ -206,14 +210,14 @@ impl<'a> NotificationDispatcher<'a> {
         handle_notification_fn: fn(&mut LspServerState, N::Params) -> Result<()>,
     ) -> anyhow::Result<&mut Self>
     where
-        N: lsp_types::notification::Notification + 'static,
+        N: lsp_types::Notification + 'static,
         N::Params: DeserializeOwned + Send + 'static,
     {
         let notification = match self.notification.take() {
             Some(it) => it,
             None => return Ok(self),
         };
-        let params = match notification.extract::<N::Params>(N::METHOD) {
+        let params = match notification.extract::<N::Params>(N::METHOD.as_str()) {
             Ok(it) => it,
             Err(lsp_server::ExtractError::JsonError { method, error }) => {
                 panic!("Invalid request\nMethod: {method}\n error: {error}",)
@@ -241,7 +245,7 @@ impl<'a> NotificationDispatcher<'a> {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use lsp_types::request::Request;
+    use lsp_types::Request;
     use serde_json::json;
     use std::path::PathBuf;
     use std::time::Instant;
@@ -253,7 +257,7 @@ mod tests {
 
         let request = lsp_server::Request {
             id: lsp_server::RequestId::from(1),
-            method: lsp_types::request::Completion::METHOD.to_string(),
+            method: lsp_types::CompletionRequest::METHOD.to_string(),
             params: json!({"unexpected": "value"}),
         };
 
@@ -264,7 +268,7 @@ mod tests {
 
         let mut router = RequestRouter::new();
         router
-            .on::<lsp_types::request::Completion>(|_, _| Ok(None))
+            .on::<lsp_types::CompletionRequest>(|_, _| Ok(None))
             .unwrap();
         router.dispatch(&mut state, request);
 

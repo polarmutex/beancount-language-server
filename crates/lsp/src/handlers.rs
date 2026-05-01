@@ -68,7 +68,7 @@ pub mod text_document {
     ) -> Result<()> {
         tracing::debug!(
             "Document changed: {}, version: {}",
-            params.text_document.uri.as_str(),
+            params.text_document.text_document_identifier.uri.as_str(),
             params.text_document.version
         );
         tracing::debug!(
@@ -84,9 +84,13 @@ pub mod text_document {
     ) -> anyhow::Result<Option<lsp_types::CompletionResponse>> {
         tracing::debug!(
             "Completion requested for: {} at {}:{}",
-            params.text_document_position.text_document.uri.as_str(),
-            params.text_document_position.position.line,
-            params.text_document_position.position.character
+            params
+                .text_document_position_params
+                .text_document
+                .uri
+                .as_str(),
+            params.text_document_position_params.position.line,
+            params.text_document_position_params.position.character
         );
 
         let trigger_char = match &params.context {
@@ -94,7 +98,7 @@ pub mod text_document {
                 Some(trigger_character) => {
                     tracing::debug!("Completion triggered by character: '{}'", trigger_character);
                     if trigger_character == "2" {
-                        if params.text_document_position.position.character > 1 {
+                        if params.text_document_position_params.position.character > 1 {
                             None
                         } else {
                             trigger_character.chars().last()
@@ -114,16 +118,18 @@ pub mod text_document {
             }
         };
 
-        match completion::completion(snapshot, trigger_char, params.text_document_position) {
+        match completion::completion(snapshot, trigger_char, params.text_document_position_params) {
             Ok(Some(items)) => {
                 tracing::trace!("Completion returned {} items", items.len());
                 // Return CompletionList instead of Array to signal that server-side
                 // filtering is preferred. Setting `is_incomplete: true` tells clients
                 // like Zed to re-query on each keystroke rather than filtering internally.
-                Ok(Some(lsp_types::CompletionResponse::List(
+                Ok(Some(lsp_types::CompletionResponse::CompletionList(
                     lsp_types::CompletionList {
                         is_incomplete: true,
                         items,
+                        apply_kind: None,
+                        item_defaults: None,
                     },
                 )))
             }
@@ -197,8 +203,8 @@ pub mod text_document {
 
     pub(crate) fn handle_definition(
         snapshot: LspServerStateSnapshot,
-        params: lsp_types::GotoDefinitionParams,
-    ) -> Result<Option<lsp_types::GotoDefinitionResponse>> {
+        params: lsp_types::DefinitionParams,
+    ) -> Result<Option<lsp_types::DefinitionResponse>> {
         tracing::trace!(
             "Definition requested for: {} at {}:{}",
             params
@@ -229,9 +235,13 @@ pub mod text_document {
     ) -> Result<Option<Vec<lsp_types::Location>>> {
         tracing::trace!(
             "References requested for: {} at {}:{}",
-            params.text_document_position.text_document.uri.as_str(),
-            params.text_document_position.position.line,
-            params.text_document_position.position.character
+            params
+                .text_document_position_params
+                .text_document
+                .uri
+                .as_str(),
+            params.text_document_position_params.position.line,
+            params.text_document_position_params.position.character
         );
 
         match references::references(snapshot, params) {
@@ -256,9 +266,13 @@ pub mod text_document {
     ) -> Result<Option<lsp_types::WorkspaceEdit>> {
         tracing::trace!(
             "Rename requested for: {} at {}:{} to '{}'",
-            params.text_document_position.text_document.uri.as_str(),
-            params.text_document_position.position.line,
-            params.text_document_position.position.character,
+            params
+                .text_document_position_params
+                .text_document
+                .uri
+                .as_str(),
+            params.text_document_position_params.position.line,
+            params.text_document_position_params.position.character,
             params.new_name
         );
 
@@ -286,7 +300,7 @@ pub mod text_document {
     pub(crate) fn semantic_tokens_full(
         snapshot: LspServerStateSnapshot,
         params: lsp_types::SemanticTokensParams,
-    ) -> Result<Option<lsp_types::SemanticTokensResult>> {
+    ) -> Result<Option<lsp_types::SemanticTokens>> {
         tracing::debug!(
             "Semantic tokens requested for: {}",
             params.text_document.uri.as_str()
@@ -364,7 +378,9 @@ pub mod text_document {
         match workspace_symbol::workspace_symbols(snapshot, params) {
             Ok(Some(symbols)) => {
                 tracing::trace!("Workspace symbols returned {} symbols", symbols.len());
-                Ok(Some(lsp_types::WorkspaceSymbolResponse::Flat(symbols)))
+                Ok(Some(
+                    lsp_types::WorkspaceSymbolResponse::SymbolInformationList(symbols),
+                ))
             }
             Ok(None) => {
                 tracing::debug!("No workspace symbols found");
@@ -467,7 +483,7 @@ pub mod text_document {
             let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
                 .unwrap();
             let params = lsp_types::CompletionParams {
-                text_document_position: lsp_types::TextDocumentPositionParams {
+                text_document_position_params: lsp_types::TextDocumentPositionParams {
                     text_document: lsp_types::TextDocumentIdentifier { uri },
                     position: lsp_types::Position::new(2, 12),
                 },
@@ -488,14 +504,14 @@ pub mod text_document {
             let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
                 .unwrap();
             let params = lsp_types::CompletionParams {
-                text_document_position: lsp_types::TextDocumentPositionParams {
+                text_document_position_params: lsp_types::TextDocumentPositionParams {
                     text_document: lsp_types::TextDocumentIdentifier { uri },
                     position: lsp_types::Position::new(1, 0),
                 },
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
                 context: Some(lsp_types::CompletionContext {
-                    trigger_kind: lsp_types::CompletionTriggerKind::TRIGGER_CHARACTER,
+                    trigger_kind: lsp_types::CompletionTriggerKind::TriggerCharacter,
                     trigger_character: Some("2".to_string()),
                 }),
             };
@@ -512,7 +528,7 @@ pub mod text_document {
             let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
                 .unwrap();
             let params = lsp_types::ReferenceParams {
-                text_document_position: lsp_types::TextDocumentPositionParams {
+                text_document_position_params: lsp_types::TextDocumentPositionParams {
                     text_document: lsp_types::TextDocumentIdentifier { uri },
                     position: lsp_types::Position::new(0, 20),
                 },
@@ -536,7 +552,7 @@ pub mod text_document {
             let uri = lsp_types::Uri::from_str(Url::from_file_path(&state.path).unwrap().as_ref())
                 .unwrap();
             let params = lsp_types::RenameParams {
-                text_document_position: lsp_types::TextDocumentPositionParams {
+                text_document_position_params: lsp_types::TextDocumentPositionParams {
                     text_document: lsp_types::TextDocumentIdentifier { uri },
                     position: lsp_types::Position::new(0, 20),
                 },

@@ -48,7 +48,7 @@ mod tests {
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
                 uri: Uri::from_str("file:///test.bean").unwrap(),
-                language_id: "beancount".to_string(),
+                language_id: lsp_types::LanguageKind::new("beancount"),
                 version: 1,
                 text: "2024-01-01 open Assets:Checking".to_string(),
             },
@@ -64,7 +64,7 @@ mod tests {
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
                 uri: Uri::from_str("file:///test.bean").unwrap(),
-                language_id: "beancount".to_string(),
+                language_id: lsp_types::LanguageKind::new("beancount"),
                 version: 2,
                 text: "Test content".to_string(),
             },
@@ -80,7 +80,7 @@ mod tests {
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
                 uri: Uri::from_str("file:///test.bean").unwrap(),
-                language_id: "beancount".to_string(),
+                language_id: lsp_types::LanguageKind::new("beancount"),
                 version: 1,
                 text: "Hello\nWorld".to_string(),
             },
@@ -95,7 +95,7 @@ mod tests {
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
                 uri: Uri::from_str("file:///test.bean").unwrap(),
-                language_id: "beancount".to_string(),
+                language_id: lsp_types::LanguageKind::new("beancount"),
                 version: 1,
                 text: "12345".to_string(),
             },
@@ -110,7 +110,7 @@ mod tests {
         let params_empty = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
                 uri: Uri::from_str("file:///test.bean").unwrap(),
-                language_id: "beancount".to_string(),
+                language_id: lsp_types::LanguageKind::new("beancount"),
                 version: 1,
                 text: "".to_string(),
             },
@@ -122,7 +122,7 @@ mod tests {
         let params_non_empty = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
                 uri: Uri::from_str("file:///test.bean").unwrap(),
-                language_id: "beancount".to_string(),
+                language_id: lsp_types::LanguageKind::new("beancount"),
                 version: 1,
                 text: "content".to_string(),
             },
@@ -137,7 +137,7 @@ mod tests {
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
                 uri: Uri::from_str("file:///test.bean").unwrap(),
-                language_id: "beancount".to_string(),
+                language_id: lsp_types::LanguageKind::new("beancount"),
                 version: 1,
                 text: "2024-01-01 * \"Coffee ☕\"".to_string(),
             },

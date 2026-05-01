@@ -723,7 +723,6 @@ mod tests {
                 options: lsp_types::FormattingOptions {
                     tab_size: 4,
                     insert_spaces: true,
-                    properties: std::collections::HashMap::new(),
                     trim_trailing_whitespace: Some(false),
                     insert_final_newline: Some(false),
                     trim_final_newlines: Some(false),

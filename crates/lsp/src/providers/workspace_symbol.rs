@@ -1,6 +1,7 @@
 use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::text_for_tree_sitter_node;
 use anyhow::Result;
+use lsp_types::BaseSymbolInformation;
 use lsp_types::{Location, SymbolInformation, SymbolKind, WorkspaceSymbolParams};
 use ropey::Rope;
 use std::str::FromStr;
@@ -79,8 +80,8 @@ pub(crate) fn workspace_symbols(
 
     // Sort by relevance (exact matches first, then by file/line)
     symbols.sort_by(|a, b| {
-        let a_exact = a.name.to_lowercase() == query;
-        let b_exact = b.name.to_lowercase() == query;
+        let a_exact = a.base_symbol_information.name.to_lowercase() == query;
+        let b_exact = b.base_symbol_information.name.to_lowercase() == query;
         if a_exact != b_exact {
             return b_exact.cmp(&a_exact);
         }
@@ -128,15 +129,17 @@ fn extract_account_symbol(
     if account.to_lowercase().contains(query) {
         #[allow(deprecated)]
         Some(SymbolInformation {
-            name: account,
-            kind: SymbolKind::NAMESPACE,
+            base_symbol_information: BaseSymbolInformation {
+                name: account,
+                kind: SymbolKind::Namespace,
+                container_name: Some(uri.path().to_string()),
+                tags: None,
+            },
+            deprecated: None,
             location: Location {
                 uri: uri.clone(),
                 range: node_to_range(node),
             },
-            container_name: Some(uri.path().to_string()),
-            deprecated: None,
-            tags: None,
         })
     } else {
         None
@@ -190,15 +193,17 @@ fn extract_transaction_symbol(
 
         #[allow(deprecated)]
         Some(SymbolInformation {
-            name,
-            kind: SymbolKind::EVENT,
+            base_symbol_information: BaseSymbolInformation {
+                name,
+                kind: SymbolKind::Event,
+                container_name: Some(uri.path().to_string()),
+                tags: None,
+            },
             location: Location {
                 uri: uri.clone(),
                 range: node_to_range(node),
             },
-            container_name: Some(uri.path().to_string()),
             deprecated: None,
-            tags: None,
         })
     } else {
         None
@@ -245,15 +250,17 @@ fn extract_tags_and_links_query(
                 if text.to_lowercase().contains(query_str) {
                     #[allow(deprecated)]
                     symbols.push(SymbolInformation {
-                        name: text.clone(),
-                        kind: SymbolKind::STRING,
+                        base_symbol_information: BaseSymbolInformation {
+                            name: text.clone(),
+                            kind: SymbolKind::String,
+                            container_name: Some(uri.path().to_string()),
+                            tags: None,
+                        },
+                        deprecated: None,
                         location: Location {
                             uri: uri.clone(),
                             range: node_to_range(&capture.node),
                         },
-                        container_name: Some(uri.path().to_string()),
-                        deprecated: None,
-                        tags: None,
                     });
                 }
             } else if capture.index == link_idx {
@@ -261,15 +268,17 @@ fn extract_tags_and_links_query(
                 if text.to_lowercase().contains(query_str) {
                     #[allow(deprecated)]
                     symbols.push(SymbolInformation {
-                        name: text.clone(),
-                        kind: SymbolKind::KEY,
+                        base_symbol_information: BaseSymbolInformation {
+                            name: text.clone(),
+                            kind: SymbolKind::Key,
+                            container_name: Some(uri.path().to_string()),
+                            tags: None,
+                        },
+                        deprecated: None,
                         location: Location {
                             uri: uri.clone(),
                             range: node_to_range(&capture.node),
                         },
-                        container_name: Some(uri.path().to_string()),
-                        deprecated: None,
-                        tags: None,
                     });
                 }
             }
@@ -297,15 +306,17 @@ fn extract_commodity_symbol(
     if currency.to_lowercase().contains(query) {
         #[allow(deprecated)]
         Some(SymbolInformation {
-            name: currency,
-            kind: SymbolKind::CLASS,
+            base_symbol_information: BaseSymbolInformation {
+                name: currency,
+                kind: SymbolKind::Class,
+                container_name: Some(uri.path().to_string()),
+                tags: None,
+            },
             location: Location {
                 uri: uri.clone(),
                 range: node_to_range(node),
             },
-            container_name: Some(uri.path().to_string()),
             deprecated: None,
-            tags: None,
         })
     } else {
         None
@@ -346,15 +357,17 @@ fn extract_price_symbol(
 
         #[allow(deprecated)]
         Some(SymbolInformation {
-            name,
-            kind: SymbolKind::NUMBER,
+            base_symbol_information: BaseSymbolInformation {
+                name,
+                kind: SymbolKind::Number,
+                container_name: Some(uri.path().to_string()),
+                tags: None,
+            },
             location: Location {
                 uri: uri.clone(),
                 range: node_to_range(node),
             },
-            container_name: Some(uri.path().to_string()),
             deprecated: None,
-            tags: None,
         })
     } else {
         None
@@ -449,8 +462,14 @@ mod tests {
 
         let symbols = result.unwrap();
         assert_eq!(symbols.len(), 1);
-        assert_eq!(symbols[0].kind, SymbolKind::NAMESPACE);
-        assert_eq!(symbols[0].name, "Assets:Bank:Checking");
+        assert_eq!(
+            symbols[0].base_symbol_information.kind,
+            SymbolKind::Namespace
+        );
+        assert_eq!(
+            symbols[0].base_symbol_information.name,
+            "Assets:Bank:Checking"
+        );
     }
 
     #[test]
@@ -476,8 +495,8 @@ mod tests {
 
         let symbols = result.unwrap();
         assert_eq!(symbols.len(), 2);
-        assert_eq!(symbols[0].kind, SymbolKind::EVENT);
-        assert!(symbols[0].name.contains("Amazon"));
+        assert_eq!(symbols[0].base_symbol_information.kind, SymbolKind::Event);
+        assert!(symbols[0].base_symbol_information.name.contains("Amazon"));
     }
 
     #[test]
@@ -503,8 +522,8 @@ mod tests {
 
         let symbols = result.unwrap();
         assert_eq!(symbols.len(), 2);
-        assert_eq!(symbols[0].kind, SymbolKind::STRING);
-        assert!(symbols[0].name.contains("#tax"));
+        assert_eq!(symbols[0].base_symbol_information.kind, SymbolKind::String);
+        assert!(symbols[0].base_symbol_information.name.contains("#tax"));
     }
 
     #[test]
@@ -535,17 +554,27 @@ mod tests {
         // Verify we have both transactions and links
         let links: Vec<_> = symbols
             .iter()
-            .filter(|s| s.kind == SymbolKind::KEY)
+            .filter(|s| s.base_symbol_information.kind == SymbolKind::Key)
             .collect();
         assert_eq!(links.len(), 2);
-        assert!(links[0].name.contains("^trip-paris-2024"));
+        assert!(
+            links[0]
+                .base_symbol_information
+                .name
+                .contains("^trip-paris-2024")
+        );
 
         let transactions: Vec<_> = symbols
             .iter()
-            .filter(|s| s.kind == SymbolKind::EVENT)
+            .filter(|s| s.base_symbol_information.kind == SymbolKind::Event)
             .collect();
         assert_eq!(transactions.len(), 1);
-        assert!(transactions[0].name.contains("Paris trip"));
+        assert!(
+            transactions[0]
+                .base_symbol_information
+                .name
+                .contains("Paris trip")
+        );
     }
 
     #[test]
@@ -568,8 +597,16 @@ mod tests {
         let symbols = result.unwrap();
         assert_eq!(symbols.len(), 2);
         // First should be commodity, second should be price
-        assert!(symbols.iter().any(|s| s.kind == SymbolKind::CLASS));
-        assert!(symbols.iter().any(|s| s.kind == SymbolKind::NUMBER));
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.base_symbol_information.kind == SymbolKind::Class)
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s.base_symbol_information.kind == SymbolKind::Number)
+        );
     }
 
     #[test]
@@ -626,6 +663,9 @@ mod tests {
 
         let symbols = result.unwrap();
         assert_eq!(symbols.len(), 1);
-        assert_eq!(symbols[0].name, "Assets:Bank:Checking");
+        assert_eq!(
+            symbols[0].base_symbol_information.name,
+            "Assets:Bank:Checking"
+        );
     }
 }

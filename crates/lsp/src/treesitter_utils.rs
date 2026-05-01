@@ -37,18 +37,23 @@ pub fn lsp_textdocchange_to_ts_inputedit(
     source: &ropey::Rope,
     change: &lsp_types::TextDocumentContentChangeEvent,
 ) -> anyhow::Result<tree_sitter::InputEdit> {
-    let text = change.text.as_str();
+    let (text, range) = match change {
+        lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(partial) => {
+            (partial.text.as_str(), partial.range)
+        }
+        lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(
+            partial,
+        ) => {
+            // Full document replacement: range covers the entire OLD document
+            let start = byte_to_lsp_position(source, 0);
+            let end = byte_to_lsp_position(source, source.len_bytes());
+            let range = lsp_types::Range { start, end };
+            (partial.text.as_str(), range)
+        }
+    };
+
     let text_bytes = text.as_bytes();
     let text_end_byte_idx = text_bytes.len();
-
-    let range = if let Some(range) = change.range {
-        range
-    } else {
-        // Full document replacement: range covers the entire OLD document
-        let start = byte_to_lsp_position(source, 0);
-        let end = byte_to_lsp_position(source, source.len_bytes());
-        lsp_types::Range { start, end }
-    };
 
     let start = lsp_position_to_core(source, range.start)?;
     let old_end = lsp_position_to_core(source, range.end)?;
@@ -161,21 +166,26 @@ pub fn text_for_tree_sitter_node(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lsp_types::{Position, Range, TextDocumentContentChangeEvent};
+    use lsp_types::{
+        Position, Range, TextDocumentContentChangeEvent, TextDocumentContentChangePartial,
+        TextDocumentContentChangeWholeDocument,
+    };
     use ropey::Rope;
     use tree_sitter::Point;
 
     #[test]
     fn test_lsp_textdocchange_simple_insertion() {
         let source = Rope::from("Hello World");
-        let change = TextDocumentContentChangeEvent {
-            range: Some(Range {
-                start: Position::new(0, 5),
-                end: Position::new(0, 5),
-            }),
-            range_length: None,
-            text: " Beautiful".to_string(),
-        };
+        let change = TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+            TextDocumentContentChangePartial {
+                range: Range {
+                    start: Position::new(0, 5),
+                    end: Position::new(0, 5),
+                },
+                text: " Beautiful".to_string(),
+                ..Default::default()
+            },
+        );
 
         let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
         assert_eq!(edit.start_byte, 5);
@@ -188,14 +198,16 @@ mod tests {
     #[test]
     fn test_lsp_textdocchange_simple_deletion() {
         let source = Rope::from("Hello World");
-        let change = TextDocumentContentChangeEvent {
-            range: Some(Range {
-                start: Position::new(0, 0),
-                end: Position::new(0, 6),
-            }),
-            range_length: None,
-            text: String::new(),
-        };
+        let change = TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+            TextDocumentContentChangePartial {
+                range: Range {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 6),
+                },
+                text: String::new(),
+                ..Default::default()
+            },
+        );
 
         let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
         assert_eq!(edit.start_byte, 0);
@@ -209,14 +221,16 @@ mod tests {
     #[test]
     fn test_lsp_textdocchange_replacement() {
         let source = Rope::from("Hello World");
-        let change = TextDocumentContentChangeEvent {
-            range: Some(Range {
-                start: Position::new(0, 6),
-                end: Position::new(0, 11),
-            }),
-            range_length: None,
-            text: "Rust".to_string(),
-        };
+        let change = TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+            TextDocumentContentChangePartial {
+                range: Range {
+                    start: Position::new(0, 6),
+                    end: Position::new(0, 11),
+                },
+                text: "Rust".to_string(),
+                ..Default::default()
+            },
+        );
 
         let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
         assert_eq!(edit.start_byte, 6);
@@ -228,11 +242,11 @@ mod tests {
     #[test]
     fn test_lsp_textdocchange_full_document_replacement() {
         let source = Rope::from("Old content");
-        let change = TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text: "New content".to_string(),
-        };
+        let change = TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(
+            TextDocumentContentChangeWholeDocument {
+                text: "New content".to_string(),
+            },
+        );
 
         let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
         assert_eq!(edit.start_byte, 0);
@@ -244,14 +258,16 @@ mod tests {
     #[test]
     fn test_lsp_textdocchange_multiline_insertion() {
         let source = Rope::from("Line 1\nLine 2");
-        let change = TextDocumentContentChangeEvent {
-            range: Some(Range {
-                start: Position::new(1, 0),
-                end: Position::new(1, 0),
-            }),
-            range_length: None,
-            text: "New line\n".to_string(),
-        };
+        let change = TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+            TextDocumentContentChangePartial {
+                range: Range {
+                    start: Position::new(1, 0),
+                    end: Position::new(1, 0),
+                },
+                text: "New line\n".to_string(),
+                ..Default::default()
+            },
+        );
 
         let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
         assert_eq!(edit.start_byte, 7); // After "Line 1\n"
@@ -262,14 +278,16 @@ mod tests {
     #[test]
     fn test_lsp_textdocchange_with_multibyte_utf8() {
         let source = Rope::from("Hello 世界");
-        let change = TextDocumentContentChangeEvent {
-            range: Some(Range {
-                start: Position::new(0, 6),
-                end: Position::new(0, 8),
-            }),
-            range_length: None,
-            text: "🌍".to_string(),
-        };
+        let change = TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+            TextDocumentContentChangePartial {
+                range: Range {
+                    start: Position::new(0, 6),
+                    end: Position::new(0, 8),
+                },
+                text: "🌍".to_string(),
+                ..Default::default()
+            },
+        );
 
         let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
         assert_eq!(edit.start_byte, 6);
@@ -281,14 +299,16 @@ mod tests {
     #[test]
     fn test_lsp_textdocchange_empty_document() {
         let source = Rope::from("");
-        let change = TextDocumentContentChangeEvent {
-            range: Some(Range {
-                start: Position::new(0, 0),
-                end: Position::new(0, 0),
-            }),
-            range_length: None,
-            text: "New content".to_string(),
-        };
+        let change = TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+            TextDocumentContentChangePartial {
+                range: Range {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 0),
+                },
+                text: "New content".to_string(),
+                ..Default::default()
+            },
+        );
 
         let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
         assert_eq!(edit.start_byte, 0);
@@ -301,11 +321,11 @@ mod tests {
     #[test]
     fn test_lsp_textdocchange_to_empty() {
         let source = Rope::from("Content to delete");
-        let change = TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text: String::new(),
-        };
+        let change = TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(
+            TextDocumentContentChangeWholeDocument {
+                text: String::new(),
+            },
+        );
 
         let edit = lsp_textdocchange_to_ts_inputedit(&source, &change).unwrap();
         assert_eq!(edit.start_byte, 0);
@@ -431,14 +451,16 @@ mod tests {
         let total_utf16_len = source.len_utf16_cu();
 
         // Change with end position beyond document - should be clamped
-        let change = TextDocumentContentChangeEvent {
-            range: Some(Range {
-                start: Position::new(0, 0),
-                end: Position::new(0, (total_utf16_len + 50) as u32),
-            }),
-            range_length: None,
-            text: "Replacement".to_string(),
-        };
+        let change = TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+            TextDocumentContentChangePartial {
+                range: Range {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, (total_utf16_len + 50) as u32),
+                },
+                text: "Replacement".to_string(),
+                ..Default::default()
+            },
+        );
 
         let result = lsp_textdocchange_to_ts_inputedit(&source, &change);
         assert!(

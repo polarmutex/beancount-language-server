@@ -5,9 +5,7 @@ use crate::treesitter_utils::{
     tree_sitter_node_to_lsp_range,
 };
 use anyhow::Result;
-use lsp_types::{
-    Hover, HoverContents, HoverParams, InlayHintLabel, MarkupContent, MarkupKind, Range,
-};
+use lsp_types::{Contents, Hover, HoverParams, Label, MarkupContent, MarkupKind, Range};
 use std::collections::HashSet;
 use tree_sitter_beancount::{NodeKind, tree_sitter};
 
@@ -66,7 +64,7 @@ pub(crate) fn hover(
     let range = tree_sitter_node_to_lsp_range(&content, &account_node);
 
     Ok(Some(Hover {
-        contents: HoverContents::Markup(MarkupContent {
+        contents: Contents::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
             value: hover_text,
         }),
@@ -142,8 +140,10 @@ fn find_posting_inlay_hint(content: &ropey::Rope, node: tree_sitter::Node) -> Op
         .into_iter()
         .filter(|hint| hint.position.line == target_line)
         .map(|hint| match hint.label {
-            InlayHintLabel::String(label) => label.trim_start().to_string(),
-            InlayHintLabel::LabelParts(parts) => parts.into_iter().map(|part| part.value).collect(),
+            Label::String(label) => label.trim_start().to_string(),
+            Label::InlayHintLabelPartList(parts) => {
+                parts.into_iter().map(|part| part.value).collect()
+            }
         })
         .next()
 }
@@ -227,7 +227,7 @@ mod tests {
         let result = hover(state.snapshot, params).unwrap();
         let hover = result.expect("Expected hover result");
         match hover.contents {
-            HoverContents::Markup(markup) => {
+            Contents::MarkupContent(markup) => {
                 assert!(markup.value.contains("cash note"));
             }
             _ => panic!("Expected markup hover content"),
@@ -252,7 +252,7 @@ mod tests {
         let result = hover(state.snapshot, params).unwrap();
         let hover = result.expect("Expected hover result");
         match hover.contents {
-            HoverContents::Markup(markup) => {
+            Contents::MarkupContent(markup) => {
                 assert!(
                     markup.value.contains("-1 USD"),
                     "Hover should surface the balancing hint for postings"

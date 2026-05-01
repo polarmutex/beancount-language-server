@@ -1,8 +1,8 @@
 use crate::server::LspServerStateSnapshot;
 use anyhow::Result;
 use lsp_types::{
-    SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
-    SemanticTokensParams, SemanticTokensResult,
+    SemanticToken, SemanticTokenModifiers, SemanticTokenTypes, SemanticTokens,
+    SemanticTokensLegend, SemanticTokensParams,
 };
 use ropey::Rope;
 use std::cmp::Ordering;
@@ -30,7 +30,7 @@ enum TokenKind {
     Function,
 }
 
-fn token_types() -> Vec<SemanticTokenType> {
+fn token_types() -> Vec<SemanticTokenTypes> {
     TokenKind::iter().map(token_type).collect()
 }
 
@@ -38,24 +38,24 @@ fn token_index(kind: TokenKind) -> u32 {
     kind as u32
 }
 
-fn token_type(kind: TokenKind) -> SemanticTokenType {
+fn token_type(kind: TokenKind) -> SemanticTokenTypes {
     match kind {
-        TokenKind::Keyword => SemanticTokenType::KEYWORD,
-        TokenKind::Comment => SemanticTokenType::COMMENT,
-        TokenKind::String => SemanticTokenType::STRING,
-        TokenKind::Number => SemanticTokenType::NUMBER,
-        TokenKind::Type => SemanticTokenType::TYPE,
-        TokenKind::Macro => SemanticTokenType::MACRO,
-        TokenKind::Operator => SemanticTokenType::OPERATOR,
-        TokenKind::Parameter => SemanticTokenType::PARAMETER,
-        TokenKind::Property => SemanticTokenType::PROPERTY,
-        TokenKind::Class => SemanticTokenType::CLASS,
-        TokenKind::Function => SemanticTokenType::FUNCTION,
+        TokenKind::Keyword => SemanticTokenTypes::Keyword,
+        TokenKind::Comment => SemanticTokenTypes::Comment,
+        TokenKind::String => SemanticTokenTypes::String,
+        TokenKind::Number => SemanticTokenTypes::Number,
+        TokenKind::Type => SemanticTokenTypes::Type,
+        TokenKind::Macro => SemanticTokenTypes::Macro,
+        TokenKind::Operator => SemanticTokenTypes::Operator,
+        TokenKind::Parameter => SemanticTokenTypes::Parameter,
+        TokenKind::Property => SemanticTokenTypes::Property,
+        TokenKind::Class => SemanticTokenTypes::Class,
+        TokenKind::Function => SemanticTokenTypes::Function,
     }
 }
 
 // We currently do not expose token modifiers; keep list empty for a minimal implementation.
-const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[];
+const TOKEN_MODIFIERS: &[SemanticTokenModifiers] = &[];
 
 #[derive(Debug)]
 struct RawToken {
@@ -69,8 +69,8 @@ struct RawToken {
 /// Public legend shared between capability advertisement and token responses.
 pub(crate) fn legend() -> SemanticTokensLegend {
     SemanticTokensLegend {
-        token_types: token_types(),
-        token_modifiers: TOKEN_MODIFIERS.to_vec(),
+        token_types: token_types().iter().map(ToString::to_string).collect(),
+        token_modifiers: TOKEN_MODIFIERS.iter().map(ToString::to_string).collect(),
     }
 }
 
@@ -78,7 +78,7 @@ pub(crate) fn legend() -> SemanticTokensLegend {
 pub(crate) fn semantic_tokens_full(
     snapshot: LspServerStateSnapshot,
     params: SemanticTokensParams,
-) -> Result<Option<SemanticTokensResult>> {
+) -> Result<Option<SemanticTokens>> {
     let (tree, doc) = match snapshot.tree_and_document_for_uri(&params.text_document.uri) {
         Ok(v) => v,
         Err(_) => return Ok(None),
@@ -89,10 +89,10 @@ pub(crate) fn semantic_tokens_full(
     collect_tokens(&tree.root_node(), &content, &mut raw_tokens);
 
     if raw_tokens.is_empty() {
-        return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+        return Ok(Some(SemanticTokens {
             result_id: None,
             data: vec![],
-        })));
+        }));
     }
 
     raw_tokens.sort_by(|a, b| match a.line.cmp(&b.line) {
@@ -124,10 +124,10 @@ pub(crate) fn semantic_tokens_full(
         prev_start = token.start;
     }
 
-    Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+    Ok(Some(SemanticTokens {
         result_id: None,
         data,
-    })))
+    }))
 }
 
 fn collect_tokens(node: &Node, content: &Rope, out: &mut Vec<RawToken>) {
@@ -246,7 +246,7 @@ mod tests {
         use std::collections::HashSet;
 
         let kinds: Vec<TokenKind> = TokenKind::iter().collect();
-        let types: Vec<SemanticTokenType> = token_types();
+        let types: Vec<SemanticTokenTypes> = token_types();
 
         assert_eq!(
             kinds.len(),

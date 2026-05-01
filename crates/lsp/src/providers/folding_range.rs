@@ -1,6 +1,5 @@
 use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::text_for_tree_sitter_node;
-use crate::utils::ToFilePath;
 use anyhow::Result;
 use lsp_types::{FoldingRange, FoldingRangeKind, FoldingRangeParams};
 use ropey::Rope;

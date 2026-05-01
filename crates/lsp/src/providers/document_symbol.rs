@@ -1,6 +1,5 @@
 use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::text_for_tree_sitter_node;
-use crate::utils::ToFilePath;
 use anyhow::Result;
 use lsp_types::{DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, SymbolKind};
 use ropey::Rope;
@@ -48,7 +47,7 @@ pub(crate) fn document_symbols(
     }
 
     tracing::trace!("Document symbols: found {} symbols", symbols.len());
-    Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+    Ok(Some(symbols.into()))
 }
 
 /// Extract a DocumentSymbol from a tree-sitter node.
@@ -112,7 +111,7 @@ fn extract_transaction_symbol(node: &Node, content: &Rope) -> Option<DocumentSym
     Some(DocumentSymbol {
         name,
         detail: Some("Transaction".to_string()),
-        kind: SymbolKind::STRUCT,
+        kind: SymbolKind::Struct,
         range: node_to_range(node),
         selection_range: node_to_range(node),
         children: if postings.is_empty() {
@@ -154,7 +153,7 @@ fn extract_posting_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbol>
     Some(DocumentSymbol {
         name,
         detail: Some("Posting".to_string()),
-        kind: SymbolKind::PROPERTY,
+        kind: SymbolKind::Property,
         range: node_to_range(node),
         selection_range: node_to_range(node),
         children: None,
@@ -191,7 +190,7 @@ fn extract_open_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbol> {
     Some(DocumentSymbol {
         name: account,
         detail: Some(detail),
-        kind: SymbolKind::FILE,
+        kind: SymbolKind::File,
         range: node_to_range(node),
         selection_range: node_to_range(node),
         children: None,
@@ -216,7 +215,7 @@ fn extract_close_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbol> {
     Some(DocumentSymbol {
         name: account,
         detail: Some("Close".to_string()),
-        kind: SymbolKind::FILE,
+        kind: SymbolKind::File,
         range: node_to_range(node),
         selection_range: node_to_range(node),
         children: None,
@@ -253,7 +252,7 @@ fn extract_balance_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbol>
     Some(DocumentSymbol {
         name,
         detail: Some("Balance".to_string()),
-        kind: SymbolKind::CONSTANT,
+        kind: SymbolKind::Constant,
         range: node_to_range(node),
         selection_range: node_to_range(node),
         children: None,
@@ -292,7 +291,7 @@ fn extract_price_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbol> {
     Some(DocumentSymbol {
         name,
         detail: Some("Price".to_string()),
-        kind: SymbolKind::NUMBER,
+        kind: SymbolKind::Number,
         range: node_to_range(node),
         selection_range: node_to_range(node),
         children: None,
@@ -317,7 +316,7 @@ fn extract_commodity_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbo
     Some(DocumentSymbol {
         name: currency,
         detail: Some("Commodity".to_string()),
-        kind: SymbolKind::CLASS,
+        kind: SymbolKind::Class,
         range: node_to_range(node),
         selection_range: node_to_range(node),
         children: None,
@@ -355,7 +354,7 @@ fn extract_event_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbol> {
     Some(DocumentSymbol {
         name,
         detail: Some("Event".to_string()),
-        kind: SymbolKind::EVENT,
+        kind: SymbolKind::Event,
         range: node_to_range(node),
         selection_range: node_to_range(node),
         children: None,
@@ -386,7 +385,7 @@ fn extract_option_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbol> 
     Some(DocumentSymbol {
         name,
         detail: Some("Option".to_string()),
-        kind: SymbolKind::PROPERTY,
+        kind: SymbolKind::Property,
         range: node_to_range(node),
         selection_range: node_to_range(node),
         children: None,
@@ -489,10 +488,10 @@ mod tests {
         let result = document_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+        if let Some(DocumentSymbolResponse::DocumentSymbolList(symbols)) = result {
             assert_eq!(symbols.len(), 1);
             let symbol = &symbols[0];
-            assert_eq!(symbol.kind, SymbolKind::STRUCT);
+            assert_eq!(symbol.kind, SymbolKind::Struct);
             assert!(symbol.name.contains("2024-01-15"));
             assert!(symbol.name.contains("Grocery Store"));
             assert!(symbol.name.contains("Weekly shopping"));
@@ -500,7 +499,7 @@ mod tests {
             // Check postings
             let children = symbol.children.as_ref().unwrap();
             assert_eq!(children.len(), 2);
-            assert_eq!(children[0].kind, SymbolKind::PROPERTY);
+            assert_eq!(children[0].kind, SymbolKind::Property);
             assert!(children[0].name.contains("Expenses:Food:Groceries"));
             assert!(children[0].name.contains("45.23 USD"));
         } else {
@@ -524,10 +523,10 @@ mod tests {
         let result = document_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+        if let Some(DocumentSymbolResponse::DocumentSymbolList(symbols)) = result {
             assert_eq!(symbols.len(), 1);
             let symbol = &symbols[0];
-            assert_eq!(symbol.kind, SymbolKind::FILE);
+            assert_eq!(symbol.kind, SymbolKind::File);
             assert_eq!(symbol.name, "Assets:Checking");
             assert!(symbol.detail.as_ref().unwrap().contains("USD"));
         }
@@ -549,11 +548,11 @@ mod tests {
         let result = document_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+        if let Some(DocumentSymbolResponse::DocumentSymbolList(symbols)) = result {
             assert_eq!(symbols.len(), 1);
             let symbol = &symbols[0];
             eprintln!("Balance symbol name: {}", symbol.name);
-            assert_eq!(symbol.kind, SymbolKind::CONSTANT);
+            assert_eq!(symbol.kind, SymbolKind::Constant);
             assert!(symbol.name.contains("Assets:Checking"));
             assert!(symbol.name.contains("1000.00") || symbol.name.contains("="));
         }
@@ -575,10 +574,10 @@ mod tests {
         let result = document_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+        if let Some(DocumentSymbolResponse::DocumentSymbolList(symbols)) = result {
             assert_eq!(symbols.len(), 1);
             let symbol = &symbols[0];
-            assert_eq!(symbol.kind, SymbolKind::NUMBER);
+            assert_eq!(symbol.kind, SymbolKind::Number);
             assert!(symbol.name.contains("AAPL"));
             assert!(symbol.name.contains("150.00 USD"));
         }
@@ -601,10 +600,10 @@ mod tests {
         let result = document_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+        if let Some(DocumentSymbolResponse::DocumentSymbolList(symbols)) = result {
             assert_eq!(symbols.len(), 1);
             let symbol = &symbols[0];
-            assert_eq!(symbol.kind, SymbolKind::PROPERTY);
+            assert_eq!(symbol.kind, SymbolKind::Property);
             assert!(symbol.name.contains("title"));
             assert!(symbol.name.contains("My Ledger"));
         }
@@ -637,25 +636,25 @@ mod tests {
         let result = document_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+        if let Some(DocumentSymbolResponse::DocumentSymbolList(symbols)) = result {
             assert_eq!(symbols.len(), 5);
 
             // Option
-            assert_eq!(symbols[0].kind, SymbolKind::PROPERTY);
+            assert_eq!(symbols[0].kind, SymbolKind::Property);
 
             // Open
-            assert_eq!(symbols[1].kind, SymbolKind::FILE);
+            assert_eq!(symbols[1].kind, SymbolKind::File);
             assert_eq!(symbols[1].name, "Assets:Checking");
 
             // Transaction
-            assert_eq!(symbols[2].kind, SymbolKind::STRUCT);
+            assert_eq!(symbols[2].kind, SymbolKind::Struct);
             assert!(symbols[2].children.is_some());
 
             // Balance
-            assert_eq!(symbols[3].kind, SymbolKind::CONSTANT);
+            assert_eq!(symbols[3].kind, SymbolKind::Constant);
 
             // Price
-            assert_eq!(symbols[4].kind, SymbolKind::NUMBER);
+            assert_eq!(symbols[4].kind, SymbolKind::Number);
         }
     }
 
@@ -675,7 +674,7 @@ mod tests {
         let result = document_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        if let Some(DocumentSymbolResponse::Nested(symbols)) = result {
+        if let Some(DocumentSymbolResponse::DocumentSymbolList(symbols)) = result {
             assert_eq!(symbols.len(), 0);
         }
     }

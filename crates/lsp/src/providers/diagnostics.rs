@@ -127,7 +127,7 @@ fn convert_errors_to_diagnostics(
         let diagnostic = lsp_types::Diagnostic {
             range: full_line_range(line_number),
             message: error.message,
-            severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+            severity: Some(lsp_types::DiagnosticSeverity::Error),
             source: Some("bean-check".to_string()),
             code: None,
             code_description: None,
@@ -161,11 +161,9 @@ fn merge_flagged_entries_from_checker(
         let diagnostic = lsp_types::Diagnostic {
             range: full_line_range(line_number),
             message: entry.message,
-            severity: Some(lsp_types::DiagnosticSeverity::WARNING),
+            severity: Some(lsp_types::DiagnosticSeverity::Warning),
             source: Some("bean-check".to_string()),
-            code: Some(lsp_types::NumberOrString::String(
-                "flagged-entry".to_string(),
-            )),
+            code: Some(lsp_types::Code::String("flagged-entry".to_string())),
             ..lsp_types::Diagnostic::default()
         };
 
@@ -199,11 +197,9 @@ fn merge_flagged_entries_from_parsed_data(
             let diagnostic = lsp_types::Diagnostic {
                 range: full_line_range(flagged_entry.line),
                 message: format!("Transaction flagged for review ({})", flagged_entry.flag),
-                severity: Some(lsp_types::DiagnosticSeverity::WARNING),
+                severity: Some(lsp_types::DiagnosticSeverity::Warning),
                 source: Some("beancount-lsp".to_string()),
-                code: Some(lsp_types::NumberOrString::String(
-                    "flagged-entry".to_string(),
-                )),
+                code: Some(lsp_types::Code::String("flagged-entry".to_string())),
                 ..lsp_types::Diagnostic::default()
             };
 
@@ -361,7 +357,7 @@ mod tests {
         // Find the warning diagnostic
         let warning_diag = file_diagnostics
             .iter()
-            .find(|d| d.severity == Some(lsp_types::DiagnosticSeverity::WARNING));
+            .find(|d| d.severity == Some(lsp_types::DiagnosticSeverity::Warning));
         assert!(
             warning_diag.is_some(),
             "Should have a warning diagnostic for flagged entry"
@@ -371,9 +367,7 @@ mod tests {
         assert_eq!(diagnostic.source, Some("beancount-lsp".to_string()));
         assert_eq!(
             diagnostic.code,
-            Some(lsp_types::NumberOrString::String(
-                "flagged-entry".to_string()
-            ))
+            Some(lsp_types::Code::String("flagged-entry".to_string()))
         );
         assert_eq!(diagnostic.message, "Transaction flagged for review (!)");
         assert_eq!(diagnostic.range.start.character, 0);
@@ -407,7 +401,7 @@ mod tests {
         // Check that we have warning diagnostics for flagged entries
         let warning_count = file_diagnostics
             .iter()
-            .filter(|d| d.severity == Some(lsp_types::DiagnosticSeverity::WARNING))
+            .filter(|d| d.severity == Some(lsp_types::DiagnosticSeverity::Warning))
             .count();
 
         assert!(
