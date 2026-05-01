@@ -13,15 +13,13 @@ mod query_utils;
 pub mod server;
 //pub mod session;
 mod treesitter_utils;
-mod utils;
 
 use crate::config::Config;
 use crate::server::LspServerState;
 use anyhow::Result;
 use lsp_server::Connection;
-use lsp_types::InitializeParams;
+use lsp_types::{InitializeParams, WorkspaceFolders};
 use serde::{Serialize, de::DeserializeOwned};
-use utils::ToFilePath;
 
 pub fn run_server() -> Result<()> {
     tracing::info!("beancount-language-server started");
@@ -58,7 +56,14 @@ pub fn run_server() -> Result<()> {
 
     // Parse config first so we can conditionally register capabilities
     let config = {
-        let root_file = if let Some(workspace_folders) = &initialize_params.workspace_folders {
+        let root_file = if let Some(workspace_folders) = &initialize_params
+            .workspace_folders_initialize_params
+            .workspace_folders
+        {
+            let workspace_folders = match workspace_folders {
+                WorkspaceFolders::Null => &Vec::new(),
+                WorkspaceFolders::WorkspaceFolderList(workspace_folders) => workspace_folders,
+            };
             let root = workspace_folders
                 .first()
                 .and_then(|folder| folder.uri.to_file_path().ok())
@@ -126,7 +131,7 @@ pub fn main_loop(connection: Connection, config: Config) -> Result<()> {
     LspServerState::new(connection.sender, config).run(connection.receiver)
 }
 
-pub fn from_json<T: DeserializeOwned>(what: &'static str, json: serde_json::Value) -> Result<T> {
+pub fn from_json<T: DeserializeOwned>(what: &str, json: serde_json::Value) -> Result<T> {
     T::deserialize(&json)
         .map_err(|e| anyhow::anyhow!("could not deserialize {}: {} - {}", what, e, json))
 }

@@ -5,10 +5,9 @@ use crate::treesitter_utils::{
     lsp_position_to_tree_sitter_point_range, text_for_tree_sitter_node,
     tree_sitter_node_to_lsp_range,
 };
-use crate::utils::file_path_to_uri;
 use anyhow::Context;
 use anyhow::Result;
-use lsp_types::GotoDefinitionResponse;
+use lsp_types::DefinitionResponse;
 use lsp_types::Location;
 use ropey::Rope;
 use std::collections::HashMap;
@@ -21,8 +20,8 @@ use tree_sitter_beancount::tree_sitter;
 /// Provider function for `textDocument/definition`.
 pub(crate) fn definition(
     snapshot: LspServerStateSnapshot,
-    params: lsp_types::GotoDefinitionParams,
-) -> Result<Option<GotoDefinitionResponse>> {
+    params: lsp_types::DefinitionParams,
+) -> Result<Option<DefinitionResponse>> {
     let doc_uri = &params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
 
@@ -49,7 +48,7 @@ pub(crate) fn definition(
     if locs.is_empty() {
         return Ok(None);
     }
-    Ok(Some(GotoDefinitionResponse::Array(locs)))
+    Ok(Some(DefinitionResponse::Definition(locs.into())))
 }
 
 fn find_account_open_definitions(
@@ -80,7 +79,7 @@ fn find_account_open_definitions(
                 (content, rope)
             };
 
-            let Ok(uri) = file_path_to_uri(url) else {
+            let Ok(uri) = lsp_types::Uri::from_file_path(url) else {
                 tracing::debug!("Failed to convert file path to URI: {}", url.display());
                 return vec![];
             };
@@ -153,7 +152,7 @@ mod tests {
         assert_eq!(loc.range.end.line, 0);
         assert_eq!(loc.range.end.character, 27);
 
-        let expected_uri = crate::utils::file_path_to_uri(&path).unwrap();
+        let expected_uri = lsp_types::Uri::from_file_path(&path).unwrap();
         assert_eq!(loc.uri, expected_uri);
     }
 

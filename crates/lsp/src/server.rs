@@ -8,10 +8,9 @@ use crate::document::Document;
 use crate::forest;
 use crate::handlers;
 use crate::progress::Progress;
-use crate::utils::ToFilePath;
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender};
-use lsp_types::notification::Notification;
+use lsp_types::Notification;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -179,9 +178,9 @@ impl LspServerState {
                 tracing::error!("{}", error_msg);
 
                 // Send error message to client
-                self.send_notification::<lsp_types::notification::ShowMessage>(
+                self.send_notification::<lsp_types::ShowMessageNotification>(
                     lsp_types::ShowMessageParams {
-                        typ: lsp_types::MessageType::ERROR,
+                        kind: lsp_types::MessageType::Error,
                         message: error_msg.clone(),
                     },
                 );
@@ -212,7 +211,7 @@ impl LspServerState {
         tracing::debug!("Entering main event loop");
         while let Some(event) = self.next_event(&receiver) {
             if let Event::Lsp(lsp_server::Message::Notification(notification)) = &event
-                && notification.method == lsp_types::notification::Exit::METHOD
+                && notification.method == lsp_types::ExitNotification::METHOD.as_str()
             {
                 tracing::info!("Received exit notification, shutting down");
                 return Ok(());
@@ -374,15 +373,13 @@ impl LspServerState {
     // Handles a notification from the language server client
     fn on_notification(&mut self, notif: lsp_server::Notification) -> Result<()> {
         NotificationDispatcher::new(self, notif)
-            .on::<lsp_types::notification::DidOpenTextDocument>(handlers::text_document::did_open)?
-            .on::<lsp_types::notification::DidCloseTextDocument>(
-                handlers::text_document::did_close,
-            )?
-            .on::<lsp_types::notification::DidSaveTextDocument>(handlers::text_document::did_save)?
-            .on::<lsp_types::notification::DidChangeTextDocument>(
+            .on::<lsp_types::DidOpenTextDocumentNotification>(handlers::text_document::did_open)?
+            .on::<lsp_types::DidCloseTextDocumentNotification>(handlers::text_document::did_close)?
+            .on::<lsp_types::DidSaveTextDocumentNotification>(handlers::text_document::did_save)?
+            .on::<lsp_types::DidChangeTextDocumentNotification>(
                 handlers::text_document::did_change,
             )?
-            .on::<lsp_types::notification::DidChangeWatchedFiles>(
+            .on::<lsp_types::DidChangeWatchedFilesNotification>(
                 handlers::workspace::did_change_watched_files,
             )?
             .finish();
@@ -450,7 +447,7 @@ impl LspServerState {
     }
 
     // Sends a request to the client and registers the request so that we can handle the response.
-    pub(crate) fn send_request<R: lsp_types::request::Request>(
+    pub(crate) fn send_request<R: lsp_types::Request>(
         &mut self,
         params: R::Params,
         handler: RequestHandler,
@@ -463,10 +460,7 @@ impl LspServerState {
     }
 
     // Sends a notification to the client
-    pub(crate) fn send_notification<N: lsp_types::notification::Notification>(
-        &mut self,
-        params: N::Params,
-    ) {
+    pub(crate) fn send_notification<N: lsp_types::Notification>(&mut self, params: N::Params) {
         let not = lsp_server::Notification::new(N::METHOD.to_string(), params);
         self.send(not.into());
     }
@@ -484,67 +478,63 @@ impl LspServerState {
     fn build_request_router() -> RequestRouter {
         let mut router = RequestRouter::new();
         router
-            .on_sync::<lsp_types::request::Shutdown>(|state, _request| {
+            .on_sync::<lsp_types::ShutdownRequest>(|state, _request| {
                 tracing::info!("Received shutdown request");
                 state.shutdown_requested = true;
                 Ok(())
             })
             .expect("Failed to register Shutdown handler")
-            .on_with::<lsp_types::request::HoverRequest>(
+            .on_with::<lsp_types::HoverRequest>(
                 |r, params| {
                     r.ensure_beancount_data_for_position(&params.text_document_position_params);
                 },
                 handlers::text_document::hover,
             )
             .expect("Failed to register Hover handler")
-            .on_with::<lsp_types::request::Completion>(
+            .on_with::<lsp_types::CompletionRequest>(
                 |r, params| {
-                    r.ensure_beancount_data_for_position(&params.text_document_position);
+                    r.ensure_beancount_data_for_position(&params.text_document_position_params);
                 },
                 handlers::text_document::completion,
             )
             .expect("Failed to register Completion handler")
-            .on::<lsp_types::request::Formatting>(handlers::text_document::formatting)
+            .on::<lsp_types::DocumentFormattingRequest>(handlers::text_document::formatting)
             .expect("Failed to register Formatting handler")
-            .on_with::<lsp_types::request::Rename>(
+            .on_with::<lsp_types::RenameRequest>(
                 |r, params| {
-                    r.ensure_beancount_data_for_position(&params.text_document_position);
+                    r.ensure_beancount_data_for_position(&params.text_document_position_params);
                 },
                 handlers::text_document::handle_rename,
             )
             .expect("Failed to register Rename handler")
-            .on_with::<lsp_types::request::References>(
+            .on_with::<lsp_types::ReferencesRequest>(
                 |r, params| {
-                    r.ensure_beancount_data_for_position(&params.text_document_position);
+                    r.ensure_beancount_data_for_position(&params.text_document_position_params);
                 },
                 handlers::text_document::handle_references,
             )
             .expect("Failed to register References handler")
-            .on_with::<lsp_types::request::GotoDefinition>(
+            .on_with::<lsp_types::DefinitionRequest>(
                 |r, params| {
                     r.ensure_beancount_data_for_position(&params.text_document_position_params);
                 },
                 handlers::text_document::handle_definition,
             )
             .expect("Failed to register GotoDefinition handler")
-            .on_with::<lsp_types::request::SemanticTokensFullRequest>(
+            .on_with::<lsp_types::SemanticTokensRequest>(
                 |r, params| {
                     r.ensure_beancount_data_for_text_document(&params.text_document);
                 },
                 handlers::text_document::semantic_tokens_full,
             )
             .expect("Failed to register SemanticTokens handler")
-            .on::<lsp_types::request::InlayHintRequest>(handlers::text_document::inlay_hint)
+            .on::<lsp_types::InlayHintRequest>(handlers::text_document::inlay_hint)
             .expect("Failed to register InlayHint handler")
-            .on::<lsp_types::request::FoldingRangeRequest>(handlers::text_document::folding_range)
+            .on::<lsp_types::FoldingRangeRequest>(handlers::text_document::folding_range)
             .expect("Failed to register FoldingRange handler")
-            .on::<lsp_types::request::DocumentSymbolRequest>(
-                handlers::text_document::document_symbol,
-            )
+            .on::<lsp_types::DocumentSymbolRequest>(handlers::text_document::document_symbol)
             .expect("Failed to register DocumentSymbol handler")
-            .on::<lsp_types::request::WorkspaceSymbolRequest>(
-                handlers::text_document::workspace_symbol,
-            )
+            .on::<lsp_types::WorkspaceSymbolRequest>(handlers::text_document::workspace_symbol)
             .expect("Failed to register WorkspaceSymbol handler");
 
         router
@@ -561,7 +551,7 @@ impl LspServerState {
         let watch_kind = WatchKind::Create | WatchKind::Change | WatchKind::Delete;
 
         let watchers = vec![FileSystemWatcher {
-            glob_pattern: GlobPattern::String("**/*.{bean,beancount}".to_string()),
+            glob_pattern: GlobPattern::Pattern("**/*.{bean,beancount}".to_string()),
             kind: Some(watch_kind),
         }];
 
@@ -581,7 +571,7 @@ impl LspServerState {
         };
 
         // Send registration request to client (fire-and-forget, we don't need the response)
-        self.send_request::<lsp_types::request::RegisterCapability>(params, |_state, response| {
+        self.send_request::<lsp_types::RegistrationRequest>(params, |_state, response| {
             if let Some(error) = response.error {
                 tracing::warn!(
                     "Failed to register file watchers: {} (code: {})",

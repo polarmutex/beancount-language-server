@@ -38,34 +38,33 @@ impl LspServerState {
         let token = lsp_types::ProgressToken::String(token_label);
         let work_done_progress = match state {
             Progress::Begin => {
-                self.send_request::<lsp_types::request::WorkDoneProgressCreate>(
+                self.send_request::<lsp_types::WorkDoneProgressCreateRequest>(
                     lsp_types::WorkDoneProgressCreateParams {
                         token: token.clone(),
                     },
                     |_, _| (),
                 );
 
-                lsp_types::WorkDoneProgress::Begin(lsp_types::WorkDoneProgressBegin {
+                serde_json::to_value(lsp_types::WorkDoneProgressBegin {
                     title: title.into(),
                     cancellable: None,
                     message,
                     percentage,
                 })
+                .expect("Progress should be serializable")
             }
-            Progress::Report => {
-                lsp_types::WorkDoneProgress::Report(lsp_types::WorkDoneProgressReport {
-                    cancellable: None,
-                    message,
-                    percentage,
-                })
-            }
-            Progress::End => {
-                lsp_types::WorkDoneProgress::End(lsp_types::WorkDoneProgressEnd { message })
-            }
+            Progress::Report => serde_json::to_value(lsp_types::WorkDoneProgressReport {
+                cancellable: None,
+                message,
+                percentage,
+            })
+            .expect("Progress should be serializable"),
+            Progress::End => serde_json::to_value(lsp_types::WorkDoneProgressEnd { message })
+                .expect("Progress should be serializable"),
         };
-        self.send_notification::<lsp_types::notification::Progress>(lsp_types::ProgressParams {
+        self.send_notification::<lsp_types::ProgressNotification>(lsp_types::ProgressParams {
             token,
-            value: lsp_types::ProgressParamsValue::WorkDone(work_done_progress),
+            value: work_done_progress,
         });
     }
 }

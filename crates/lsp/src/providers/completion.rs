@@ -730,7 +730,7 @@ fn complete_directive_keywords() -> Result<Vec<CompletionItem>> {
         .iter()
         .map(|(label, detail)| CompletionItem {
             label: label.to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
+            kind: Some(CompletionItemKind::Keyword),
             detail: Some(detail.to_string()),
             ..Default::default()
         })
@@ -753,7 +753,7 @@ fn complete_date(content: &ropey::Rope, position: Position) -> Result<Vec<Comple
         create_completion_with_insert_replace(
             today_str,
             "today".to_string(),
-            CompletionItemKind::CONSTANT,
+            CompletionItemKind::Constant,
             insert_range,
             replace_range,
             1000.0,
@@ -762,7 +762,7 @@ fn complete_date(content: &ropey::Rope, position: Position) -> Result<Vec<Comple
         create_completion_with_insert_replace(
             cur_month,
             "this month".to_string(),
-            CompletionItemKind::CONSTANT,
+            CompletionItemKind::Constant,
             insert_range,
             replace_range,
             900.0,
@@ -771,7 +771,7 @@ fn complete_date(content: &ropey::Rope, position: Position) -> Result<Vec<Comple
         create_completion_with_insert_replace(
             prev_month,
             "prev month".to_string(),
-            CompletionItemKind::CONSTANT,
+            CompletionItemKind::Constant,
             insert_range,
             replace_range,
             800.0,
@@ -780,7 +780,7 @@ fn complete_date(content: &ropey::Rope, position: Position) -> Result<Vec<Comple
         create_completion_with_insert_replace(
             next_month,
             "next month".to_string(),
-            CompletionItemKind::CONSTANT,
+            CompletionItemKind::Constant,
             insert_range,
             replace_range,
             700.0,
@@ -820,7 +820,7 @@ fn complete_account(
             create_completion_with_insert_replace(
                 account,
                 "Beancount Account".to_string(),
-                CompletionItemKind::ENUM,
+                CompletionItemKind::Enum,
                 insert_range,
                 replace_range,
                 score,
@@ -864,7 +864,7 @@ fn complete_subaccounts(
         .into_iter()
         .map(|segment| CompletionItem {
             label: segment.clone(),
-            kind: Some(CompletionItemKind::ENUM),
+            kind: Some(CompletionItemKind::Enum),
             detail: Some("Account segment".to_string()),
             insert_text: Some(segment),
             commit_characters: Some(vec![":".to_string()]),
@@ -910,7 +910,7 @@ fn complete_currency(
             create_completion_with_insert_replace(
                 currency.to_string(),
                 "Currency".to_string(),
-                CompletionItemKind::UNIT,
+                CompletionItemKind::Unit,
                 insert_range,
                 replace_range,
                 1.0,
@@ -964,7 +964,7 @@ fn complete_payee(
             create_completion_with_insert_replace(
                 payee,
                 "Payee".to_string(),
-                CompletionItemKind::ENUM,
+                CompletionItemKind::Enum,
                 insert_range,
                 replace_range,
                 score,
@@ -1011,7 +1011,7 @@ fn complete_narration(
             create_completion_with_insert_replace(
                 narration,
                 "Narration".to_string(),
-                CompletionItemKind::TEXT,
+                CompletionItemKind::Text,
                 insert_range,
                 replace_range,
                 score,
@@ -1047,7 +1047,7 @@ fn complete_tag(
         .into_iter()
         .map(|(tag, _score)| CompletionItem {
             label: tag.clone(),
-            kind: Some(CompletionItemKind::KEYWORD),
+            kind: Some(CompletionItemKind::Keyword),
             detail: Some("Tag".to_string()),
             ..Default::default()
         })
@@ -1079,7 +1079,7 @@ fn complete_link(
         .into_iter()
         .map(|(link, _score)| CompletionItem {
             label: link.clone(),
-            kind: Some(CompletionItemKind::KEYWORD),
+            kind: Some(CompletionItemKind::Keyword),
             detail: Some("Link".to_string()),
             ..Default::default()
         })
@@ -1104,7 +1104,7 @@ fn create_completion_with_insert_replace(
         label: label.clone(),
         kind: Some(kind),
         detail: Some(detail),
-        text_edit: Some(lsp_types::CompletionTextEdit::Edit(TextEdit {
+        text_edit: Some(lsp_types::CompletionItemTextEdit::TextEdit(TextEdit {
             new_text: label.clone(),
             range: replace_range,
         })),
@@ -1370,7 +1370,7 @@ trait CompletionItemExt {
 
 impl CompletionItemExt for CompletionItem {
     fn with_insert_text(mut self, insert_text: String) -> Self {
-        if let Some(lsp_types::CompletionTextEdit::Edit(edit)) = &mut self.text_edit {
+        if let Some(lsp_types::CompletionItemTextEdit::TextEdit(edit)) = &mut self.text_edit {
             edit.new_text = insert_text;
         }
         self
@@ -1757,7 +1757,7 @@ mod tests {
         let item = create_completion_with_insert_replace(
             "Assets:Cash".to_string(),
             "Account".to_string(),
-            CompletionItemKind::ENUM,
+            CompletionItemKind::Enum,
             insert_range,
             replace_range,
             100.0,
@@ -1766,11 +1766,11 @@ mod tests {
 
         assert_eq!(item.label, "Assets:Cash");
         assert_eq!(item.detail, Some("Account".to_string()));
-        assert_eq!(item.kind, Some(CompletionItemKind::ENUM));
+        assert_eq!(item.kind, Some(CompletionItemKind::Enum));
         assert_eq!(item.commit_characters, Some(vec![":".to_string()]));
 
         match item.text_edit {
-            Some(lsp_types::CompletionTextEdit::Edit(text_edit)) => {
+            Some(lsp_types::CompletionItemTextEdit::TextEdit(text_edit)) => {
                 assert_eq!(text_edit.range, replace_range);
                 assert_eq!(text_edit.new_text, "Assets:Cash");
             }
@@ -2211,7 +2211,7 @@ A"#;
         assert!(!items.is_empty());
 
         // Should add closing quote in insert_text
-        if let Some(lsp_types::CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+        if let Some(lsp_types::CompletionItemTextEdit::TextEdit(edit)) = &items[0].text_edit {
             assert!(
                 edit.new_text.ends_with('"'),
                 "Should add closing quote: {}",
@@ -2246,7 +2246,7 @@ A"#;
         assert!(!items.is_empty());
 
         // Should NOT add closing quote
-        if let Some(lsp_types::CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+        if let Some(lsp_types::CompletionItemTextEdit::TextEdit(edit)) = &items[0].text_edit {
             assert!(
                 !edit.new_text.ends_with('"'),
                 "Should not add extra quote: {}",
@@ -2488,7 +2488,7 @@ A"#;
         assert!(!items.is_empty());
 
         // Should add closing quote in insert_text
-        if let Some(lsp_types::CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+        if let Some(lsp_types::CompletionItemTextEdit::TextEdit(edit)) = &items[0].text_edit {
             assert!(
                 edit.new_text.ends_with('"'),
                 "Should add closing quote: {}",
@@ -2523,7 +2523,7 @@ A"#;
         assert!(!items.is_empty());
 
         // Should NOT add closing quote
-        if let Some(lsp_types::CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+        if let Some(lsp_types::CompletionItemTextEdit::TextEdit(edit)) = &items[0].text_edit {
             assert!(
                 !edit.new_text.ends_with('"'),
                 "Should not add extra quote: {}",

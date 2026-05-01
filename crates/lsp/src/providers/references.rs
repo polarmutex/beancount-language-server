@@ -4,7 +4,6 @@ use crate::treesitter_utils::{
     lsp_position_to_tree_sitter_point_range, text_for_tree_sitter_node,
     tree_sitter_node_to_lsp_range,
 };
-use crate::utils::file_path_to_uri;
 use anyhow::{Context, Result};
 use lsp_types::Location;
 use ropey::Rope;
@@ -37,7 +36,7 @@ pub(crate) fn references(
     snapshot: LspServerStateSnapshot,
     params: lsp_types::ReferenceParams,
 ) -> Result<Option<Vec<lsp_types::Location>>> {
-    let uri = &params.text_document_position.text_document.uri;
+    let uri = &params.text_document_position_params.text_document.uri;
     let (tree, doc) = match snapshot.tree_and_document_for_uri(uri) {
         Ok(v) => v,
         Err(e) => {
@@ -48,7 +47,7 @@ pub(crate) fn references(
     let content = doc.content.clone();
 
     // Keep behavior consistent: references only works on open documents.
-    let position = params.text_document_position.position;
+    let position = params.text_document_position_params.position;
     let Some(node_text) = node_text_at_position(tree, &content, position).with_context(|| {
         format!(
             "failed to get node text at position for uri: {}",
@@ -69,7 +68,7 @@ pub(crate) fn rename(
     snapshot: LspServerStateSnapshot,
     params: lsp_types::RenameParams,
 ) -> Result<Option<lsp_types::WorkspaceEdit>> {
-    let uri = &params.text_document_position.text_document.uri;
+    let uri = &params.text_document_position_params.text_document.uri;
     let (tree, doc) = match snapshot.tree_and_document_for_uri(uri) {
         Ok(v) => v,
         Err(e) => {
@@ -79,7 +78,7 @@ pub(crate) fn rename(
     };
 
     let content = doc.content.clone();
-    let position = params.text_document_position.position;
+    let position = params.text_document_position_params.position;
     let Some(node_text) = node_text_at_position(tree, &content, position).with_context(|| {
         format!(
             "failed to get node text at position for uri: {}",
@@ -122,7 +121,11 @@ pub(crate) fn rename(
         edits.reverse();
         changes.insert(uri, edits);
     }
-    Ok(Some(lsp_types::WorkspaceEdit::new(changes)))
+    Ok(Some(lsp_types::WorkspaceEdit::new(
+        Some(changes),
+        None,
+        None,
+    )))
 }
 
 /// Find all references to a given text in the project using tree-sitter queries.
@@ -179,7 +182,7 @@ fn find_references(
             results
         })
         .filter_map(|(url, rope, node): (PathBuf, Rope, tree_sitter::Node)| {
-            let uri = file_path_to_uri(&url).ok()?;
+            let uri = lsp_types::Uri::from_file_path(&url).ok()?;
             let range = tree_sitter_node_to_lsp_range(&rope, &node);
             Some(Location::new(uri, range))
         })
@@ -334,9 +337,9 @@ mod tests {
 "#;
         let state = TestState::new(content).unwrap();
 
-        let uri = file_path_to_uri(&state.path).unwrap();
+        let uri = lsp_types::Uri::from_file_path(&state.path).unwrap();
         let params = lsp_types::ReferenceParams {
-            text_document_position: lsp_types::TextDocumentPositionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri },
                 position: lsp_types::Position {
                     line: 1,
@@ -367,9 +370,9 @@ mod tests {
 "#;
         let state = TestState::new(content).unwrap();
 
-        let uri = file_path_to_uri(&state.path).unwrap();
+        let uri = lsp_types::Uri::from_file_path(&state.path).unwrap();
         let params = lsp_types::RenameParams {
-            text_document_position: lsp_types::TextDocumentPositionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
                 position: lsp_types::Position {
                     line: 1,
@@ -401,11 +404,11 @@ mod tests {
 "#;
         let state = TestState::new(content).unwrap();
 
-        let uri = file_path_to_uri(&state.path).unwrap();
+        let uri = lsp_types::Uri::from_file_path(&state.path).unwrap();
 
         // Test at line 1 (open directive)
         let params1 = lsp_types::ReferenceParams {
-            text_document_position: lsp_types::TextDocumentPositionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
                 position: lsp_types::Position {
                     line: 1,

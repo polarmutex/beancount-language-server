@@ -7,11 +7,11 @@ use crate::server::ProgressMsg;
 use crate::server::Task;
 use crate::to_json;
 use crate::treesitter_utils::lsp_textdocchange_to_ts_inputedit;
-use crate::utils::ToFilePath;
 use anyhow::{Context, Result, anyhow};
 use crossbeam_channel::Sender;
 use glob::glob;
-use lsp_types::notification::Notification;
+use lsp_types::Notification;
+use lsp_types::TextDocumentContentChangeEvent;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -265,12 +265,12 @@ pub(crate) fn did_change_watched_files(
             }
         };
 
-        match change.typ {
-            lsp_types::FileChangeType::CREATED | lsp_types::FileChangeType::CHANGED => {
+        match change.kind {
+            lsp_types::FileChangeType::Created | lsp_types::FileChangeType::Changed => {
                 tracing::debug!(
                     "External file change detected: {:?} (type: {:?})",
                     uri,
-                    change.typ
+                    change.kind
                 );
 
                 // Skip if file is currently open in editor (editor manages its own state)
@@ -307,16 +307,13 @@ pub(crate) fn did_change_watched_files(
                     }
                 }
             }
-            lsp_types::FileChangeType::DELETED => {
+            lsp_types::FileChangeType::Deleted => {
                 tracing::debug!("External file deleted: {:?}", uri);
 
                 // Remove from all caches
                 state.forest.remove(&uri);
                 state.beancount_data.remove(&uri);
                 state.parsers.remove(&uri);
-            }
-            _ => {
-                tracing::debug!("Unknown file change type: {:?}", change.typ);
             }
         }
     }
@@ -362,12 +359,17 @@ pub(crate) fn did_change(
     params: lsp_types::DidChangeTextDocumentParams,
 ) -> Result<()> {
     tracing::debug!("text_document::did_change");
-    let uri = match params.text_document.uri.to_file_path() {
+    let uri = match params
+        .text_document
+        .text_document_identifier
+        .uri
+        .to_file_path()
+    {
         Ok(path) => path,
         Err(_) => {
             debug!(
                 "Failed to convert URI to file path: {:?}",
-                params.text_document.uri
+                params.text_document.text_document_identifier.uri
             );
             return Ok(());
         }
@@ -405,23 +407,25 @@ pub(crate) fn did_change(
     // Apply changes to document content
     // We reuse position calculations to avoid redundant UTF-16 conversions
     for change in &params.content_changes {
-        let text = change.text.as_str();
-
-        let range = if let Some(range) = change.range {
-            range
-        } else {
-            // Full document replacement: range should cover entire current document
-            let end_line = (doc.content.len_lines().saturating_sub(1)) as u32;
-            let end_line_len = if doc.content.len_lines() > 0 {
-                // Get the character length of the last line (excluding newline)
-                let last_line = doc.content.line(end_line as usize);
-                last_line.len_chars().saturating_sub(1).max(0) as u32
-            } else {
-                0
-            };
-            lsp_types::Range {
-                start: lsp_types::Position::new(0, 0),
-                end: lsp_types::Position::new(end_line, end_line_len),
+        let (text, range) = match change {
+            TextDocumentContentChangeEvent::TextDocumentContentChangePartial(change) => {
+                (change.text.as_str(), change.range)
+            }
+            TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(change) => {
+                // Full document replacement: range should cover entire current document
+                let end_line = (doc.content.len_lines().saturating_sub(1)) as u32;
+                let end_line_len = if doc.content.len_lines() > 0 {
+                    // Get the character length of the last line (excluding newline)
+                    let last_line = doc.content.line(end_line as usize);
+                    last_line.len_chars().saturating_sub(1).max(0) as u32
+                } else {
+                    0
+                };
+                let range = lsp_types::Range {
+                    start: lsp_types::Position::new(0, 0),
+                    end: lsp_types::Position::new(end_line, end_line_len),
+                };
+                (change.text.as_str(), range)
             }
         };
 
@@ -460,7 +464,7 @@ pub(crate) fn did_change(
 
         doc.content.remove(start_char_idx..end_char_idx);
 
-        if !change.text.is_empty() {
+        if !text.is_empty() {
             doc.content.insert(start_char_idx, text);
         }
     }
@@ -598,7 +602,7 @@ fn handle_diagnostics(
         let diagnostics = normalized_diags.remove(&lookup).unwrap_or_default();
         sender
             .send(Task::Notify(lsp_server::Notification {
-                method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
+                method: lsp_types::PublishDiagnosticsNotification::METHOD.to_string(),
                 params: to_json(lsp_types::PublishDiagnosticsParams {
                     uri: {
                         let url = url::Url::from_file_path(file).map_err(|()| {
@@ -650,7 +654,7 @@ fn handle_diagnostics(
         };
 
         if let Err(e) = sender.send(Task::Notify(lsp_server::Notification {
-            method: lsp_types::notification::PublishDiagnostics::METHOD.to_owned(),
+            method: lsp_types::PublishDiagnosticsNotification::METHOD.to_string(),
             params,
         })) {
             // Sending back to the main loop failed; propagate error to abort the function
@@ -688,7 +692,7 @@ fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use crate::document::Document;
-    use lsp_types::{Position, Range, TextDocumentContentChangeEvent};
+    use lsp_types::{Position, Range, TextDocumentContentChangePartial};
 
     /// Helper to create a test document with UTF-8 content
     fn create_test_document(content: &str) -> Document {
@@ -706,8 +710,8 @@ mod tests {
 
         // Simulate a change that replaces "Café" with "Restaurant"
         // "Café" has é which is 2 bytes in UTF-8 but 1 UTF-16 code unit
-        let change = TextDocumentContentChangeEvent {
-            range: Some(Range {
+        let change = TextDocumentContentChangePartial {
+            range: Range {
                 start: Position {
                     line: 0,
                     character: 15, // Position after quote before C
@@ -716,9 +720,9 @@ mod tests {
                     line: 0,
                     character: 19, // Position after é (4 UTF-16 code units: C, a, f, é)
                 },
-            }),
-            range_length: None,
+            },
             text: "Restaurant".to_string(),
+            ..Default::default()
         };
 
         // Calculate the rope positions using the fixed logic
@@ -772,11 +776,6 @@ mod tests {
         // Full document replacement (no range specified)
         let new_content =
             "2024-01-01 * \"New café ☕\" \"With émojis 🎉\"\n  Assets:Bank  200.00 EUR\n";
-        let _change = TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text: new_content.to_string(),
-        };
 
         // Calculate range for full document replacement
         let end_line = (doc.content.len_lines().saturating_sub(1)) as u32;
@@ -817,8 +816,8 @@ mod tests {
         // String: 2023-01-01 * "Before🎉After" "Test"
         // The emoji 🎉 is 4 bytes in UTF-8, 2 UTF-16 code units (surrogate pair)
         // UTF-16 positions: After starts at 22, ends at 27
-        let change = TextDocumentContentChangeEvent {
-            range: Some(Range {
+        let change = TextDocumentContentChangePartial {
+            range: Range {
                 start: Position {
                     line: 0,
                     character: 22, // UTF-16 position where "After" starts (after the emoji)
@@ -827,21 +826,23 @@ mod tests {
                     line: 0,
                     character: 27, // UTF-16 position where "After" ends
                 },
-            }),
-            range_length: None,
+            },
             text: "Modified".to_string(),
+            ..Default::default()
         };
 
         // Calculate positions with fixed logic
         let start_row_char_idx = doc.content.line_to_char(0);
         let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
-        let start_col_char_idx = doc.content.utf16_cu_to_char(
-            start_line_utf16_cu + change.range.as_ref().unwrap().start.character as usize,
-        ) - start_row_char_idx;
+        let start_col_char_idx = doc
+            .content
+            .utf16_cu_to_char(start_line_utf16_cu + change.range.start.character as usize)
+            - start_row_char_idx;
 
-        let end_col_char_idx = doc.content.utf16_cu_to_char(
-            start_line_utf16_cu + change.range.as_ref().unwrap().end.character as usize,
-        ) - start_row_char_idx;
+        let end_col_char_idx = doc
+            .content
+            .utf16_cu_to_char(start_line_utf16_cu + change.range.end.character as usize)
+            - start_row_char_idx;
 
         let start_char_idx = start_row_char_idx + start_col_char_idx;
         let end_char_idx = start_row_char_idx + end_col_char_idx;
@@ -870,22 +871,6 @@ mod tests {
         let content = "2023-01-01 * \"日本語テスト\" \"中文测试\"\n  Assets:Cash  100.00 USD\n";
         let mut doc = create_test_document(content);
 
-        // Replace "日本語" with "にほんご"
-        let change = TextDocumentContentChangeEvent {
-            range: Some(Range {
-                start: Position {
-                    line: 0,
-                    character: 15, // After opening quote
-                },
-                end: Position {
-                    line: 0,
-                    character: 18, // After 3 characters (each is 1 UTF-16 CU)
-                },
-            }),
-            range_length: None,
-            text: "にほんご".to_string(),
-        };
-
         // Calculate positions
         let start_row_char_idx = doc.content.line_to_char(0);
         let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
@@ -900,7 +885,8 @@ mod tests {
 
         // Apply change
         doc.content.remove(start_char_idx..end_char_idx);
-        doc.content.insert(start_char_idx, &change.text);
+        // Replace "日本語" with "にほんご"
+        doc.content.insert(start_char_idx, "にほんご");
 
         // Verify
         let result = doc.content.to_string();
