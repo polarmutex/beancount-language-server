@@ -1,6 +1,7 @@
 use crate::from_json;
 use crate::server::LspServerState;
 use crate::server::LspServerStateSnapshot;
+use crate::server::SnapshotWithData;
 use crate::server::Task;
 use anyhow::Result;
 use lsp_types::LspRequestMethod;
@@ -169,6 +170,58 @@ impl RequestRouter {
         Ok(self)
     }
 
+    #[allow(dead_code)]
+    /// Dispatch a request on the thread pool with data pre-computed on the main thread.
+    ///
+    /// `compute` runs synchronously on the main thread and may mutate `state` to
+    /// ensure data availability. Its return value is bundled with the snapshot into a
+    /// [`SnapshotWithData<D>`] that is passed to `f` on the thread pool.
+    ///
+    /// Use this over [`on_with`] when the pre-hook produces typed data that the handler
+    /// needs, making the dependency explicit in the function signature.
+    pub fn on_computed<R, D>(
+        &mut self,
+        compute: fn(&mut LspServerState, &R::Params) -> D,
+        f: fn(SnapshotWithData<D>, R::Params) -> Result<R::Result>,
+    ) -> Result<&mut Self>
+    where
+        R: lsp_types::Request + 'static,
+        R::Params: DeserializeOwned + Send + 'static,
+        R::Result: Serialize + 'static,
+        D: Send + 'static,
+    {
+        self.insert_handler(
+            R::METHOD,
+            Box::new(
+                move |state, req| match from_json::<R::Params>(R::METHOD.as_str(), req.params) {
+                    Ok(params) => {
+                        let data = compute(state, &params);
+                        let id = req.id;
+                        let snapshot = state.snapshot();
+                        let sender = state.task_sender.clone();
+                        state.thread_pool.execute(move || {
+                            let result = f(SnapshotWithData { snapshot, data }, params);
+                            if let Err(e) =
+                                sender.send(Task::Response(result_to_response::<R>(id, result)))
+                            {
+                                tracing::error!("Failed to send response: {}", e);
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        let response = lsp_server::Response::new_err(
+                            req.id,
+                            lsp_server::ErrorCode::InvalidParams as i32,
+                            err.to_string(),
+                        );
+                        state.respond(response);
+                    }
+                },
+            ),
+        )?;
+        Ok(self)
+    }
+
     // Dispatches a single request by method.
     pub fn dispatch(&self, state: &mut LspServerState, req: lsp_server::Request) {
         if let Some(handler) = self
@@ -248,7 +301,97 @@ mod tests {
     use lsp_types::Request;
     use serde_json::json;
     use std::path::PathBuf;
+    use std::str::FromStr;
     use std::time::Instant;
+
+    #[test]
+    fn on_computed_passes_precomputed_data_to_handler() {
+        let (sender, _receiver) = crossbeam_channel::unbounded();
+        let mut state = LspServerState::new(sender, Config::new(PathBuf::from("/test")));
+
+        let request = lsp_server::Request {
+            id: lsp_server::RequestId::from(42),
+            method: lsp_types::request::HoverRequest::METHOD.to_string(),
+            params: serde_json::to_value(lsp_types::HoverParams {
+                text_document_position_params: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier {
+                        uri: lsp_types::Uri::from_str("file:///test.bean").unwrap(),
+                    },
+                    position: lsp_types::Position { line: 0, character: 0 },
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .unwrap(),
+        };
+
+        state
+            .req_queue
+            .incoming
+            .register(request.id.clone(), (request.method.clone(), Instant::now()));
+
+        let mut router = RequestRouter::new();
+        // compute fn returns 42u32; handler asserts it received it
+        router
+            .on_computed::<lsp_types::request::HoverRequest, u32>(
+                |_state, _params| 42u32,
+                |swd, _params| {
+                    assert_eq!(swd.data, 42u32, "handler should receive pre-computed data");
+                    Ok(None)
+                },
+            )
+            .unwrap();
+        router.dispatch(&mut state, request);
+
+        // Thread-pool handler sends Task::Response to task_sender, not the main LSP sender.
+        let task = state
+            .task_receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("expected Task::Response from thread pool");
+        match task {
+            Task::Response(r) => assert!(r.error.is_none()),
+            other => panic!("expected Task::Response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn on_computed_invalid_params_returns_error() {
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let mut state = LspServerState::new(sender, Config::new(PathBuf::from("/test")));
+
+        let request = lsp_server::Request {
+            id: lsp_server::RequestId::from(2),
+            method: lsp_types::request::HoverRequest::METHOD.to_string(),
+            params: serde_json::json!({"unexpected": "garbage"}),
+        };
+
+        state
+            .req_queue
+            .incoming
+            .register(request.id.clone(), (request.method.clone(), Instant::now()));
+
+        let mut router = RequestRouter::new();
+        router
+            .on_computed::<lsp_types::request::HoverRequest, ()>(
+                |_, _| (),
+                |_, _| Ok(None),
+            )
+            .unwrap();
+        router.dispatch(&mut state, request);
+
+        // Invalid params are rejected on the main thread via state.respond(),
+        // which writes to the main LSP sender.
+        let msg = receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("expected response on main sender");
+        let response = match msg {
+            lsp_server::Message::Response(r) => r,
+            other => panic!("expected Response, got {other:?}"),
+        };
+        assert_eq!(
+            response.error.unwrap().code,
+            lsp_server::ErrorCode::InvalidParams as i32,
+        );
+    }
 
     #[test]
     fn parse_mismatched_params_returns_invalid_params() {
