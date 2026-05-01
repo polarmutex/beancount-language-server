@@ -7,6 +7,38 @@ use std::sync::Arc;
 use tempfile;
 use tracing::debug;
 
+/// A named source of LSP diagnostics.
+///
+/// Implement this trait to produce diagnostics from a specific backend (bean-check,
+/// flagged-entry scan, …). The outer [`diagnostics`] function merges all sources.
+pub trait DiagnosticSource {
+    fn collect(&self) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>>;
+}
+
+/// Diagnostics produced by running bean-check on the journal file.
+pub struct CheckerDiagnosticSource<'a> {
+    pub checker: &'a dyn BeancountChecker,
+    pub root_journal_file: &'a Path,
+}
+
+/// Diagnostics produced by scanning flagged entries in parsed beancount data.
+pub struct FlaggedEntryDiagnosticSource {
+    pub beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
+    pub diagnostic_flags: Vec<String>,
+}
+
+impl DiagnosticSource for CheckerDiagnosticSource<'_> {
+    fn collect(&self) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
+        checker_diagnostics(self.checker, self.root_journal_file)
+    }
+}
+
+impl DiagnosticSource for FlaggedEntryDiagnosticSource {
+    fn collect(&self) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
+        flagged_entry_diagnostics(&self.beancount_data, &self.diagnostic_flags)
+    }
+}
+
 /// Container for diagnostic data management.
 /// Currently unused but reserved for future caching and state management.
 pub struct DiagnosticData {
@@ -28,22 +60,9 @@ impl Default for DiagnosticData {
 
 /// Provider function for LSP `textDocument/publishDiagnostics`.
 ///
-/// This function collects diagnostics from two sources:
-/// 1. Bean-check validation (via configurable checker implementation)
-/// 2. Internal flagged entries from parsed beancount data (warnings)
-///
-/// # Arguments
-/// * `beancount_data` - Parsed beancount data containing flagged entries
-/// * `checker` - Bean-check implementation (system call or Python)
-/// * `root_journal_file` - Main beancount file to validate
-///
-/// # Returns
-/// HashMap mapping file paths to their diagnostic messages
-///
-/// # Performance Notes
-/// - Checker execution depends on implementation (system call vs Python)
-/// - Combines results from checker with internal flagged entry analysis
-/// - Uses structured error types for better error handling
+/// Merges diagnostics from both `CheckerDiagnosticSource` and
+/// `FlaggedEntryDiagnosticSource`.  Callers that need only one source can call
+/// [`checker_diagnostics`] or [`flagged_entry_diagnostics`] directly.
 pub fn diagnostics(
     beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
     checker: &dyn BeancountChecker,
@@ -51,17 +70,39 @@ pub fn diagnostics(
     diagnostic_flags: &[String],
 ) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
     tracing::info!("Starting diagnostics for: {}", root_journal_file.display());
-    tracing::debug!("Using checker: {}", checker.name());
-    tracing::debug!(
-        "Processing beancount data for {} files",
-        beancount_data.len()
-    );
+    tracing::debug!("Processing beancount data for {} files", beancount_data.len());
 
-    // Execute bean-check validation using the configured checker
-    tracing::debug!(
-        "Calling checker.check() with file: {}",
-        root_journal_file.display()
+    let mut result = CheckerDiagnosticSource { checker, root_journal_file }.collect();
+    merge_maps(
+        &mut result,
+        FlaggedEntryDiagnosticSource {
+            beancount_data,
+            diagnostic_flags: diagnostic_flags.to_vec(),
+        }
+        .collect(),
     );
+    debug!("Generated diagnostics for {} files", result.len());
+    result
+}
+
+/// Merge `src` into `dst`, appending diagnostic vectors for matching keys.
+fn merge_maps(
+    dst: &mut HashMap<PathBuf, Vec<lsp_types::Diagnostic>>,
+    src: HashMap<PathBuf, Vec<lsp_types::Diagnostic>>,
+) {
+    for (path, diags) in src {
+        dst.entry(path).or_default().extend(diags);
+    }
+}
+
+/// Run bean-check and return its diagnostics, or fall back to empty on failure.
+pub fn checker_diagnostics(
+    checker: &dyn BeancountChecker,
+    root_journal_file: &Path,
+) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
+    tracing::debug!("Using checker: {}", checker.name());
+    tracing::debug!("Calling checker.check() with file: {}", root_journal_file.display());
+
     let check_result = match checker.check(root_journal_file) {
         Ok(result) => {
             tracing::debug!(
@@ -76,38 +117,29 @@ pub fn diagnostics(
             tracing::error!("Bean-check {} execution failed: {}", checker.name(), e);
             tracing::warn!("Continuing with flagged entries from parsed data only");
 
-            // Continue processing in tests to allow testing of flagged entries
+            // In tests, return empty so flagged-entry tests can proceed.
             #[cfg(not(test))]
-            {
-                let mut diagnostics_map = HashMap::new();
-                merge_flagged_entries_from_parsed_data(
-                    &mut diagnostics_map,
-                    beancount_data,
-                    diagnostic_flags,
-                );
-                return diagnostics_map;
-            }
-
+            return HashMap::new();
             #[cfg(test)]
-            {
-                // In tests, create an empty result so we can test flagged entries
-                Default::default()
-            }
+            Default::default()
         }
     };
 
-    // Convert checker errors to LSP diagnostics
-    let mut diagnostics_map = convert_errors_to_diagnostics(check_result.errors);
+    let mut map = convert_errors_to_diagnostics(check_result.errors);
+    merge_flagged_entries_from_checker(&mut map, check_result.flagged_entries);
+    map
+}
 
-    // Add flagged entries from checker (if supported by implementation)
-    merge_flagged_entries_from_checker(&mut diagnostics_map, check_result.flagged_entries);
-
-    // Add diagnostics for flagged entries from parsed beancount data
-    // (These are additional to any flagged entries returned by the checker)
-    merge_flagged_entries_from_parsed_data(&mut diagnostics_map, beancount_data, diagnostic_flags);
-
-    debug!("Generated diagnostics for {} files", diagnostics_map.len());
-    diagnostics_map
+/// Scan parsed beancount data and return flagged-entry diagnostics.
+///
+/// This source is independent of bean-check and can be tested without a checker.
+pub fn flagged_entry_diagnostics(
+    beancount_data: &HashMap<PathBuf, Arc<BeancountData>>,
+    diagnostic_flags: &[String],
+) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
+    let mut map = HashMap::new();
+    merge_flagged_entries_from_parsed_data(&mut map, beancount_data, diagnostic_flags);
+    map
 }
 
 /// Convert checker errors to LSP diagnostic format.
@@ -178,7 +210,7 @@ fn merge_flagged_entries_from_checker(
 /// Only includes entries whose flags are in the diagnostic_flags list.
 fn merge_flagged_entries_from_parsed_data(
     diagnostics_map: &mut HashMap<PathBuf, Vec<lsp_types::Diagnostic>>,
-    beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
+    beancount_data: &HashMap<PathBuf, Arc<BeancountData>>,
     diagnostic_flags: &[String],
 ) {
     for (file_path, data) in beancount_data.iter() {
@@ -662,5 +694,62 @@ mod tests {
             result.is_empty() || result.get(&file_path).is_none_or(|d| d.is_empty()),
             "Should have no diagnostics with empty diagnostic_flags"
         );
+    }
+
+    // ── DiagnosticSource trait tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_flagged_entry_diagnostics_no_checker_needed() {
+        // flagged_entry_diagnostics works without any checker instance
+        let flagged_content =
+            "2023-01-01 ! \"Flagged transaction\"\n  Assets:Cash 100 USD\n  Expenses:Food";
+        let (_temp_dir, file_path) = create_temp_beancount_file(flagged_content);
+        let beancount_data = create_mock_beancount_data_with_flags(&file_path, flagged_content);
+
+        let result = flagged_entry_diagnostics(&beancount_data, &["!".to_string()]);
+
+        assert!(!result.is_empty(), "Should have flagged entry diagnostics");
+        let diags = result.get(&file_path).expect("diagnostics for file");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].source, Some("beancount-lsp".to_string()));
+    }
+
+    #[test]
+    fn test_flagged_entry_diagnostics_empty_flags_returns_empty() {
+        let content =
+            "2023-01-01 ! \"Flagged\"\n  Assets:Cash 100 USD\n  Expenses:Food";
+        let (_temp_dir, file_path) = create_temp_beancount_file(content);
+        let beancount_data = create_mock_beancount_data_with_flags(&file_path, content);
+
+        let result = flagged_entry_diagnostics(&beancount_data, &[]);
+        assert!(
+            result.is_empty() || result.get(&file_path).is_none_or(|d| d.is_empty()),
+            "no flags configured → no diagnostics"
+        );
+    }
+
+    #[test]
+    fn test_checker_diagnostic_source_and_flagged_entry_source_are_independent() {
+        // Verify each DiagnosticSource impl produces diagnostics independently
+        let flagged_content =
+            "2023-01-01 ! \"Flagged\"\n  Assets:Cash 100 USD\n  Expenses:Food";
+        let (_temp_dir, file_path) = create_temp_beancount_file(flagged_content);
+        let beancount_data = create_mock_beancount_data_with_flags(&file_path, flagged_content);
+
+        // FlaggedEntryDiagnosticSource needs no checker
+        let source = FlaggedEntryDiagnosticSource {
+            beancount_data,
+            diagnostic_flags: vec!["!".to_string()],
+        };
+        let result = source.collect();
+        assert!(!result.is_empty());
+
+        // CheckerDiagnosticSource uses a real checker but we can use /bin/true
+        use crate::checkers::SystemCallChecker;
+        let checker = SystemCallChecker::new(create_mock_bean_check_success());
+        let source = CheckerDiagnosticSource { checker: &checker, root_journal_file: &file_path };
+        let checker_result = source.collect();
+        // /bin/true succeeds with no output → empty map
+        assert!(checker_result.is_empty());
     }
 }
