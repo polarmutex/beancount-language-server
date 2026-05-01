@@ -53,8 +53,7 @@ pub(crate) fn get_unified_query() -> &'static tree_sitter::Query {
 }
 
 #[derive(Clone, Debug)]
-pub struct FlaggedEntry {
-    _file: String,
+pub struct FlaggedTransaction {
     pub line: u32,
     pub flag: String,
 }
@@ -64,7 +63,7 @@ pub struct BeancountData {
     accounts: Arc<Vec<String>>,
     payees: Arc<Vec<String>>,
     narration: Arc<Vec<String>>,
-    pub flagged_entries: Vec<FlaggedEntry>,
+    pub flagged_entries: Vec<FlaggedTransaction>,
     account_notes: Arc<std::collections::HashMap<String, Vec<String>>>,
     tags: Arc<Vec<String>>,
     links: Arc<Vec<String>>,
@@ -134,8 +133,7 @@ impl BeancountData {
                             capture.node,
                             flag_text
                         );
-                        flagged_entries.push(FlaggedEntry {
-                            _file: "".to_string(),
+                        flagged_entries.push(FlaggedTransaction {
                             line: capture.node.start_position().row as u32,
                             flag: flag_text,
                         });

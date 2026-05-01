@@ -13,13 +13,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tracing::{debug, warn};
-use tree_sitter_beancount::tree_sitter;
 
 /// Process included files recursively from a given beancount file.
 ///
-/// Uses `forest::extract_include_paths` for include discovery (shared logic
-/// with the background forest initialiser) and `doc_store.insert_parsed` for
-/// consistent state updates.
+/// Uses `forest::parse_reachable_includes` (shared logic with the background
+/// forest initialiser) and `doc_store.insert_parsed` for consistent state updates.
 fn process_includes(
     state: &mut LspServerState,
     file_path: &PathBuf,
@@ -30,35 +28,24 @@ fn process_includes(
     }
     processed.insert(file_path.clone());
 
-    // Get the tree for this file (should already be parsed).
     let tree = match state.doc_store.get_tree(file_path) {
         Some(tree) => tree.clone(),
         None => return Ok(()),
     };
 
-    let text = fs::read_to_string(file_path)?;
-    let include_paths = forest::extract_include_paths(&tree, text.as_bytes(), file_path);
+    // Pre-populate already_seen with files already in the forest to skip them.
+    let known: Vec<PathBuf> = state.doc_store.forest_keys().cloned().collect();
+    processed.extend(known);
 
-    for path in include_paths {
-        if state.doc_store.has_tree(&path) {
-            continue;
-        }
-
-        if let Ok(content) = fs::read_to_string(&path) {
-            let mut parser = tree_sitter::Parser::new();
-            if parser
-                .set_language(&tree_sitter_beancount::language())
-                .is_ok()
-                && let Some(tree) = parser.parse(&content, None)
-            {
-                state.doc_store.insert_parsed(path.clone(), tree, &content);
-                debug!("Processed included file: {:?}", path);
-                process_includes(state, &path, processed)?;
-            }
-        }
-    }
-
-    Ok(())
+    forest::parse_reachable_includes(
+        &tree,
+        file_path,
+        processed,
+        &mut |path, new_tree, content| {
+            state.doc_store.insert_parsed(path, new_tree, content);
+            Ok(())
+        },
+    )
 }
 
 /// Provider function for `textDocument/didOpen`.
@@ -176,16 +163,11 @@ pub(crate) fn did_change_watched_files(
                 state.doc_store.invalidate_external(&uri);
                 tracing::debug!("Cleared stale cache for {:?}", uri);
 
-                if let Ok(content) = fs::read_to_string(&uri) {
-                    let mut parser = tree_sitter::Parser::new();
-                    if parser
-                        .set_language(&tree_sitter_beancount::language())
-                        .is_ok()
-                        && let Some(tree) = parser.parse(&content, None)
-                    {
-                        state.doc_store.insert_parsed(uri.clone(), tree, &content);
-                        tracing::debug!("Re-parsed external file: {:?}", uri);
-                    }
+                if let Ok(content) = fs::read_to_string(&uri)
+                    && let Some(tree) = crate::treesitter_utils::parse_beancount(&content)
+                {
+                    state.doc_store.insert_parsed(uri.clone(), tree, &content);
+                    tracing::debug!("Re-parsed external file: {:?}", uri);
                 }
             }
             lsp_types::FileChangeType::Deleted => {
@@ -331,21 +313,29 @@ fn handle_diagnostics(
         run_id,
     }))?;
 
-    let mut normalized_diags: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
+    publish_diagnostics(diags, snapshot.forest.keys().cloned(), &sender)
+}
+
+fn publish_diagnostics(
+    diags: HashMap<PathBuf, Vec<lsp_types::Diagnostic>>,
+    forest_keys: impl Iterator<Item = PathBuf>,
+    sender: &Sender<Task>,
+) -> Result<()> {
+    let mut normalized: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
     for (path, diagnostics) in diags {
         let key = normalize_path_for_diagnostics(&path);
-        normalized_diags.entry(key).or_default().extend(diagnostics);
+        normalized.entry(key).or_default().extend(diagnostics);
     }
 
-    for file in snapshot.forest.keys() {
-        let lookup = normalize_path_for_diagnostics(file);
-        let diagnostics = normalized_diags.remove(&lookup).unwrap_or_default();
+    for file in forest_keys {
+        let lookup = normalize_path_for_diagnostics(&file);
+        let diagnostics = normalized.remove(&lookup).unwrap_or_default();
         sender
             .send(Task::Notify(lsp_server::Notification {
                 method: lsp_types::PublishDiagnosticsNotification::METHOD.to_string(),
                 params: to_json(lsp_types::PublishDiagnosticsParams {
                     uri: {
-                        let url = url::Url::from_file_path(file).map_err(|()| {
+                        let url = url::Url::from_file_path(&file).map_err(|()| {
                             anyhow!("Failed to convert file path to URI: {}", file.display())
                         })?;
                         lsp_types::Uri::from_str(url.as_str())
@@ -360,7 +350,7 @@ fn handle_diagnostics(
     }
 
     // ignore the broken file paths
-    for (file, diagnostics) in normalized_diags {
+    for (file, diagnostics) in normalized {
         let url = match url::Url::from_file_path(&file) {
             Ok(url) => url,
             Err(_) => {
@@ -397,7 +387,6 @@ fn handle_diagnostics(
             method: lsp_types::PublishDiagnosticsNotification::METHOD.to_string(),
             params,
         })) {
-            // Sending back to the main loop failed; propagate error to abort the function
             return Err(e.into());
         }
     }
