@@ -274,10 +274,8 @@ fn extract_price_symbol(node: &Node, content: &Rope) -> Option<DocumentSymbol> {
             "date" => {
                 date = text_for_tree_sitter_node(content, &child);
             }
-            "currency" => {
-                if currency.is_empty() {
-                    currency = text_for_tree_sitter_node(content, &child);
-                }
+            "currency" if currency.is_empty() => {
+                currency = text_for_tree_sitter_node(content, &child);
             }
             "amount" | "incomplete_amount" => {
                 amount = text_for_tree_sitter_node(content, &child);
