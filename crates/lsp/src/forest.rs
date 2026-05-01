@@ -238,10 +238,10 @@ mod tests {
     /// Helper to create a test snapshot
     fn create_test_snapshot() -> LspServerStateSnapshot {
         LspServerStateSnapshot {
-            beancount_data: HashMap::new(),
+            beancount_data: Arc::new(HashMap::new()),
             config: Config::new(PathBuf::from("/tmp/test.bean")),
-            forest: HashMap::new(),
-            open_docs: HashMap::new(),
+            forest: Arc::new(HashMap::new()),
+            open_docs: Arc::new(HashMap::new()),
             checker: None,
         }
     }

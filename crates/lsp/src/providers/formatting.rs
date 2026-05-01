@@ -617,10 +617,10 @@ mod tests {
             );
 
             let snapshot = LspServerStateSnapshot {
-                beancount_data,
+                beancount_data: Arc::new(beancount_data),
                 config: Config::new(std::env::current_dir()?),
-                forest,
-                open_docs,
+                forest: Arc::new(forest),
+                open_docs: Arc::new(open_docs),
                 checker: None,
             };
 
@@ -663,10 +663,10 @@ mod tests {
             config.formatting = format_config;
 
             let snapshot = LspServerStateSnapshot {
-                beancount_data,
+                beancount_data: Arc::new(beancount_data),
                 config,
-                forest,
-                open_docs,
+                forest: Arc::new(forest),
+                open_docs: Arc::new(open_docs),
                 checker: None,
             };
 

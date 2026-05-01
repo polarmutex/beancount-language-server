@@ -569,9 +569,9 @@ mod tests {
 
             Ok(Self {
                 snapshot: LspServerStateSnapshot {
-                    forest,
-                    open_docs,
-                    beancount_data,
+                    forest: Arc::new(forest),
+                    open_docs: Arc::new(open_docs),
+                    beancount_data: Arc::new(beancount_data),
                     config,
                     checker: None,
                 },

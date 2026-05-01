@@ -7,32 +7,42 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tree_sitter_beancount::tree_sitter;
 
-/// Cloned views of the three public maps, used to construct `LspServerStateSnapshot`.
+/// Arc-wrapped views of the three public maps, used to construct `LspServerStateSnapshot`.
+///
+/// Each field is an `Arc<HashMap<…>>` so that taking a snapshot is a cheap pointer
+/// clone; the underlying HashMap is only copied (via [`Arc::make_mut`]) when the
+/// `DocumentStore` actually modifies it.
 pub(crate) struct DocumentStoreMaps {
-    pub open_docs: HashMap<PathBuf, Document>,
-    pub forest: HashMap<PathBuf, Arc<tree_sitter::Tree>>,
-    pub beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
+    pub open_docs: Arc<HashMap<PathBuf, Document>>,
+    pub forest: Arc<HashMap<PathBuf, Arc<tree_sitter::Tree>>>,
+    pub beancount_data: Arc<HashMap<PathBuf, Arc<BeancountData>>>,
 }
 
 /// Owns all four document-related maps and enforces their consistency invariant:
 /// - Every open document has a parser (private, hidden from callers).
 /// - When a tree is invalidated, its `beancount_data` is removed atomically.
 /// - `beancount_data` is extracted lazily via `ensure_beancount_data`.
+///
+/// The three public maps are stored as `Arc<HashMap<…>>` so that
+/// [`snapshot_maps`][DocumentStore::snapshot_maps] is an O(1) pointer clone.
+/// [`Arc::make_mut`] is used before every mutation to ensure copy-on-write
+/// semantics: if a snapshot is currently live the HashMap is cloned once, then
+/// mutated; otherwise the existing allocation is reused.
 pub(crate) struct DocumentStore {
-    open_docs: HashMap<PathBuf, Document>,
+    open_docs: Arc<HashMap<PathBuf, Document>>,
     /// Stateful parsers for incremental re-parsing. Private: callers never need a parser directly.
     parsers: HashMap<PathBuf, tree_sitter::Parser>,
-    forest: HashMap<PathBuf, Arc<tree_sitter::Tree>>,
-    beancount_data: HashMap<PathBuf, Arc<BeancountData>>,
+    forest: Arc<HashMap<PathBuf, Arc<tree_sitter::Tree>>>,
+    beancount_data: Arc<HashMap<PathBuf, Arc<BeancountData>>>,
 }
 
 impl DocumentStore {
     pub(crate) fn new() -> Self {
         Self {
-            open_docs: HashMap::new(),
+            open_docs: Arc::new(HashMap::new()),
             parsers: HashMap::new(),
-            forest: HashMap::new(),
-            beancount_data: HashMap::new(),
+            forest: Arc::new(HashMap::new()),
+            beancount_data: Arc::new(HashMap::new()),
         }
     }
 
@@ -43,7 +53,7 @@ impl DocumentStore {
     /// close and reopen, so cached trees cannot be trusted.
     pub(crate) fn open(&mut self, uri: PathBuf, text: &str, version: i32) {
         let content = ropey::Rope::from_str(text);
-        self.open_docs
+        Arc::make_mut(&mut self.open_docs)
             .insert(uri.clone(), Document { content, version });
 
         self.parsers.entry(uri.clone()).or_insert_with(|| {
@@ -71,8 +81,8 @@ impl DocumentStore {
             .content;
         let beancount_data = BeancountData::new(&tree, doc_content);
 
-        self.forest.insert(uri.clone(), tree);
-        self.beancount_data.insert(uri, Arc::new(beancount_data));
+        Arc::make_mut(&mut self.forest).insert(uri.clone(), tree);
+        Arc::make_mut(&mut self.beancount_data).insert(uri, Arc::new(beancount_data));
     }
 
     /// Apply incremental content changes to an open document.
@@ -114,8 +124,7 @@ impl DocumentStore {
 
         // Step 2 — apply rope edits and update the version.
         {
-            let doc = self
-                .open_docs
+            let doc = Arc::make_mut(&mut self.open_docs)
                 .get_mut(uri)
                 .expect("doc should exist after prior check");
 
@@ -217,11 +226,10 @@ impl DocumentStore {
 
         // Step 5 — commit new tree, lazily invalidate beancount_data.
         if let Some(tree) = new_tree {
-            *self
-                .forest
+            *Arc::make_mut(&mut self.forest)
                 .get_mut(uri)
                 .expect("tree should exist in forest") = Arc::new(tree);
-            self.beancount_data.remove(uri);
+            Arc::make_mut(&mut self.beancount_data).remove(uri);
         }
 
         Ok(())
@@ -232,9 +240,9 @@ impl DocumentStore {
     /// Trees and data are cleared so that a reopen gets a fresh parse, correctly
     /// handling external modifications made while the file was closed.
     pub(crate) fn close(&mut self, uri: &PathBuf) {
-        self.open_docs.remove(uri);
-        self.forest.remove(uri);
-        self.beancount_data.remove(uri);
+        Arc::make_mut(&mut self.open_docs).remove(uri);
+        Arc::make_mut(&mut self.forest).remove(uri);
+        Arc::make_mut(&mut self.beancount_data).remove(uri);
         // parsers intentionally kept for potential reuse
     }
 
@@ -246,8 +254,8 @@ impl DocumentStore {
         let tree_arc = Arc::new(tree);
         let rope = ropey::Rope::from_str(content);
         let beancount_data = BeancountData::new(&tree_arc, &rope);
-        self.forest.insert(uri.clone(), tree_arc);
-        self.beancount_data.insert(uri, Arc::new(beancount_data));
+        Arc::make_mut(&mut self.forest).insert(uri.clone(), tree_arc);
+        Arc::make_mut(&mut self.beancount_data).insert(uri, Arc::new(beancount_data));
     }
 
     /// Insert pre-computed `Arc`-wrapped tree and data (used by the ForestInit background task).
@@ -257,21 +265,21 @@ impl DocumentStore {
         tree: Arc<tree_sitter::Tree>,
         data: Arc<BeancountData>,
     ) {
-        self.forest.insert(uri.clone(), tree);
-        self.beancount_data.insert(uri, data);
+        Arc::make_mut(&mut self.forest).insert(uri.clone(), tree);
+        Arc::make_mut(&mut self.beancount_data).insert(uri, data);
     }
 
     /// Remove all caches for an externally deleted file.
     pub(crate) fn remove_external(&mut self, uri: &PathBuf) {
-        self.forest.remove(uri);
-        self.beancount_data.remove(uri);
+        Arc::make_mut(&mut self.forest).remove(uri);
+        Arc::make_mut(&mut self.beancount_data).remove(uri);
         self.parsers.remove(uri);
     }
 
     /// Clear stale caches for an externally changed file before re-parsing.
     pub(crate) fn invalidate_external(&mut self, uri: &PathBuf) {
-        self.forest.remove(uri);
-        self.beancount_data.remove(uri);
+        Arc::make_mut(&mut self.forest).remove(uri);
+        Arc::make_mut(&mut self.beancount_data).remove(uri);
         // open_docs and parsers untouched — file is not open in the editor
     }
 
@@ -287,7 +295,7 @@ impl DocumentStore {
         }
         if let (Some(tree), Some(doc)) = (self.forest.get(uri), self.open_docs.get(uri)) {
             let beancount_data = BeancountData::new(tree, &doc.content);
-            self.beancount_data
+            Arc::make_mut(&mut self.beancount_data)
                 .insert(uri.clone(), Arc::new(beancount_data));
             tracing::debug!("Lazy extraction: BeancountData extracted for {:?}", uri);
         }
@@ -313,12 +321,16 @@ impl DocumentStore {
 
     // ── Snapshot ─────────────────────────────────────────────────────────────
 
-    /// Clone the three public maps for constructing `LspServerStateSnapshot`.
+    /// Clone the three public map Arcs for constructing `LspServerStateSnapshot`.
+    ///
+    /// This is an O(1) operation: only the Arc reference counts are incremented.
+    /// The underlying HashMaps are not copied unless the store subsequently
+    /// mutates them (copy-on-write via [`Arc::make_mut`]).
     pub(crate) fn snapshot_maps(&self) -> DocumentStoreMaps {
         DocumentStoreMaps {
-            open_docs: self.open_docs.clone(),
-            forest: self.forest.clone(),
-            beancount_data: self.beancount_data.clone(),
+            open_docs: Arc::clone(&self.open_docs),
+            forest: Arc::clone(&self.forest),
+            beancount_data: Arc::clone(&self.beancount_data),
         }
     }
 }
@@ -470,7 +482,7 @@ mod tests {
         let mut store = DocumentStore::new();
         let uri = PathBuf::from("/test/file.beancount");
         // doc exists but no tree
-        store.open_docs.insert(
+        Arc::make_mut(&mut store.open_docs).insert(
             uri.clone(),
             Document {
                 content: ropey::Rope::from_str(CONTENT),
@@ -548,5 +560,56 @@ mod tests {
         assert!(maps.forest.contains_key(&uri));
         assert!(maps.beancount_data.contains_key(&uri));
         // parsers NOT in snapshot
+    }
+
+    #[test]
+    fn test_snapshot_maps_shares_arc_identity() {
+        // Snapshot should share the same Arc allocation (pointer equality),
+        // not clone the underlying HashMaps.
+        let mut store = DocumentStore::new();
+        let uri = PathBuf::from("/test/file.beancount");
+        store.open(uri.clone(), CONTENT, 1);
+
+        let maps1 = store.snapshot_maps();
+        let maps2 = store.snapshot_maps();
+
+        assert!(
+            Arc::ptr_eq(&maps1.forest, &maps2.forest),
+            "consecutive snapshots should share forest Arc"
+        );
+        assert!(
+            Arc::ptr_eq(&maps1.beancount_data, &maps2.beancount_data),
+            "consecutive snapshots should share beancount_data Arc"
+        );
+        assert!(
+            Arc::ptr_eq(&maps1.open_docs, &maps2.open_docs),
+            "consecutive snapshots should share open_docs Arc"
+        );
+    }
+
+    #[test]
+    fn test_mutation_after_snapshot_does_not_alias() {
+        // After a mutation, the live snapshot must not reflect the change
+        // (copy-on-write: make_mut allocates a new HashMap).
+        let mut store = DocumentStore::new();
+        let uri = PathBuf::from("/test/file.beancount");
+        store.open(uri.clone(), CONTENT, 1);
+
+        let snapshot_before = store.snapshot_maps();
+
+        // Mutate by inserting another key
+        let uri2 = PathBuf::from("/test/file2.beancount");
+        store.open(uri2.clone(), CONTENT, 1);
+
+        // snapshot_before should still point to the old allocation
+        assert!(
+            !Arc::ptr_eq(&snapshot_before.forest, &store.snapshot_maps().forest),
+            "snapshot taken before mutation should not alias the new forest"
+        );
+        // The old snapshot should not contain the new key
+        assert!(
+            !snapshot_before.forest.contains_key(&uri2),
+            "old snapshot must not see keys added after snapshot"
+        );
     }
 }

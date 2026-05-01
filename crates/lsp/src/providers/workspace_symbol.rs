@@ -1,8 +1,7 @@
 use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::text_for_tree_sitter_node;
 use anyhow::Result;
-use lsp_types::BaseSymbolInformation;
-use lsp_types::{Location, SymbolInformation, SymbolKind, WorkspaceSymbolParams};
+use lsp_types::{BaseSymbolInformation, Location, SymbolInformation, SymbolKind, WorkspaceSymbolParams, WorkspaceSymbolResponse};
 use ropey::Rope;
 use std::str::FromStr;
 use tree_sitter_beancount::tree_sitter::Node;
@@ -13,7 +12,7 @@ use url::Url;
 pub(crate) fn workspace_symbols(
     snapshot: LspServerStateSnapshot,
     params: WorkspaceSymbolParams,
-) -> Result<Option<Vec<SymbolInformation>>> {
+) -> Result<Option<WorkspaceSymbolResponse>> {
     let query = params.query.to_lowercase();
     let mut symbols = Vec::new();
 
@@ -105,7 +104,7 @@ pub(crate) fn workspace_symbols(
     if symbols.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(symbols))
+        Ok(Some(WorkspaceSymbolResponse::SymbolInformationList(symbols)))
     }
 }
 
@@ -431,9 +430,9 @@ mod tests {
 
             Ok(Self {
                 snapshot: LspServerStateSnapshot {
-                    forest,
-                    open_docs,
-                    beancount_data,
+                    forest: Arc::new(forest),
+                    open_docs: Arc::new(open_docs),
+                    beancount_data: Arc::new(beancount_data),
                     config,
                     checker: None,
                 },
@@ -458,7 +457,9 @@ mod tests {
         let result = workspace_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        let symbols = result.unwrap();
+        let WorkspaceSymbolResponse::SymbolInformationList(symbols) = result.unwrap() else {
+            panic!("Expected Flat response");
+        };
         assert_eq!(symbols.len(), 1);
         assert_eq!(
             symbols[0].base_symbol_information.kind,
@@ -491,7 +492,9 @@ mod tests {
         let result = workspace_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        let symbols = result.unwrap();
+        let WorkspaceSymbolResponse::SymbolInformationList(symbols) = result.unwrap() else {
+            panic!("Expected Flat response");
+        };
         assert_eq!(symbols.len(), 2);
         assert_eq!(symbols[0].base_symbol_information.kind, SymbolKind::Event);
         assert!(symbols[0].base_symbol_information.name.contains("Amazon"));
@@ -518,7 +521,9 @@ mod tests {
         let result = workspace_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        let symbols = result.unwrap();
+        let WorkspaceSymbolResponse::SymbolInformationList(symbols) = result.unwrap() else {
+            panic!("Expected Flat response");
+        };
         assert_eq!(symbols.len(), 2);
         assert_eq!(symbols[0].base_symbol_information.kind, SymbolKind::String);
         assert!(symbols[0].base_symbol_information.name.contains("#tax"));
@@ -545,7 +550,9 @@ mod tests {
         let result = workspace_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        let symbols = result.unwrap();
+        let WorkspaceSymbolResponse::SymbolInformationList(symbols) = result.unwrap() else {
+            panic!("Expected Flat response");
+        };
         // Should find 1 transaction (narration "Paris trip") + 2 links
         assert_eq!(symbols.len(), 3);
 
@@ -592,7 +599,9 @@ mod tests {
         let result = workspace_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        let symbols = result.unwrap();
+        let WorkspaceSymbolResponse::SymbolInformationList(symbols) = result.unwrap() else {
+            panic!("Expected Flat response");
+        };
         assert_eq!(symbols.len(), 2);
         // First should be commodity, second should be price
         assert!(
@@ -624,7 +633,9 @@ mod tests {
         let result = workspace_symbols(state.snapshot, params).unwrap();
         // Empty query should match everything
         assert!(result.is_some());
-        let symbols = result.unwrap();
+        let WorkspaceSymbolResponse::SymbolInformationList(symbols) = result.unwrap() else {
+            panic!("Expected Flat response");
+        };
         assert!(symbols.len() >= 2);
     }
 
@@ -659,7 +670,9 @@ mod tests {
         let result = workspace_symbols(state.snapshot, params).unwrap();
         assert!(result.is_some());
 
-        let symbols = result.unwrap();
+        let WorkspaceSymbolResponse::SymbolInformationList(symbols) = result.unwrap() else {
+            panic!("Expected Flat response");
+        };
         assert_eq!(symbols.len(), 1);
         assert_eq!(
             symbols[0].base_symbol_information.name,
