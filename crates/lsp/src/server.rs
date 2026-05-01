@@ -112,6 +112,31 @@ pub(crate) struct LspServerStateSnapshot {
     pub checker: Option<Arc<dyn BeancountChecker>>,
 }
 
+/// A snapshot bundled with data pre-computed on the main thread.
+///
+/// Produced by `RequestRouter::on_computed` — the `compute` hook runs
+/// synchronously on the main thread (where mutable state is safe), produces a
+/// value of type `T`, and that value is then carried alongside the cheap-to-clone
+/// snapshot into the thread-pool handler.  This eliminates ad-hoc map lookups in
+/// handlers and makes the data contract visible in function signatures.
+///
+/// # Example
+///
+/// ```ignore
+/// router.on_computed::<HoverRequest, _>(
+///     |state, params| state.doc_store.get_data(&params.uri),
+///     |SnapshotWithData { snapshot, data }, params| {
+///         // `data` is the pre-fetched value; no map lookup needed here
+///         hover_with_data(snapshot, data, params)
+///     },
+/// );
+/// ```
+#[allow(dead_code)]
+pub(crate) struct SnapshotWithData<T> {
+    pub snapshot: LspServerStateSnapshot,
+    pub data: T,
+}
+
 impl LspServerStateSnapshot {
     pub fn tree_and_document_for_uri(
         &self,
