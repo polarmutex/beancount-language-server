@@ -23,6 +23,7 @@ use crate::providers::workspace_symbol;
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender};
 use lsp_types::Notification;
+use ropey::Rope;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,7 +31,7 @@ use std::time::Instant;
 use tree_sitter_beancount::tree_sitter;
 
 pub(crate) type RequestHandler = fn(&mut LspServerState, lsp_server::Response);
-pub(crate) type ForestData = Box<Option<(PathBuf, Arc<tree_sitter::Tree>, Arc<BeancountData>)>>;
+pub(crate) type ForestData = Box<Option<(PathBuf, Arc<tree_sitter::Tree>, Arc<BeancountData>, Arc<Rope>)>>;
 
 #[derive(Debug)]
 pub(crate) enum ProgressMsg {
@@ -108,6 +109,8 @@ pub(crate) struct LspServerStateSnapshot {
     pub beancount_data: Arc<HashMap<PathBuf, Arc<BeancountData>>>,
     pub config: Config,
     pub forest: Arc<HashMap<PathBuf, Arc<tree_sitter::Tree>>>,
+    /// Rope content for non-open forest files. Use `open_docs` first for open files.
+    pub forest_content: Arc<HashMap<PathBuf, Arc<Rope>>>,
     pub open_docs: Arc<HashMap<PathBuf, Document>>,
     pub checker: Option<Arc<dyn BeancountChecker>>,
 }
@@ -314,8 +317,8 @@ impl LspServerState {
                 )
             }
             ProgressMsg::ForestInit { total, done, data } => {
-                if let Some(data) = *data {
-                    self.doc_store.insert_tree_and_data(data.0, data.1, data.2);
+                if let Some((path, tree, beancount_data, rope)) = *data {
+                    self.doc_store.insert_tree_and_data(path, tree, beancount_data, rope);
                 }
                 let progress_state = if done == 0 {
                     Progress::Begin
@@ -477,11 +480,13 @@ impl LspServerState {
             open_docs,
             forest,
             beancount_data,
+            forest_content,
         } = self.doc_store.snapshot_maps();
         LspServerStateSnapshot {
             beancount_data,
             config: self.config.clone(),
             forest,
+            forest_content,
             open_docs,
             checker: self.checker.clone(),
         }

@@ -199,6 +199,7 @@ mod tests {
             Ok(Self {
                 snapshot: LspServerStateSnapshot {
                     forest: Arc::new(forest),
+                    forest_content: Arc::new(HashMap::new()),
                     open_docs: Arc::new(open_docs),
                     beancount_data: Arc::new(beancount_data),
                     config,

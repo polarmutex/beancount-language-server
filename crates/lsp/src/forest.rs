@@ -19,6 +19,7 @@ use crate::server::ProgressMsg;
 use crate::server::Task;
 use crossbeam_channel::Sender;
 use glob::glob;
+use ropey::Rope;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path;
@@ -199,7 +200,7 @@ pub(crate) fn parse_initial_forest(
         };
         let tree_arc = Arc::new(tree);
 
-        let content = ropey::Rope::from_str(text.as_str());
+        let content = Rope::from_str(text.as_str());
         let beancount_data = BeancountData::new(&tree_arc, &content);
 
         // Always send data for the parsed file (server needs it)
@@ -211,6 +212,7 @@ pub(crate) fn parse_initial_forest(
                 file.clone(),
                 tree_arc.clone(),
                 Arc::new(beancount_data),
+                Arc::new(content),
             ))),
         })) {
             tracing::error!("Failed to send forest init progress with data: {}", e);
@@ -271,6 +273,7 @@ mod tests {
             beancount_data: Arc::new(HashMap::new()),
             config: Config::new(PathBuf::from("/tmp/test.bean")),
             forest: Arc::new(HashMap::new()),
+            forest_content: Arc::new(HashMap::new()),
             open_docs: Arc::new(HashMap::new()),
             checker: None,
         }
@@ -405,7 +408,7 @@ mod tests {
         let mut parsed_files = HashSet::new();
         while let Ok(task) = receiver.try_recv() {
             if let Task::Progress(ProgressMsg::ForestInit { data, .. }) = task
-                && let Some((path, _, _)) = *data
+                && let Some((path, _, _, _)) = *data
             {
                 parsed_files.insert(path);
             }
@@ -453,7 +456,7 @@ mod tests {
         let mut parsed_files = HashSet::new();
         while let Ok(task) = receiver.try_recv() {
             if let Task::Progress(ProgressMsg::ForestInit { data, .. }) = task
-                && let Some((path, _, _)) = *data
+                && let Some((path, _, _, _)) = *data
             {
                 parsed_files.insert(path);
             }
@@ -493,7 +496,7 @@ mod tests {
         let mut parsed_files = HashSet::new();
         while let Ok(task) = receiver.try_recv() {
             if let Task::Progress(ProgressMsg::ForestInit { data, .. }) = task
-                && let Some((path, _, _)) = *data
+                && let Some((path, _, _, _)) = *data
             {
                 parsed_files.insert(path);
             }
@@ -568,7 +571,7 @@ include "{}"
         let mut parsed_files = HashSet::new();
         while let Ok(task) = receiver.try_recv() {
             if let Task::Progress(ProgressMsg::ForestInit { data, .. }) = task
-                && let Some((path, _, _)) = *data
+                && let Some((path, _, _, _)) = *data
             {
                 parsed_files.insert(path);
             }
@@ -625,7 +628,7 @@ include "{}"
         let mut parsed_files = HashSet::new();
         while let Ok(task) = receiver.try_recv() {
             if let Task::Progress(ProgressMsg::ForestInit { data, .. }) = task
-                && let Some((path, _, _)) = *data
+                && let Some((path, _, _, _)) = *data
             {
                 parsed_files.insert(path);
             }
@@ -749,7 +752,7 @@ include "{}"
         let mut parsed_files = HashSet::new();
         while let Ok(task) = receiver.try_recv() {
             if let Task::Progress(ProgressMsg::ForestInit { data, .. }) = task
-                && let Some((path, _, _)) = *data
+                && let Some((path, _, _, _)) = *data
             {
                 parsed_files.insert(path);
             }

@@ -2,12 +2,13 @@ use crate::beancount_data::BeancountData;
 use crate::document::Document;
 use crate::treesitter_utils::lsp_textdocchange_to_ts_inputedit;
 use anyhow::Result;
+use ropey::Rope;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tree_sitter_beancount::tree_sitter;
 
-/// Arc-wrapped views of the three public maps, used to construct `LspServerStateSnapshot`.
+/// Arc-wrapped views of the public maps, used to construct `LspServerStateSnapshot`.
 ///
 /// Each field is an `Arc<HashMap<…>>` so that taking a snapshot is a cheap pointer
 /// clone; the underlying HashMap is only copied (via [`Arc::make_mut`]) when the
@@ -16,14 +17,22 @@ pub(crate) struct DocumentStoreMaps {
     pub open_docs: Arc<HashMap<PathBuf, Document>>,
     pub forest: Arc<HashMap<PathBuf, Arc<tree_sitter::Tree>>>,
     pub beancount_data: Arc<HashMap<PathBuf, Arc<BeancountData>>>,
+    /// Rope content for non-open forest files. Open files use `open_docs` as the
+    /// source of truth; `forest_content` holds their rope only after they are closed.
+    pub forest_content: Arc<HashMap<PathBuf, Arc<Rope>>>,
 }
 
-/// Owns all four document-related maps and enforces their consistency invariant:
+/// Owns all document-related maps and enforces their consistency invariants:
 /// - Every open document has a parser (private, hidden from callers).
 /// - When a tree is invalidated, its `beancount_data` is removed atomically.
 /// - `beancount_data` is extracted lazily via `ensure_beancount_data`.
+/// - `forest_content` holds rope content for non-open forest files.
+///   Open files use `open_docs` as the source of truth; `forest_content` is
+///   populated for a file when it is inserted via `insert_parsed` /
+///   `insert_tree_and_data`, and the open_docs entry takes precedence while
+///   the file is open.
 ///
-/// The three public maps are stored as `Arc<HashMap<…>>` so that
+/// All public maps are stored as `Arc<HashMap<…>>` so that
 /// [`snapshot_maps`][DocumentStore::snapshot_maps] is an O(1) pointer clone.
 /// [`Arc::make_mut`] is used before every mutation to ensure copy-on-write
 /// semantics: if a snapshot is currently live the HashMap is cloned once, then
@@ -34,6 +43,8 @@ pub(crate) struct DocumentStore {
     parsers: HashMap<PathBuf, tree_sitter::Parser>,
     forest: Arc<HashMap<PathBuf, Arc<tree_sitter::Tree>>>,
     beancount_data: Arc<HashMap<PathBuf, Arc<BeancountData>>>,
+    /// Rope content for non-open forest files (open files use `open_docs`).
+    forest_content: Arc<HashMap<PathBuf, Arc<Rope>>>,
 }
 
 impl DocumentStore {
@@ -43,6 +54,7 @@ impl DocumentStore {
             parsers: HashMap::new(),
             forest: Arc::new(HashMap::new()),
             beancount_data: Arc::new(HashMap::new()),
+            forest_content: Arc::new(HashMap::new()),
         }
     }
 
@@ -82,7 +94,9 @@ impl DocumentStore {
         let beancount_data = BeancountData::new(&tree, doc_content);
 
         Arc::make_mut(&mut self.forest).insert(uri.clone(), tree);
-        Arc::make_mut(&mut self.beancount_data).insert(uri, Arc::new(beancount_data));
+        Arc::make_mut(&mut self.beancount_data).insert(uri.clone(), Arc::new(beancount_data));
+        // open_docs is now the source of truth for this file's content
+        Arc::make_mut(&mut self.forest_content).remove(&uri);
     }
 
     /// Apply incremental content changes to an open document.
@@ -235,44 +249,58 @@ impl DocumentStore {
         Ok(())
     }
 
-    /// Close a document: remove the buffer, tree, and data. Keep the parser for reuse.
+    /// Close a document: transition it from open to a non-open forest file.
     ///
-    /// Trees and data are cleared so that a reopen gets a fresh parse, correctly
-    /// handling external modifications made while the file was closed.
+    /// Removes the buffer from `open_docs` but keeps the tree, beancount_data,
+    /// and parser so the file remains part of the forest for cross-file operations
+    /// (references, diagnostics). The rope is transferred to `forest_content` so
+    /// providers can still access the file's text without falling back to disk.
     pub(crate) fn close(&mut self, uri: &PathBuf) {
+        // Ensure beancount_data is populated before losing the open_doc rope.
+        self.ensure_beancount_data(uri);
+
+        // Transfer rope to forest_content so it stays available after close.
+        if let Some(doc) = self.open_docs.get(uri) {
+            Arc::make_mut(&mut self.forest_content)
+                .insert(uri.clone(), Arc::new(doc.content.clone()));
+        }
+
         Arc::make_mut(&mut self.open_docs).remove(uri);
-        Arc::make_mut(&mut self.forest).remove(uri);
-        Arc::make_mut(&mut self.beancount_data).remove(uri);
-        // parsers intentionally kept for potential reuse
+        // forest, beancount_data, and parsers intentionally kept for non-open file tracking
     }
 
     /// Insert a freshly parsed external file (includes, watched-file reloads).
     ///
-    /// Wraps the tree in `Arc`, creates `BeancountData`, and stores both.
+    /// Wraps the tree in `Arc`, creates `BeancountData`, stores both, and stores
+    /// the rope in `forest_content` for text-level access by providers.
     /// Does not touch `open_docs` or `parsers`.
     pub(crate) fn insert_parsed(&mut self, uri: PathBuf, tree: tree_sitter::Tree, content: &str) {
         let tree_arc = Arc::new(tree);
-        let rope = ropey::Rope::from_str(content);
+        let rope = Rope::from_str(content);
         let beancount_data = BeancountData::new(&tree_arc, &rope);
         Arc::make_mut(&mut self.forest).insert(uri.clone(), tree_arc);
-        Arc::make_mut(&mut self.beancount_data).insert(uri, Arc::new(beancount_data));
+        Arc::make_mut(&mut self.beancount_data).insert(uri.clone(), Arc::new(beancount_data));
+        Arc::make_mut(&mut self.forest_content).insert(uri, Arc::new(rope));
     }
 
-    /// Insert pre-computed `Arc`-wrapped tree and data (used by the ForestInit background task).
+    /// Insert pre-computed `Arc`-wrapped tree, data, and rope (used by the ForestInit background task).
     pub(crate) fn insert_tree_and_data(
         &mut self,
         uri: PathBuf,
         tree: Arc<tree_sitter::Tree>,
         data: Arc<BeancountData>,
+        rope: Arc<Rope>,
     ) {
         Arc::make_mut(&mut self.forest).insert(uri.clone(), tree);
-        Arc::make_mut(&mut self.beancount_data).insert(uri, data);
+        Arc::make_mut(&mut self.beancount_data).insert(uri.clone(), data);
+        Arc::make_mut(&mut self.forest_content).insert(uri, rope);
     }
 
     /// Remove all caches for an externally deleted file.
     pub(crate) fn remove_external(&mut self, uri: &PathBuf) {
         Arc::make_mut(&mut self.forest).remove(uri);
         Arc::make_mut(&mut self.beancount_data).remove(uri);
+        Arc::make_mut(&mut self.forest_content).remove(uri);
         self.parsers.remove(uri);
     }
 
@@ -280,6 +308,7 @@ impl DocumentStore {
     pub(crate) fn invalidate_external(&mut self, uri: &PathBuf) {
         Arc::make_mut(&mut self.forest).remove(uri);
         Arc::make_mut(&mut self.beancount_data).remove(uri);
+        Arc::make_mut(&mut self.forest_content).remove(uri);
         // open_docs and parsers untouched — file is not open in the editor
     }
 
@@ -331,6 +360,7 @@ impl DocumentStore {
             open_docs: Arc::clone(&self.open_docs),
             forest: Arc::clone(&self.forest),
             beancount_data: Arc::clone(&self.beancount_data),
+            forest_content: Arc::clone(&self.forest_content),
         }
     }
 }
@@ -417,17 +447,21 @@ mod tests {
     }
 
     #[test]
-    fn test_close_removes_doc_tree_data_but_keeps_parser() {
+    fn test_close_transitions_to_non_open_forest_file() {
         let mut store = DocumentStore::new();
         let uri = PathBuf::from("/test/file.beancount");
         store.open(uri.clone(), CONTENT, 1);
 
         store.close(&uri);
 
+        // Removed from open_docs
         assert!(store.open_docs.get(&uri).is_none());
-        assert!(store.get_tree(&uri).is_none());
-        assert!(!store.beancount_data.contains_key(&uri));
-        // parser retained for reuse
+        // Kept in forest and beancount_data for cross-file operations
+        assert!(store.get_tree(&uri).is_some());
+        assert!(store.beancount_data.contains_key(&uri));
+        // Rope transferred to forest_content
+        assert!(store.forest_content.contains_key(&uri));
+        // Parser kept for reuse
         assert!(store.parsers.contains_key(&uri));
     }
 
@@ -444,6 +478,8 @@ mod tests {
         let doc = store.open_docs.get(&uri).unwrap();
         assert_eq!(doc.version, 2);
         assert!(doc.text_string().contains("Liabilities"));
+        // forest_content cleared when re-opened (open_docs takes over)
+        assert!(!store.forest_content.contains_key(&uri));
     }
 
     #[test]
@@ -501,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_parsed_stores_tree_and_data() {
+    fn test_insert_parsed_stores_tree_data_and_rope() {
         let mut store = DocumentStore::new();
         let uri = PathBuf::from("/test/included.beancount");
         let tree = parse(CONTENT);
@@ -510,6 +546,7 @@ mod tests {
 
         assert!(store.get_tree(&uri).is_some());
         assert!(store.beancount_data.contains_key(&uri));
+        assert!(store.forest_content.contains_key(&uri));
         // not an open doc
         assert!(store.open_docs.get(&uri).is_none());
     }
@@ -522,10 +559,11 @@ mod tests {
         let rope = ropey::Rope::from_str(CONTENT);
         let data = Arc::new(BeancountData::new(&tree, &rope));
 
-        store.insert_tree_and_data(uri.clone(), tree, data);
+        store.insert_tree_and_data(uri.clone(), tree, data, Arc::new(rope));
 
         assert!(store.get_tree(&uri).is_some());
         assert!(store.beancount_data.contains_key(&uri));
+        assert!(store.forest_content.contains_key(&uri));
     }
 
     #[test]
@@ -555,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn test_snapshot_maps_clones_three_maps() {
+    fn test_snapshot_maps_clones_all_maps() {
         let mut store = DocumentStore::new();
         let uri = PathBuf::from("/test/file.beancount");
         store.open(uri.clone(), CONTENT, 1);
@@ -565,6 +603,8 @@ mod tests {
         assert!(maps.open_docs.contains_key(&uri));
         assert!(maps.forest.contains_key(&uri));
         assert!(maps.beancount_data.contains_key(&uri));
+        // open file: forest_content not populated (open_docs is the source of truth)
+        assert!(!maps.forest_content.contains_key(&uri));
         // parsers NOT in snapshot
     }
 
@@ -590,6 +630,10 @@ mod tests {
         assert!(
             Arc::ptr_eq(&maps1.open_docs, &maps2.open_docs),
             "consecutive snapshots should share open_docs Arc"
+        );
+        assert!(
+            Arc::ptr_eq(&maps1.forest_content, &maps2.forest_content),
+            "consecutive snapshots should share forest_content Arc"
         );
     }
 
