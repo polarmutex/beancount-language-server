@@ -468,7 +468,11 @@ impl LspServerState {
         self.send(not.into());
     }
 
-    pub(crate) fn snapshot(&self) -> LspServerStateSnapshot {
+    pub(crate) fn snapshot(&mut self) -> LspServerStateSnapshot {
+        let uris: Vec<PathBuf> = self.doc_store.open_doc_keys().cloned().collect();
+        for uri in uris {
+            self.doc_store.ensure_beancount_data(&uri);
+        }
         let DocumentStoreMaps {
             open_docs,
             forest,
@@ -492,49 +496,19 @@ impl LspServerState {
                 Ok(())
             })
             .expect("Failed to register Shutdown handler")
-            .on_with::<lsp_types::HoverRequest>(
-                |r, params| {
-                    r.ensure_beancount_data_for_position(&params.text_document_position_params);
-                },
-                hover::hover,
-            )
+            .on::<lsp_types::HoverRequest>(hover::hover)
             .expect("Failed to register Hover handler")
-            .on_with::<lsp_types::CompletionRequest>(
-                |r, params| {
-                    r.ensure_beancount_data_for_position(&params.text_document_position_params);
-                },
-                completion::completion,
-            )
+            .on::<lsp_types::CompletionRequest>(completion::completion)
             .expect("Failed to register Completion handler")
             .on::<lsp_types::DocumentFormattingRequest>(formatting::formatting)
             .expect("Failed to register Formatting handler")
-            .on_with::<lsp_types::RenameRequest>(
-                |r, params| {
-                    r.ensure_beancount_data_for_position(&params.text_document_position_params);
-                },
-                references::rename,
-            )
+            .on::<lsp_types::RenameRequest>(references::rename)
             .expect("Failed to register Rename handler")
-            .on_with::<lsp_types::ReferencesRequest>(
-                |r, params| {
-                    r.ensure_beancount_data_for_position(&params.text_document_position_params);
-                },
-                references::references,
-            )
+            .on::<lsp_types::ReferencesRequest>(references::references)
             .expect("Failed to register References handler")
-            .on_with::<lsp_types::DefinitionRequest>(
-                |r, params| {
-                    r.ensure_beancount_data_for_position(&params.text_document_position_params);
-                },
-                definition::definition,
-            )
+            .on::<lsp_types::DefinitionRequest>(definition::definition)
             .expect("Failed to register GotoDefinition handler")
-            .on_with::<lsp_types::SemanticTokensRequest>(
-                |r, params| {
-                    r.ensure_beancount_data_for_text_document(&params.text_document);
-                },
-                semantic_tokens::semantic_tokens_full,
-            )
+            .on::<lsp_types::SemanticTokensRequest>(semantic_tokens::semantic_tokens_full)
             .expect("Failed to register SemanticTokens handler")
             .on::<lsp_types::InlayHintRequest>(inlay_hints::inlay_hints)
             .expect("Failed to register InlayHint handler")
@@ -635,109 +609,5 @@ impl LspServerState {
         checker
     }
 
-    /// Ensure BeancountData is extracted for the given URI.
-    /// Lazily extracts on first access after tree changes (lazy extraction for #757).
-    pub(crate) fn ensure_beancount_data(&mut self, uri: &PathBuf) {
-        self.doc_store.ensure_beancount_data(uri);
-    }
-
-    fn ensure_beancount_data_for_text_document(
-        &mut self,
-        text_document: &lsp_types::TextDocumentIdentifier,
-    ) {
-        if let Ok(path) = text_document.uri.to_file_path() {
-            self.ensure_beancount_data(&path);
-        }
-    }
-
-    fn ensure_beancount_data_for_position(
-        &mut self,
-        params: &lsp_types::TextDocumentPositionParams,
-    ) {
-        self.ensure_beancount_data_for_text_document(&params.text_document);
-    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::Config;
-    use std::path::PathBuf;
-
-    fn create_test_state() -> LspServerState {
-        let (sender, _receiver) = crossbeam_channel::unbounded();
-        let config = Config::new(PathBuf::from("/test"));
-        LspServerState::new(sender, config)
-    }
-
-/// Thin delegation tests for `ensure_beancount_data` on `LspServerState`.
-    /// Exhaustive behaviour tests live in `document_store::tests`.
-
-    #[test]
-    fn test_lazy_extraction_skips_if_data_exists() {
-        let mut state = create_test_state();
-        let uri = PathBuf::from("/test/file.beancount");
-        let content = "2024-01-01 open Assets:Checking USD\n";
-
-        // open() populates beancount_data eagerly
-        state.doc_store.open(uri.clone(), content, 1);
-        let maps = state.doc_store.snapshot_maps();
-        let first_ptr = Arc::as_ptr(maps.beancount_data.get(&uri).unwrap());
-
-        // ensure should be a no-op — data is already present
-        state.ensure_beancount_data(&uri);
-
-        let maps2 = state.doc_store.snapshot_maps();
-        let second_ptr = Arc::as_ptr(maps2.beancount_data.get(&uri).unwrap());
-        assert_eq!(first_ptr, second_ptr, "Data should not be re-extracted");
-    }
-
-    #[test]
-    fn test_lazy_extraction_extracts_if_missing() {
-        let mut state = create_test_state();
-        let uri = PathBuf::from("/test/file.beancount");
-        let content = "2024-01-01 open Assets:Checking USD\n";
-
-        // open() then apply_change() removes beancount_data (lazy invalidation)
-        state.doc_store.open(uri.clone(), content, 1);
-        #[allow(deprecated)]
-        let change = lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
-            lsp_types::TextDocumentContentChangePartial {
-                range: lsp_types::Range {
-                    start: lsp_types::Position::new(0, 0),
-                    end: lsp_types::Position::new(0, 0),
-                },
-                range_length: None,
-                text: "".to_string(),
-            });
-        state.doc_store.apply_change(&uri, &[change], 2).unwrap();
-        // beancount_data is now absent
-        assert!(state.doc_store.snapshot_maps().beancount_data.get(&uri).is_none());
-
-        state.ensure_beancount_data(&uri);
-
-        let maps = state.doc_store.snapshot_maps();
-        assert!(maps.beancount_data.contains_key(&uri));
-        let accounts = maps.beancount_data.get(&uri).unwrap().get_accounts();
-        assert_eq!(accounts.len(), 1);
-        assert_eq!(accounts[0], "Assets:Checking");
-    }
-
-    #[test]
-    fn test_lazy_extraction_handles_missing_tree() {
-        // No tree → ensure is a no-op. Detailed tests in document_store::tests.
-        let mut state = create_test_state();
-        let uri = PathBuf::from("/test/file.beancount");
-        state.ensure_beancount_data(&uri); // must not panic
-        assert!(state.doc_store.snapshot_maps().beancount_data.get(&uri).is_none());
-    }
-
-    #[test]
-    fn test_lazy_extraction_handles_missing_doc() {
-        // Calling ensure on a URI that was never opened must not panic.
-        // Detailed behaviour test (tree-without-doc) is in document_store::tests.
-        let mut state = create_test_state();
-        let uri = PathBuf::from("/test/never-opened.beancount");
-        state.ensure_beancount_data(&uri); // must not panic
-    }
-}
