@@ -173,12 +173,16 @@ mod tests {
             },
         };
 
-        let result = completion(snapshot, lsp_types::CompletionParams {
-            text_document_position_params: position,
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-            context: None,
-        }).unwrap();
+        let result = completion(
+            snapshot,
+            lsp_types::CompletionParams {
+                text_document_position_params: position,
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            },
+        )
+        .unwrap();
         assert!(result.is_some(), "Should return completion items");
 
         let lsp_types::CompletionResponse::CompletionList(list) = result.unwrap() else {
@@ -241,12 +245,16 @@ mod tests {
             },
         };
 
-        let result = completion(snapshot, lsp_types::CompletionParams {
-            text_document_position_params: position,
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-            context: None,
-        }).unwrap();
+        let result = completion(
+            snapshot,
+            lsp_types::CompletionParams {
+                text_document_position_params: position,
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            },
+        )
+        .unwrap();
         assert!(
             result.is_some(),
             "Should return completion items for lowercase prefix"
@@ -323,12 +331,16 @@ option "name_expenses" "Aufwendungen"
             },
         };
 
-        let result = completion(snapshot, lsp_types::CompletionParams {
-            text_document_position_params: position,
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-            context: None,
-        }).unwrap();
+        let result = completion(
+            snapshot,
+            lsp_types::CompletionParams {
+                text_document_position_params: position,
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            },
+        )
+        .unwrap();
         assert!(
             result.is_some(),
             "Should return completion items for custom account name prefix 'Akti'"

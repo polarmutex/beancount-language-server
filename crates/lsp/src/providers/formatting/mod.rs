@@ -1,11 +1,11 @@
 mod alignment;
 mod extraction;
 
+use crate::server::LspServerStateSnapshot;
 use alignment::{
     apply_indent_normalization_to_remaining_lines, generate_currency_column_edits,
     generate_template_edits,
 };
-use crate::server::LspServerStateSnapshot;
 use anyhow::Result;
 use extraction::{calculate_format_config, extract_formateable_lines};
 use tracing::debug;
@@ -95,7 +95,6 @@ pub(crate) fn formatting(
     );
     Ok(Some(final_text_edits))
 }
-
 
 #[cfg(test)]
 mod tests {

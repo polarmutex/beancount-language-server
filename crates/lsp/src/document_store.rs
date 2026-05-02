@@ -65,8 +65,7 @@ impl DocumentStore {
     /// close and reopen, so cached trees cannot be trusted.
     pub(crate) fn open(&mut self, uri: PathBuf, text: &str, version: i32) {
         let content = ropey::Rope::from_str(text);
-        Arc::make_mut(&mut self.open_docs)
-            .insert(uri.clone(), Document { content, version });
+        Arc::make_mut(&mut self.open_docs).insert(uri.clone(), Document { content, version });
 
         self.parsers.entry(uri.clone()).or_insert_with(|| {
             let mut parser = tree_sitter::Parser::new();
@@ -80,11 +79,7 @@ impl DocumentStore {
             .get_mut(&uri)
             .expect("parser should exist after insertion");
 
-        let tree = Arc::new(
-            parser
-                .parse(text, None)
-                .expect("Failed to parse document"),
-        );
+        let tree = Arc::new(parser.parse(text, None).expect("Failed to parse document"));
 
         let doc_content = &self
             .open_docs
@@ -167,9 +162,8 @@ impl DocumentStore {
                 let end_row_char_idx = doc.content.line_to_char(range.end.line as usize);
 
                 let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
-                let start_utf16_idx =
-                    (start_line_utf16_cu + range.start.character as usize)
-                        .min(doc.content.len_utf16_cu());
+                let start_utf16_idx = (start_line_utf16_cu + range.start.character as usize)
+                    .min(doc.content.len_utf16_cu());
                 let start_col_char_idx =
                     doc.content.utf16_cu_to_char(start_utf16_idx) - start_row_char_idx;
 
@@ -324,8 +318,7 @@ impl DocumentStore {
         }
         if let (Some(tree), Some(doc)) = (self.forest.get(uri), self.open_docs.get(uri)) {
             let beancount_data = BeancountData::new(tree, &doc.content);
-            Arc::make_mut(&mut self.beancount_data)
-                .insert(uri.clone(), Arc::new(beancount_data));
+            Arc::make_mut(&mut self.beancount_data).insert(uri.clone(), Arc::new(beancount_data));
             tracing::debug!("Lazy extraction: BeancountData extracted for {:?}", uri);
         }
     }
@@ -413,7 +406,8 @@ mod tests {
                 },
                 range_length: None,
                 text: "".to_string(),
-            });
+            },
+        );
         store.apply_change(&uri, &[change], 2).unwrap();
 
         // beancount_data should be invalidated after change
@@ -438,7 +432,8 @@ mod tests {
                 },
                 range_length: None,
                 text: "world".to_string(),
-            });
+            },
+        );
         store.apply_change(&uri, &[change], 2).unwrap();
 
         let doc = store.open_docs.get(&uri).unwrap();
@@ -498,7 +493,8 @@ mod tests {
                 },
                 range_length: None,
                 text: "".to_string(),
-            });
+            },
+        );
         store.apply_change(&uri, &[change], 2).unwrap();
         assert!(!store.beancount_data.contains_key(&uri));
 
@@ -516,7 +512,10 @@ mod tests {
         store.ensure_beancount_data(&uri);
         let second_ptr = Arc::as_ptr(store.beancount_data.get(&uri).unwrap());
 
-        assert_eq!(first_ptr, second_ptr, "should not re-extract if data present");
+        assert_eq!(
+            first_ptr, second_ptr,
+            "should not re-extract if data present"
+        );
     }
 
     #[test]

@@ -1,7 +1,10 @@
 use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::text_for_tree_sitter_node;
 use anyhow::Result;
-use lsp_types::{BaseSymbolInformation, Location, SymbolInformation, SymbolKind, WorkspaceSymbolParams, WorkspaceSymbolResponse};
+use lsp_types::{
+    BaseSymbolInformation, Location, SymbolInformation, SymbolKind, WorkspaceSymbolParams,
+    WorkspaceSymbolResponse,
+};
 use ropey::Rope;
 use std::str::FromStr;
 use tree_sitter_beancount::tree_sitter::Node;
@@ -104,7 +107,9 @@ pub(crate) fn workspace_symbols(
     if symbols.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(WorkspaceSymbolResponse::SymbolInformationList(symbols)))
+        Ok(Some(WorkspaceSymbolResponse::SymbolInformationList(
+            symbols,
+        )))
     }
 }
 

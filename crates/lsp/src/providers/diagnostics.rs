@@ -70,13 +70,25 @@ pub fn diagnostics(
     diagnostic_flags: &[String],
 ) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
     tracing::info!("Starting diagnostics for: {}", root_journal_file.display());
-    tracing::debug!("Processing beancount data for {} files", beancount_data.len());
-
-    let mut result = CheckerDiagnosticSource { checker, root_journal_file }.collect();
-    merge_maps(
-        &mut result,
-        flagged_entry_diagnostics(beancount_data, diagnostic_flags),
+    tracing::debug!(
+        "Processing beancount data for {} files",
+        beancount_data.len()
     );
+
+    let sources: [&dyn DiagnosticSource; 2] = [
+        &CheckerDiagnosticSource {
+            checker,
+            root_journal_file,
+        },
+        &FlaggedEntryDiagnosticSource {
+            beancount_data,
+            diagnostic_flags,
+        },
+    ];
+    let mut result = HashMap::new();
+    for source in sources {
+        merge_maps(&mut result, source.collect());
+    }
     debug!("Generated diagnostics for {} files", result.len());
     result
 }
@@ -97,7 +109,10 @@ pub fn checker_diagnostics(
     root_journal_file: &Path,
 ) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
     tracing::debug!("Using checker: {}", checker.name());
-    tracing::debug!("Calling checker.check() with file: {}", root_journal_file.display());
+    tracing::debug!(
+        "Calling checker.check() with file: {}",
+        root_journal_file.display()
+    );
 
     let check_result = match checker.check(root_journal_file) {
         Ok(result) => {
@@ -607,12 +622,7 @@ mod tests {
         let checker = SystemCallChecker::new(mock_bean_check);
 
         // Test with default config (only '!' flag)
-        let result = diagnostics(
-            &beancount_data,
-            &checker,
-            &file_path,
-            &["!".to_string()],
-        );
+        let result = diagnostics(&beancount_data, &checker, &file_path, &["!".to_string()]);
 
         // Should have diagnostic for '!' but not for 'P'
         let file_diagnostics = result.get(&file_path);
@@ -712,8 +722,7 @@ mod tests {
 
     #[test]
     fn test_flagged_entry_diagnostics_empty_flags_returns_empty() {
-        let content =
-            "2023-01-01 ! \"Flagged\"\n  Assets:Cash 100 USD\n  Expenses:Food";
+        let content = "2023-01-01 ! \"Flagged\"\n  Assets:Cash 100 USD\n  Expenses:Food";
         let (_temp_dir, file_path) = create_temp_beancount_file(content);
         let beancount_data = create_mock_beancount_data_with_flags(&file_path, content);
 
@@ -727,8 +736,7 @@ mod tests {
     #[test]
     fn test_checker_diagnostic_source_and_flagged_entry_source_are_independent() {
         // Verify each DiagnosticSource impl produces diagnostics independently
-        let flagged_content =
-            "2023-01-01 ! \"Flagged\"\n  Assets:Cash 100 USD\n  Expenses:Food";
+        let flagged_content = "2023-01-01 ! \"Flagged\"\n  Assets:Cash 100 USD\n  Expenses:Food";
         let (_temp_dir, file_path) = create_temp_beancount_file(flagged_content);
         let beancount_data = create_mock_beancount_data_with_flags(&file_path, flagged_content);
 
@@ -743,7 +751,10 @@ mod tests {
         // CheckerDiagnosticSource uses a real checker but we can use /bin/true
         use crate::checkers::SystemCallChecker;
         let checker = SystemCallChecker::new(create_mock_bean_check_success());
-        let source = CheckerDiagnosticSource { checker: &checker, root_journal_file: &file_path };
+        let source = CheckerDiagnosticSource {
+            checker: &checker,
+            root_journal_file: &file_path,
+        };
         let checker_result = source.collect();
         // /bin/true succeeds with no output → empty map
         assert!(checker_result.is_empty());

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use which::which;
 
 #[cfg(feature = "python-embedded")]
@@ -300,10 +301,7 @@ impl CheckerChain {
     }
 }
 
-fn build_chain(
-    config: &BeancountCheckConfig,
-    root_dir: &Path,
-) -> Vec<Box<dyn BeancountChecker>> {
+fn build_chain(config: &BeancountCheckConfig, root_dir: &Path) -> Vec<Box<dyn BeancountChecker>> {
     let mut candidates: Vec<Box<dyn BeancountChecker>> = Vec::new();
     match config.method {
         Some(BeancountCheckMethod::SystemCall) => {
@@ -349,6 +347,47 @@ pub fn create_checker(
     checker
 }
 
+/// Owns the single cached checker instance for the server lifetime.
+///
+/// Hides the factory call and `Arc`-wrapping behind a narrow seam:
+/// `get_or_init` initialises on first call; subsequent calls return the
+/// cached value without re-running discovery.
+pub struct CheckerRegistry {
+    checker: Option<Arc<dyn BeancountChecker>>,
+}
+
+impl CheckerRegistry {
+    pub fn new() -> Self {
+        Self { checker: None }
+    }
+
+    /// Return the cached checker, or `None` if not yet initialised.
+    pub fn get(&self) -> Option<Arc<dyn BeancountChecker>> {
+        self.checker.clone()
+    }
+
+    /// Return the cached checker; run discovery on first call.
+    pub fn get_or_init(
+        &mut self,
+        config: &BeancountCheckConfig,
+        root_dir: &Path,
+    ) -> Option<Arc<dyn BeancountChecker>> {
+        if let Some(checker) = &self.checker {
+            return Some(checker.clone());
+        }
+        let checker = create_checker(config, root_dir)?;
+        let checker: Arc<dyn BeancountChecker> = Arc::from(checker);
+        self.checker = Some(checker.clone());
+        Some(checker)
+    }
+}
+
+impl Default for CheckerRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod chain_tests {
     use super::*;
@@ -371,10 +410,16 @@ mod chain_tests {
     }
 
     fn avail(name: &'static str) -> Box<dyn BeancountChecker> {
-        Box::new(MockChecker { name, available: true })
+        Box::new(MockChecker {
+            name,
+            available: true,
+        })
     }
     fn unavail(name: &'static str) -> Box<dyn BeancountChecker> {
-        Box::new(MockChecker { name, available: false })
+        Box::new(MockChecker {
+            name,
+            available: false,
+        })
     }
 
     #[test]

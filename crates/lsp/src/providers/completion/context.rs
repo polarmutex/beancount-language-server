@@ -937,12 +937,16 @@ A"#;
         let context = determine_completion_context(&tree, &rope, cursor, None);
 
         match context {
-            CompletionContext::InsidePayee { prefix } | CompletionContext::InsideNarration { prefix } => {
+            CompletionContext::InsidePayee { prefix }
+            | CompletionContext::InsideNarration { prefix } => {
                 // The important thing is that we're inside a string context
                 // Whether it's detected as payee or narration can vary based on tree state
                 assert_eq!(prefix, "Fo"); // Position 25 = after 'Fo'
             }
-            _ => panic!("Expected InsidePayee or InsideNarration context, got {:?}", context),
+            _ => panic!(
+                "Expected InsidePayee or InsideNarration context, got {:?}",
+                context
+            ),
         }
     }
 

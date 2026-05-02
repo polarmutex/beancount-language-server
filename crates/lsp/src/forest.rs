@@ -788,8 +788,7 @@ include "{}"
         let abs = included.to_str().unwrap();
         let text = format!("include \"{abs}\"\n");
         let tree = parse_beancount(&text);
-        let result =
-            extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
+        let result = extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
         assert_eq!(result.len(), 1);
         assert!(result.contains(&included));
     }
@@ -815,8 +814,7 @@ include "{}"
         let pattern = temp_dir.path().join("*.bean");
         let text = format!("include \"{}\"\n", pattern.to_str().unwrap());
         let tree = parse_beancount(&text);
-        let result =
-            extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
+        let result = extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
         assert!(result.contains(&f1));
         assert!(result.contains(&f2));
     }
@@ -829,8 +827,7 @@ include "{}"
         // Include the same file twice
         let text = format!("include \"{abs}\"\ninclude \"{abs}\"\n");
         let tree = parse_beancount(&text);
-        let result =
-            extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
+        let result = extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
         assert_eq!(result.len(), 1);
     }
 
@@ -839,8 +836,7 @@ include "{}"
         // A glob that matches nothing should return empty, not panic
         let text = "include \"/nonexistent/path/*.bean\"\n";
         let tree = parse_beancount(text);
-        let result =
-            extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
+        let result = extract_include_paths(&tree, text.as_bytes(), path::Path::new("/root.bean"));
         assert!(result.is_empty());
     }
 
