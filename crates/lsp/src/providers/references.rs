@@ -59,7 +59,12 @@ pub(crate) fn references(
         return Ok(None);
     };
 
-    let locs = find_references(&snapshot.forest, &snapshot.open_docs, &snapshot.forest_content, &node_text);
+    let locs = find_references(
+        &snapshot.forest,
+        &snapshot.open_docs,
+        &snapshot.forest_content,
+        &node_text,
+    );
     Ok(Some(locs))
 }
 
@@ -90,7 +95,12 @@ pub(crate) fn rename(
         return Ok(None);
     };
 
-    let locs = find_references(&snapshot.forest, &snapshot.open_docs, &snapshot.forest_content, &node_text);
+    let locs = find_references(
+        &snapshot.forest,
+        &snapshot.open_docs,
+        &snapshot.forest_content,
+        &node_text,
+    );
     let new_name = params.new_name;
 
     // Group locations by URI string to avoid mutable key type warning

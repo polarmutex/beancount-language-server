@@ -1,10 +1,10 @@
 pub mod beancount_data;
 mod capabilities;
-mod document_store;
 pub mod checkers;
 mod config;
 mod dispatcher;
 pub mod document;
+mod document_store;
 //pub mod error;
 pub mod forest;
 pub mod progress;

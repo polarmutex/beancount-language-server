@@ -446,8 +446,7 @@ mod tests {
             let _handler: fn(
                 LspServerStateSnapshot,
                 lsp_types::RenameParams,
-            ) -> anyhow::Result<Option<lsp_types::WorkspaceEdit>> =
-                providers::references::rename;
+            ) -> anyhow::Result<Option<lsp_types::WorkspaceEdit>> = providers::references::rename;
         }
 
         // Semantic tokens capability -> providers::semantic_tokens::semantic_tokens_full

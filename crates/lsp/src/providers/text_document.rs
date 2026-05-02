@@ -234,11 +234,9 @@ pub(crate) fn did_change(
         }
     };
     tracing::debug!("text_document::did_change - requesting {:#?}", uri);
-    state.doc_store.apply_change(
-        &uri,
-        &params.content_changes,
-        params.text_document.version,
-    )?;
+    state
+        .doc_store
+        .apply_change(&uri, &params.content_changes, params.text_document.version)?;
     debug!("text_document::did_change - done");
     Ok(())
 }

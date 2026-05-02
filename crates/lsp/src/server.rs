@@ -1,6 +1,6 @@
 use crate::beancount_data::BeancountData;
 use crate::checkers::BeancountChecker;
-use crate::checkers::create_checker;
+use crate::checkers::CheckerRegistry;
 use crate::config::Config;
 use crate::dispatcher::NotificationDispatcher;
 use crate::dispatcher::RequestRouter;
@@ -31,7 +31,14 @@ use std::time::Instant;
 use tree_sitter_beancount::tree_sitter;
 
 pub(crate) type RequestHandler = fn(&mut LspServerState, lsp_server::Response);
-pub(crate) type ForestData = Box<Option<(PathBuf, Arc<tree_sitter::Tree>, Arc<BeancountData>, Arc<Rope>)>>;
+pub(crate) type ForestData = Box<
+    Option<(
+        PathBuf,
+        Arc<tree_sitter::Tree>,
+        Arc<BeancountData>,
+        Arc<Rope>,
+    )>,
+>;
 
 #[derive(Debug)]
 pub(crate) enum ProgressMsg {
@@ -95,7 +102,7 @@ pub(crate) struct LspServerState {
     pub thread_pool: threadpool::ThreadPool,
 
     // Cached checker instance (created once and reused)
-    pub checker: Option<Arc<dyn BeancountChecker>>,
+    pub checker_registry: CheckerRegistry,
 
     // Request router with registered handlers
     pub request_router: Arc<RequestRouter>,
@@ -159,7 +166,7 @@ impl LspServerState {
             task_sender,
             task_receiver,
             thread_pool: threadpool::ThreadPool::default(),
-            checker: None,
+            checker_registry: CheckerRegistry::new(),
             request_router,
         }
     }
@@ -318,7 +325,8 @@ impl LspServerState {
             }
             ProgressMsg::ForestInit { total, done, data } => {
                 if let Some((path, tree, beancount_data, rope)) = *data {
-                    self.doc_store.insert_tree_and_data(path, tree, beancount_data, rope);
+                    self.doc_store
+                        .insert_tree_and_data(path, tree, beancount_data, rope);
                 }
                 let progress_state = if done == 0 {
                     Progress::Begin
@@ -488,7 +496,7 @@ impl LspServerState {
             forest,
             forest_content,
             open_docs,
-            checker: self.checker.clone(),
+            checker: self.checker_registry.get(),
         }
     }
 
@@ -572,8 +580,8 @@ impl LspServerState {
     }
 
     fn ensure_checker(&mut self) -> Option<Arc<dyn BeancountChecker>> {
-        if let Some(checker) = &self.checker {
-            return Some(checker.clone());
+        if let Some(checker) = self.checker_registry.get() {
+            return Some(checker);
         }
 
         self.report_progress(
@@ -584,24 +592,19 @@ impl LspServerState {
             None,
         );
 
-        let checker = create_checker(&self.config.bean_check, &self.config.root_dir);
-        let checker = checker.map(|checker| {
-            let checker_name = checker.name().to_string();
-            let checker: Arc<dyn BeancountChecker> = Arc::from(checker);
-            self.checker = Some(checker.clone());
+        let checker = self
+            .checker_registry
+            .get_or_init(&self.config.bean_check, &self.config.root_dir);
 
+        if let Some(ref c) = checker {
             self.report_progress(
                 "checker auto",
                 Progress::End,
-                Some(format!("using {checker_name}")),
+                Some(format!("using {}", c.name())),
                 None,
                 None,
             );
-
-            checker
-        });
-
-        if checker.is_none() {
+        } else {
             self.report_progress(
                 "checker auto",
                 Progress::End,
@@ -613,6 +616,4 @@ impl LspServerState {
 
         checker
     }
-
 }
-
