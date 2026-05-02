@@ -124,51 +124,6 @@ impl RequestRouter {
         Ok(self)
     }
 
-    // Try to dispatch the event as the given Request type on the thread pool, with a pre-hook
-    // that can use the parsed params on the main thread before dispatch.
-    pub fn on_with<R>(
-        &mut self,
-        pre: fn(&mut LspServerState, &R::Params),
-        f: fn(LspServerStateSnapshot, R::Params) -> Result<R::Result>,
-    ) -> Result<&mut Self>
-    where
-        R: lsp_types::Request + 'static,
-        R::Params: DeserializeOwned + Send + 'static,
-        R::Result: Serialize + 'static,
-    {
-        self.insert_handler(
-            R::METHOD,
-            Box::new(move |state, req| {
-                match from_json::<R::Params>(R::METHOD.as_str(), req.params) {
-                    Ok(params) => {
-                        pre(state, &params);
-
-                        let id = req.id;
-                        let snapshot = state.snapshot();
-                        let sender = state.task_sender.clone();
-                        state.thread_pool.execute(move || {
-                            let result = f(snapshot, params);
-                            if let Err(e) =
-                                sender.send(Task::Response(result_to_response::<R>(id, result)))
-                            {
-                                tracing::error!("Failed to send response: {}", e);
-                            }
-                        });
-                    }
-                    Err(err) => {
-                        let response = lsp_server::Response::new_err(
-                            req.id,
-                            lsp_server::ErrorCode::InvalidParams as i32,
-                            err.to_string(),
-                        );
-                        state.respond(response);
-                    }
-                }
-            }),
-        )?;
-        Ok(self)
-    }
-
     // Dispatches a single request by method.
     pub fn dispatch(&self, state: &mut LspServerState, req: lsp_server::Request) {
         if let Some(handler) = self
