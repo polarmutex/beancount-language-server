@@ -1,4 +1,5 @@
 use crate::document::Document;
+use crate::query_cache;
 use crate::server::LspServerStateSnapshot;
 use crate::treesitter_utils::{
     lsp_position_to_tree_sitter_point_range, text_for_tree_sitter_node,
@@ -134,20 +135,14 @@ fn find_references(
     open_docs: &HashMap<PathBuf, Document>,
     node_text: &str,
 ) -> Vec<lsp_types::Location> {
+    let query = query_cache::account_query();
+    let capture_account = query
+        .capture_index_for_name("account")
+        .expect("account should be captured");
+
     forest
         .iter()
         .flat_map(|(url, tree)| {
-            let query = match tree_sitter::Query::new(
-                &tree_sitter_beancount::language(),
-                "(account)@account",
-            ) {
-                Ok(q) => q,
-                Err(_e) => return vec![],
-            };
-            let capture_account = query
-                .capture_index_for_name("account")
-                .expect("account should be captured");
-
             let (rope, text) = if let Some(doc) = open_docs.get(url) {
                 let rope = doc.content.clone();
                 let text = rope.to_string();
@@ -168,7 +163,7 @@ fn find_references(
             let source = text.as_bytes();
 
             let mut query_cursor = tree_sitter::QueryCursor::new();
-            let mut matches = query_cursor.matches(&query, tree.root_node(), source);
+            let mut matches = query_cursor.matches(query, tree.root_node(), source);
             let mut results = Vec::new();
             while let Some(m) = matches.next() {
                 if let Some(node) = m.nodes_for_capture_index(capture_account).next() {
