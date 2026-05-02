@@ -59,7 +59,7 @@ pub(crate) fn references(
         return Ok(None);
     };
 
-    let locs = find_references(&snapshot.forest, &snapshot.open_docs, &node_text);
+    let locs = find_references(&snapshot.forest, &snapshot.open_docs, &snapshot.forest_content, &node_text);
     Ok(Some(locs))
 }
 
@@ -90,7 +90,7 @@ pub(crate) fn rename(
         return Ok(None);
     };
 
-    let locs = find_references(&snapshot.forest, &snapshot.open_docs, &node_text);
+    let locs = find_references(&snapshot.forest, &snapshot.open_docs, &snapshot.forest_content, &node_text);
     let new_name = params.new_name;
 
     // Group locations by URI string to avoid mutable key type warning
@@ -133,6 +133,7 @@ pub(crate) fn rename(
 fn find_references(
     forest: &HashMap<PathBuf, Arc<tree_sitter::Tree>>,
     open_docs: &HashMap<PathBuf, Document>,
+    forest_content: &HashMap<PathBuf, Arc<Rope>>,
     node_text: &str,
 ) -> Vec<lsp_types::Location> {
     let query = query_cache::account_query();
@@ -147,17 +148,13 @@ fn find_references(
                 let rope = doc.content.clone();
                 let text = rope.to_string();
                 (rope, text)
+            } else if let Some(stored) = forest_content.get(url) {
+                let rope = (**stored).clone();
+                let text = rope.to_string();
+                (rope, text)
             } else {
-                match std::fs::read_to_string(url) {
-                    Ok(content) => {
-                        let rope = Rope::from_str(&content);
-                        (rope, content)
-                    }
-                    Err(_) => {
-                        debug!("Failed to read file: {:?}", url);
-                        return vec![];
-                    }
-                }
+                debug!("No content available for: {:?}", url);
+                return vec![];
             };
 
             let source = text.as_bytes();
@@ -228,6 +225,7 @@ mod tests {
             Ok(Self {
                 snapshot: LspServerStateSnapshot {
                     forest: Arc::new(forest),
+                    forest_content: Arc::new(HashMap::new()),
                     open_docs: Arc::new(open_docs),
                     beancount_data: Arc::new(beancount_data),
                     config,
@@ -250,6 +248,7 @@ mod tests {
         let locs = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
+            &state.snapshot.forest_content,
             "Assets:Checking",
         );
 
@@ -269,6 +268,7 @@ mod tests {
         let locs = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
+            &state.snapshot.forest_content,
             "Assets:Nonexistent",
         );
 
@@ -317,7 +317,7 @@ mod tests {
             },
         );
 
-        let locs = find_references(&forest, &open_docs, "Assets:Bank");
+        let locs = find_references(&forest, &open_docs, &HashMap::new(), "Assets:Bank");
 
         assert_eq!(locs.len(), 3); // open in file1 + posting in file1 + posting in file2
     }
@@ -436,6 +436,7 @@ mod tests {
         let locs_food = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
+            &state.snapshot.forest_content,
             "Expenses:Food",
         );
         assert_eq!(locs_food.len(), 2); // open + posting
@@ -443,6 +444,7 @@ mod tests {
         let locs_cash = find_references(
             &state.snapshot.forest,
             &state.snapshot.open_docs,
+            &state.snapshot.forest_content,
             "Assets:Cash",
         );
         assert_eq!(locs_cash.len(), 2); // open + posting

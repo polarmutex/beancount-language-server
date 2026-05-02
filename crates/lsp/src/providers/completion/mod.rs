@@ -143,6 +143,7 @@ mod tests {
             beancount_data: Arc::new(beancount_data),
             config: crate::config::Config::new(PathBuf::from("/test")),
             forest: Arc::new(forest),
+            forest_content: Arc::new(HashMap::new()),
             open_docs: Arc::new(open_docs),
             checker: None,
         };

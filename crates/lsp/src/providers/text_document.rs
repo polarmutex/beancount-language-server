@@ -692,6 +692,7 @@ mod tests {
             beancount_data: Arc::new(HashMap::new()),
             config,
             forest: Arc::new(HashMap::new()),
+            forest_content: Arc::new(HashMap::new()),
             open_docs: Arc::new(HashMap::new()),
             checker: Some(Arc::new(checker)),
         };
@@ -758,6 +759,7 @@ mod tests {
             beancount_data: Arc::new(HashMap::new()),
             config,
             forest: Arc::new(HashMap::new()),
+            forest_content: Arc::new(HashMap::new()),
             open_docs: Arc::new(HashMap::new()),
             checker: Some(Arc::new(checker)),
         };
@@ -811,8 +813,9 @@ mod tests {
             beancount_data: Arc::new(HashMap::new()),
             config,
             forest: Arc::new(HashMap::new()),
+            forest_content: Arc::new(HashMap::new()),
             open_docs: Arc::new(HashMap::new()),
-            checker: None, // No checker available
+            checker: None,
         };
 
         let (sender, _receiver) = crossbeam_channel::unbounded();

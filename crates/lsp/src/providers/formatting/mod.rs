@@ -147,6 +147,7 @@ mod tests {
                 beancount_data: Arc::new(beancount_data),
                 config: Config::new(std::env::current_dir()?),
                 forest: Arc::new(forest),
+                forest_content: Arc::new(HashMap::new()),
                 open_docs: Arc::new(open_docs),
                 checker: None,
             };
@@ -193,6 +194,7 @@ mod tests {
                 beancount_data: Arc::new(beancount_data),
                 config,
                 forest: Arc::new(forest),
+                forest_content: Arc::new(HashMap::new()),
                 open_docs: Arc::new(open_docs),
                 checker: None,
             };
@@ -227,6 +229,7 @@ mod tests {
                 beancount_data: self.snapshot.beancount_data.clone(),
                 config: self.snapshot.config.clone(),
                 forest: self.snapshot.forest.clone(),
+                forest_content: self.snapshot.forest_content.clone(),
                 open_docs: self.snapshot.open_docs.clone(),
                 checker: self.snapshot.checker.clone(),
             };
