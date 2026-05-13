@@ -67,6 +67,10 @@ pub(super) fn extract_formateable_lines(
         .ok_or_else(|| anyhow::anyhow!("Failed to get rope slice for document"))?;
     let mut matches = query_cursor.matches(query, tree.root_node(), RopeProvider(rope_slice));
 
+    // open directives with multiple currencies (e.g. `open Assets:Foo CURR1 CURR2`) produce
+    // one query match per currency node.  Keep only the first match per line so that the first
+    // currency becomes @number and the rest trail it — duplicate edits corrupt the file.
+    let mut seen_lines = std::collections::HashSet::new();
     let mut formateable_lines = Vec::new();
 
     while let Some(matched) = matches.next() {
@@ -83,10 +87,13 @@ pub(super) fn extract_formateable_lines(
             }
         }
 
-        if let (Some(prefix), Some(number)) = (prefix_node, number_node)
-            && let Some(line) = extract_line_components(doc, prefix, number)
-        {
-            formateable_lines.push(line);
+        if let (Some(prefix), Some(number)) = (prefix_node, number_node) {
+            let line_num = prefix.start_position().row;
+            if seen_lines.insert(line_num)
+                && let Some(line) = extract_line_components(doc, prefix, number)
+            {
+                formateable_lines.push(line);
+            }
         }
     }
 

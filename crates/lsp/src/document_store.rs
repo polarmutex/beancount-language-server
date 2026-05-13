@@ -104,8 +104,8 @@ impl DocumentStore {
         changes: &[lsp_types::TextDocumentContentChangeEvent],
         new_version: i32,
     ) -> Result<()> {
-        // Step 1 — calculate tree-sitter edit positions before mutating the rope.
-        let ts_edits = {
+        // Version check only — immutable borrow released before mutation below.
+        {
             let doc = match self.open_docs.get(uri) {
                 Some(d) => d,
                 None => {
@@ -113,7 +113,6 @@ impl DocumentStore {
                     return Ok(());
                 }
             };
-
             let current_version = doc.version;
             if new_version <= current_version {
                 tracing::warn!(
@@ -123,78 +122,74 @@ impl DocumentStore {
                 );
             }
             tracing::trace!("Document version: {} -> {}", current_version, new_version);
+        }
 
-            changes
-                .iter()
-                .map(|change| lsp_textdocchange_to_ts_inputedit(&doc.content, change))
-                .collect::<Result<Vec<_>, _>>()?
-            // doc borrow released
-        };
-
-        // Step 2 — apply rope edits and update the version.
+        // Compute each ts_edit against the rope BEFORE its change is applied, then
+        // immediately apply the rope edit. LSP specifies that changes in a batch are
+        // sequential — each change's positions are relative to the document after all
+        // prior changes — so ts_edits and rope edits must share the same baseline.
+        // Computing all ts_edits upfront (against the original rope) breaks this
+        // invariant for changes 2+ and produces wrong tree-sitter node positions,
+        // which causes the formatter to emit incorrect TextEdit ranges.
+        let mut ts_edits = Vec::with_capacity(changes.len());
         {
             let doc = Arc::make_mut(&mut self.open_docs)
                 .get_mut(uri)
                 .expect("doc should exist after prior check");
 
             for change in changes {
-                let (text, range) = match change {
-                    lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(c) => {
-                        (c.text.as_str(), c.range)
-                    }
+                // Immutable borrow of doc.content ends when ts_edit is returned.
+                let ts_edit = lsp_textdocchange_to_ts_inputedit(&doc.content, change)?;
+                ts_edits.push(ts_edit);
+
+                match change {
                     lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(c) => {
-                        let end_line = (doc.content.len_lines().saturating_sub(1)) as u32;
-                        let end_line_len = if doc.content.len_lines() > 0 {
-                            let last_line = doc.content.line(end_line as usize);
-                            last_line.len_chars().saturating_sub(1) as u32
-                        } else {
-                            0
-                        };
-                        let r = lsp_types::Range {
-                            start: lsp_types::Position::new(0, 0),
-                            end: lsp_types::Position::new(end_line, end_line_len),
-                        };
-                        (c.text.as_str(), r)
+                        // Replace the entire rope in one shot — no range arithmetic needed
+                        // and avoids the off-by-one that the synthetic-range approach had.
+                        doc.content = ropey::Rope::from_str(c.text.as_str());
                     }
-                };
+                    lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(c) => {
+                        let range = c.range;
+                        let text = c.text.as_str();
 
-                let start_row_char_idx = doc.content.line_to_char(range.start.line as usize);
-                let end_row_char_idx = doc.content.line_to_char(range.end.line as usize);
+                        let start_row_char_idx = doc.content.line_to_char(range.start.line as usize);
+                        let end_row_char_idx = doc.content.line_to_char(range.end.line as usize);
 
-                let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
-                let start_utf16_idx = (start_line_utf16_cu + range.start.character as usize)
-                    .min(doc.content.len_utf16_cu());
-                let start_col_char_idx =
-                    doc.content.utf16_cu_to_char(start_utf16_idx) - start_row_char_idx;
+                        let start_line_utf16_cu = doc.content.char_to_utf16_cu(start_row_char_idx);
+                        let start_utf16_idx = (start_line_utf16_cu + range.start.character as usize)
+                            .min(doc.content.len_utf16_cu());
+                        let start_col_char_idx =
+                            doc.content.utf16_cu_to_char(start_utf16_idx) - start_row_char_idx;
 
-                let end_line_utf16_cu = doc.content.char_to_utf16_cu(end_row_char_idx);
-                let end_utf16_idx = (end_line_utf16_cu + range.end.character as usize)
-                    .min(doc.content.len_utf16_cu());
-                let end_col_char_idx =
-                    doc.content.utf16_cu_to_char(end_utf16_idx) - end_row_char_idx;
+                        let end_line_utf16_cu = doc.content.char_to_utf16_cu(end_row_char_idx);
+                        let end_utf16_idx = (end_line_utf16_cu + range.end.character as usize)
+                            .min(doc.content.len_utf16_cu());
+                        let end_col_char_idx =
+                            doc.content.utf16_cu_to_char(end_utf16_idx) - end_row_char_idx;
 
-                let start_char_idx = start_row_char_idx + start_col_char_idx;
-                let end_char_idx = end_row_char_idx + end_col_char_idx;
+                        let start_char_idx = start_row_char_idx + start_col_char_idx;
+                        let end_char_idx = end_row_char_idx + end_col_char_idx;
 
-                tracing::trace!(
-                    "Applying change: range={}:{}-{}:{}, char_idx={}-{}, text_len={}",
-                    range.start.line,
-                    range.start.character,
-                    range.end.line,
-                    range.end.character,
-                    start_char_idx,
-                    end_char_idx,
-                    text.len()
-                );
+                        tracing::trace!(
+                            "Applying change: range={}:{}-{}:{}, char_idx={}-{}, text_len={}",
+                            range.start.line,
+                            range.start.character,
+                            range.end.line,
+                            range.end.character,
+                            start_char_idx,
+                            end_char_idx,
+                            text.len()
+                        );
 
-                doc.content.remove(start_char_idx..end_char_idx);
-                if !text.is_empty() {
-                    doc.content.insert(start_char_idx, text);
+                        doc.content.remove(start_char_idx..end_char_idx);
+                        if !text.is_empty() {
+                            doc.content.insert(start_char_idx, text);
+                        }
+                    }
                 }
             }
 
             doc.version = new_version;
-            // doc borrow released
         }
 
         // Step 3 — clone the old tree (applying ts_edits) and snapshot the text.

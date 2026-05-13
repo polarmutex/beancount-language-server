@@ -92,19 +92,15 @@ pub(super) fn generate_template_edits(
         // Extract currency part from rest and apply custom spacing
         let rest_content = line.rest.trim_start();
         let formatted_rest = if rest_content.starts_with('"') {
-            // Quoted string (e.g. booking method like "FIFO" on an open directive) —
-            // preserve verbatim with a single space; do not strip the leading quote.
+            // Quoted string (e.g. booking method like "FIFO") — preserve with single space.
             format!(" {rest_content}")
-        } else if let Some(currency_start) = rest_content.find(char::is_alphabetic) {
-            // Currency or other alphabetic token — apply configured number-currency spacing
-            format!(
-                "{}{}",
-                " ".repeat(number_currency_spacing),
-                &rest_content[currency_start..]
-            )
+        } else if rest_content.starts_with(|c: char| c.is_alphabetic()) {
+            // Currency starts immediately — apply configured number-currency spacing.
+            format!("{}{rest_content}", " ".repeat(number_currency_spacing))
         } else {
-            // No currency found, use rest as-is
-            format!(" {rest_content}")
+            // Comma-separated currencies (`, EUR`), inline comments (`; note`), or empty —
+            // preserve the original bytes so punctuation is not silently stripped.
+            line.rest.to_string()
         };
 
         // Apply custom indentation if specified, but only for postings, not top-level directives
@@ -200,8 +196,9 @@ fn create_line_replacement_edit(
         return None;
     }
 
-    // Calculate character length (not byte length) for UTF-8 safety
-    let original_line_char_len = original_line.trim_end().chars().count();
+    // LSP Position.character is a UTF-16 code unit offset, not a Unicode scalar count.
+    // chars().count() would be wrong for characters outside the BMP (e.g. emoji).
+    let original_line_utf16_len = original_line.trim_end().encode_utf16().count();
 
     let line_start = lsp_types::Position {
         line: line_num as u32,
@@ -209,7 +206,7 @@ fn create_line_replacement_edit(
     };
     let line_end = lsp_types::Position {
         line: line_num as u32,
-        character: original_line_char_len as u32,
+        character: original_line_utf16_len as u32,
     };
 
     Some(lsp_types::TextEdit {

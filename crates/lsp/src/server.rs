@@ -513,7 +513,9 @@ impl LspServerState {
             .expect("Failed to register Hover handler")
             .on::<lsp_types::CompletionRequest>(completion::completion)
             .expect("Failed to register Completion handler")
-            .on::<lsp_types::DocumentFormattingRequest>(formatting::formatting)
+            .on_sync::<lsp_types::DocumentFormattingRequest>(|state, params| {
+                formatting::formatting(state.snapshot(), params)
+            })
             .expect("Failed to register Formatting handler")
             .on::<lsp_types::RenameRequest>(references::rename)
             .expect("Failed to register Rename handler")

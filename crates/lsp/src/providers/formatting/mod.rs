@@ -1875,6 +1875,179 @@ mod tests {
     }
 
     #[test]
+    fn test_open_comma_separated_currencies_preserved_and_idempotent() {
+        // Exact line from user's chart-of-accounts.beancount.
+        // The extra spaces before the first currency come from a prior (buggy) format run.
+        // Expected behaviors:
+        //   1. Both currencies appear on the same output line (no merging/splitting).
+        //   2. The comma separating them is not stripped.
+        //   3. Formatting is idempotent: second pass produces zero edits.
+        let content = "2015-01-01 open Assets:Home:6749-Nestle-Creek   NESTLE-CREEK-HOME, USD\n\
+                       2015-01-01 open Assets:Checking USD\n";
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+        println!("Formatted:\n{formatted}");
+
+        // 1. Both currencies on one line
+        let creek_line = formatted
+            .lines()
+            .find(|l| l.contains("Nestle-Creek"))
+            .expect("Nestle-Creek line must exist");
+        assert!(
+            creek_line.contains("NESTLE-CREEK-HOME"),
+            "First currency must be present: {creek_line}"
+        );
+        assert!(
+            creek_line.contains("USD"),
+            "Second currency must be present: {creek_line}"
+        );
+
+        // 2. Comma preserved
+        assert!(
+            creek_line.contains("NESTLE-CREEK-HOME, USD")
+                || creek_line.contains("NESTLE-CREEK-HOME,USD"),
+            "Comma between currencies must survive formatting: {creek_line}"
+        );
+
+        // 3. Idempotent
+        let state2 = TestState::new(&formatted).unwrap();
+        let edits2 = state2.format().unwrap().unwrap();
+        assert_eq!(
+            edits2.len(),
+            0,
+            "Second format must produce no edits (idempotent): {formatted}"
+        );
+    }
+
+    #[test]
+    fn test_rest_comma_separator_preserved() {
+        // Regression: `open A CURR1, CURR2` — the comma before the second currency was
+        // being stripped because `find(char::is_alphabetic)` skips over non-alpha prefix.
+        let content = "2015-01-01 open Assets:Home:Creek NESTLE-HOME, USD\n\
+                       2015-01-01 open Assets:Checking USD\n";
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+        println!("Comma-separator formatted:\n{formatted}");
+
+        assert!(
+            formatted.contains("NESTLE-HOME, USD"),
+            "Comma between currencies must be preserved: {formatted}"
+        );
+    }
+
+    #[test]
+    fn test_open_inline_comment_preserved_and_idempotent() {
+        // Exact line from user's chart-of-accounts.beancount.
+        // Expected behaviors:
+        //   1. The currency (USD) is present on the output line.
+        //   2. The inline comment (starting with `;`) is preserved verbatim — the semicolon
+        //      must not be stripped.
+        //   3. Formatting is idempotent: second pass produces zero edits.
+        let content = "2017-07-01 open Assets:Investments:HSA:FifthThird:USD USD ; TODO close?\n\
+                       2015-01-01 open Assets:Checking USD\n";
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+        println!("Formatted:\n{formatted}");
+
+        let fifth_line = formatted
+            .lines()
+            .find(|l| l.contains("FifthThird"))
+            .expect("FifthThird line must exist");
+
+        // 1. Currency present
+        assert!(
+            fifth_line.contains("USD"),
+            "Currency must survive formatting: {fifth_line}"
+        );
+
+        // 2. Comment with semicolon preserved
+        assert!(
+            fifth_line.contains("; TODO close?"),
+            "Inline comment must keep its semicolon: {fifth_line}"
+        );
+
+        // 3. Idempotent
+        let state2 = TestState::new(&formatted).unwrap();
+        let edits2 = state2.format().unwrap().unwrap();
+        assert_eq!(
+            edits2.len(),
+            0,
+            "Second format must produce no edits (idempotent): {formatted}"
+        );
+    }
+
+    #[test]
+    fn test_rest_comment_preserved() {
+        // Regression: `open A USD ; comment` — the `;` was being stripped because
+        // `find(char::is_alphabetic)` skips over `; ` and lands on the comment text.
+        let content = "2017-07-01 open Assets:Investments:HSA:FifthThird:USD USD ; TODO close?\n\
+                       2015-01-01 open Assets:Checking USD\n";
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+        println!("Comment preserved:\n{formatted}");
+
+        assert!(
+            formatted.contains("; TODO close?"),
+            "Semicolon comment must be preserved: {formatted}"
+        );
+        assert!(
+            !formatted.contains("TODO close?") || formatted.contains("; TODO close?"),
+            "Comment must not lose its leading semicolon: {formatted}"
+        );
+    }
+
+    #[test]
+    fn test_open_directive_multiple_currencies_no_duplicate_edits() {
+        // Regression: open directives with multiple currencies produced one query match per
+        // currency, generating two conflicting edits for the same line and corrupting the file.
+        let content = r#"2015-01-01 open Assets:Home:6749-Nestle-Creek NESTLE-CREEK-HOME USD
+2015-01-01 open Assets:Checking USD
+2015-01-01 open Assets:Multi USD EUR GBP
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        // Verify no two edits target the same line
+        let mut lines_seen = std::collections::HashSet::new();
+        for edit in &edits {
+            assert!(
+                lines_seen.insert(edit.range.start.line),
+                "Duplicate edit for line {} — would corrupt the file",
+                edit.range.start.line
+            );
+        }
+
+        // Verify applying edits doesn't corrupt the content
+        let formatted = apply_edits(content, &edits);
+        assert!(
+            formatted.contains("NESTLE-CREEK-HOME USD"),
+            "Multi-currency open directive should be intact: {formatted}"
+        );
+        assert!(
+            formatted.contains("USD EUR GBP"),
+            "Three-currency open directive should be intact: {formatted}"
+        );
+
+        // Idempotency
+        let state2 = TestState::new(&formatted).unwrap();
+        let edits2 = state2.format().unwrap().unwrap();
+        assert_eq!(
+            edits2.len(),
+            0,
+            "Second format should produce no edits: got\n{formatted}"
+        );
+    }
+
+    #[test]
     fn test_open_directive_booking_method_preserved() {
         // Regression test for issue #836: formatter was stripping the leading
         // quote from booking method strings on `open` directives, e.g.
