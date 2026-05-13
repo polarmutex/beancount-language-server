@@ -190,3 +190,17 @@ Supports multiple editors:
 ## Gotcha
 
 The lsp specifies text positions (line, character) using UTF-16 code units, but beancount source files are UTF-8. so when converting position, you should always do a multiple bytes aware converting.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for `polarmutex/beancount-language-server`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
