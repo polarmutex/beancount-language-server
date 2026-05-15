@@ -9,6 +9,7 @@ use crate::document_store::DocumentStore;
 use crate::document_store::DocumentStoreMaps;
 use crate::forest;
 use crate::progress::Progress;
+use crate::providers::code_action;
 use crate::providers::completion;
 use crate::providers::definition;
 use crate::providers::document_symbol;
@@ -509,6 +510,8 @@ impl LspServerState {
                 Ok(())
             })
             .expect("Failed to register Shutdown handler")
+            .on::<lsp_types::CodeActionRequest>(code_action::code_action)
+            .expect("Failed to register CodeAction handler")
             .on::<lsp_types::HoverRequest>(hover::hover)
             .expect("Failed to register Hover handler")
             .on::<lsp_types::CompletionRequest>(completion::completion)

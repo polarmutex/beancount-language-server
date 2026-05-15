@@ -1,3 +1,5 @@
+/// Provider definitions for LSP `textDocument/codeAction`.
+pub mod code_action;
 pub mod completion;
 /// Provider definitions for LSP `textDocument/definition`.
 pub mod definition;

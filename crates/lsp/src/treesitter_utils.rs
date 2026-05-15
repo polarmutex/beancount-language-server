@@ -92,7 +92,7 @@ pub fn lsp_textdocchange_to_ts_inputedit(
     })
 }
 
-fn byte_to_lsp_position(text: &ropey::Rope, byte_idx: usize) -> lsp_types::Position {
+pub(crate) fn byte_to_lsp_position(text: &ropey::Rope, byte_idx: usize) -> lsp_types::Position {
     let line_idx = text.byte_to_line(byte_idx);
 
     let line_utf16_cu_idx = {

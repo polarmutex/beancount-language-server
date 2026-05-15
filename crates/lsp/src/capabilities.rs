@@ -1,7 +1,7 @@
 use crate::providers::semantic_tokens;
 use lsp_types::{
-    CompletionOptions, InlayHintOptions, RenameOptions, SemanticTokensOptions, ServerCapabilities,
-    TextDocumentSyncKind, TextDocumentSyncOptions, WorkDoneProgressOptions,
+    CodeActionProvider, CompletionOptions, InlayHintOptions, RenameOptions, SemanticTokensOptions,
+    ServerCapabilities, TextDocumentSyncKind, TextDocumentSyncOptions, WorkDoneProgressOptions,
 };
 
 pub(crate) fn server_capabilities() -> ServerCapabilities {
@@ -62,6 +62,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             }
             .into(),
         ),
+        code_action_provider: Some(CodeActionProvider::Bool(true)),
         folding_range_provider: Some(true.into()),
         document_symbol_provider: Some(true.into()),
         workspace_symbol_provider: Some(true.into()),
@@ -334,9 +335,9 @@ mod tests {
             caps.workspace_symbol_provider.is_some(),
             "workspace_symbol is implemented"
         );
-        assert_eq!(
-            caps.code_action_provider, None,
-            "code_action is not implemented"
+        assert!(
+            caps.code_action_provider.is_some(),
+            "code_action is implemented"
         );
         assert_eq!(
             caps.code_lens_provider, None,
@@ -484,6 +485,16 @@ mod tests {
             )
                 -> anyhow::Result<Option<lsp_types::DocumentSymbolResponse>> =
                 providers::document_symbol::document_symbols;
+        }
+
+        // Code action capability -> providers::code_action::code_action
+        if caps.code_action_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::CodeActionParams,
+            )
+                -> anyhow::Result<Option<Vec<lsp_types::CodeActionResponse>>> =
+                providers::code_action::code_action;
         }
 
         // Workspace symbol capability -> providers::workspace_symbol::workspace_symbols
