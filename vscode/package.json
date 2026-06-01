@@ -38,7 +38,7 @@
     "trailingComma": "all"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.2",
+    "@eslint/js": "^9.39.4",
     "@types/node": "^22.19.3",
     "@types/vscode": "^1.100.0",
     "@typescript-eslint/eslint-plugin": "^8.59.0",
