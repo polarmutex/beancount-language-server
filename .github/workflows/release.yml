@@ -114,7 +114,7 @@ jobs:
                 persist-credentials: false
 
             - name: Setup | pnpm
-              uses: pnpm/action-setup@26f6d4f2c533a43e6b5da0b4a5dd983f98f7b49a # v6
+              uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
               with:
                   package_json_file: ./vscode/package.json
 
