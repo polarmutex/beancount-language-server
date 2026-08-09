@@ -30,6 +30,9 @@ use std::sync::Arc;
 use std::time::Instant;
 use tree_sitter_beancount::tree_sitter;
 
+const BEANCOUNT_WATCH_GLOB: &str =
+    "**/*.{bean,beancount,bean.gpg,beancount.gpg,bean.asc,beancount.asc}";
+
 pub(crate) type RequestHandler = fn(&mut LspServerState, lsp_server::Response);
 pub(crate) type ForestData = Box<
     Option<(
@@ -252,7 +255,7 @@ impl LspServerState {
 
         match event {
             Event::Task(task) => {
-                tracing::debug!("Handling task: {:?}", task);
+                tracing::debug!("Handling background task");
                 self.handle_task(task)?;
             }
             Event::Lsp(msg) => match msg {
@@ -291,7 +294,27 @@ impl LspServerState {
                 self.respond(response);
             }
             Task::Progress(progress_task) => {
-                tracing::debug!("Handling progress task: {:?}", progress_task);
+                match &progress_task {
+                    ProgressMsg::BeanCheck {
+                        total,
+                        done,
+                        checker_name,
+                        ..
+                    } => tracing::debug!(
+                        "Handling checker progress: checker={}, done={}/{}",
+                        checker_name,
+                        done,
+                        total
+                    ),
+                    ProgressMsg::ForestInit {
+                        total, done, data, ..
+                    } => tracing::debug!(
+                        "Handling forest progress: done={}/{}, has_data={}",
+                        done,
+                        total,
+                        data.is_some()
+                    ),
+                }
                 self.handle_progress_task(progress_task)?;
             }
         }
@@ -546,7 +569,7 @@ impl LspServerState {
         let watch_kind = WatchKind::Create | WatchKind::Change | WatchKind::Delete;
 
         let watchers = vec![FileSystemWatcher {
-            glob_pattern: GlobPattern::Pattern("**/*.{bean,beancount}".to_string()),
+            glob_pattern: GlobPattern::Pattern(BEANCOUNT_WATCH_GLOB.to_string()),
             kind: Some(watch_kind),
         }];
 
@@ -574,7 +597,7 @@ impl LspServerState {
                     error.code
                 );
             } else {
-                tracing::info!("File watchers registered successfully for *.beancount files");
+                tracing::info!("Beancount file watchers registered successfully");
             }
         });
     }

@@ -86,7 +86,7 @@ async function start_or_restart_client(
     synchronize: {
       // Notify the server about file changes to beancount files contained in the workspace
       fileEvents: vscode.workspace.createFileSystemWatcher(
-        "**/.{bean,beancount}",
+        "**/*.{bean,beancount,bean.gpg,beancount.gpg,bean.asc,beancount.asc}",
       ),
     },
     initializationOptions,

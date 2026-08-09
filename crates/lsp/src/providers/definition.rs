@@ -47,7 +47,12 @@ pub(crate) fn definition(
     let origin_selection_range = tree_sitter_node_to_lsp_range(&content, &node);
 
     let node_text = text_for_tree_sitter_node(&content, &node);
-    let locs = find_account_open_definitions(&snapshot.forest, &snapshot.open_docs, node_text);
+    let locs = find_account_open_definitions(
+        &snapshot.forest,
+        &snapshot.open_docs,
+        &snapshot.forest_content,
+        node_text,
+    );
     if locs.is_empty() {
         return Ok(None);
     }
@@ -68,6 +73,7 @@ pub(crate) fn definition(
 fn find_account_open_definitions(
     forest: &HashMap<PathBuf, Arc<tree_sitter::Tree>>,
     open_docs: &HashMap<PathBuf, Document>,
+    forest_content: &HashMap<PathBuf, Arc<Rope>>,
     node_text: String,
 ) -> Vec<Location> {
     forest
@@ -84,13 +90,11 @@ fn find_account_open_definitions(
 
             let (text, rope) = if let Some(doc) = open_docs.get(url) {
                 (doc.text().to_string(), doc.content.clone())
+            } else if let Some(content) = forest_content.get(url) {
+                (content.to_string(), (**content).clone())
             } else {
-                let Ok(content) = std::fs::read_to_string(url) else {
-                    tracing::debug!("Failed to read file: {:?}", url);
-                    return vec![];
-                };
-                let rope = Rope::from_str(&content);
-                (content, rope)
+                tracing::debug!("No content available for: {:?}", url);
+                return vec![];
             };
 
             let Ok(uri) = lsp_types::Uri::from_file_path(url) else {
@@ -157,7 +161,12 @@ mod tests {
         let mut open_docs = HashMap::new();
         open_docs.insert(path.clone(), make_doc(text));
 
-        let locs = find_account_open_definitions(&forest, &open_docs, "Assets:Cash".to_string());
+        let locs = find_account_open_definitions(
+            &forest,
+            &open_docs,
+            &HashMap::new(),
+            "Assets:Cash".to_string(),
+        );
 
         assert_eq!(locs.len(), 1);
         let loc = &locs[0];
@@ -185,7 +194,12 @@ mod tests {
         open_docs.insert(path_a, make_doc(text_a));
         open_docs.insert(path_b, make_doc(text_b));
 
-        let locs = find_account_open_definitions(&forest, &open_docs, "Assets:Cash".to_string());
+        let locs = find_account_open_definitions(
+            &forest,
+            &open_docs,
+            &HashMap::new(),
+            "Assets:Cash".to_string(),
+        );
 
         assert_eq!(locs.len(), 2);
     }
@@ -202,9 +216,32 @@ mod tests {
         let mut open_docs = HashMap::new();
         open_docs.insert(path, make_doc(text));
 
-        let locs =
-            find_account_open_definitions(&forest, &open_docs, "Liabilities:Card".to_string());
+        let locs = find_account_open_definitions(
+            &forest,
+            &open_docs,
+            &HashMap::new(),
+            "Liabilities:Card".to_string(),
+        );
 
         assert!(locs.is_empty());
+    }
+
+    #[test]
+    fn test_find_account_open_definitions_uses_cached_forest_content() {
+        let text = "2024-01-01 open Assets:Encrypted\n";
+        let path = std::env::temp_dir().join("definition_test.beancount.gpg");
+        let mut forest = HashMap::new();
+        forest.insert(path.clone(), Arc::new(make_tree(text)));
+        let mut forest_content = HashMap::new();
+        forest_content.insert(path, Arc::new(Rope::from_str(text)));
+
+        let locs = find_account_open_definitions(
+            &forest,
+            &HashMap::new(),
+            &forest_content,
+            "Assets:Encrypted".to_string(),
+        );
+
+        assert_eq!(locs.len(), 1);
     }
 }
