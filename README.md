@@ -230,6 +230,32 @@ The language server accepts configuration via LSP initialization options:
 
 **Note**: All configuration is optional. The language server will auto-detect the best checker method (PyO3 → System Python → Bean-check).
 
+### OpenPGP-encrypted journals
+
+The server can read `.bean.gpg` and `.beancount.gpg` journals, plus ASCII-armored
+`.bean.asc` and `.beancount.asc` journals. Source is decrypted by `gpg` directly
+into memory; the server does not create a plaintext mirror or temporary file.
+Editor buffer text remains the source of truth while a document is open.
+
+Set `journal_file` to the encrypted root exactly as you would for a plaintext
+journal:
+
+```json
+{
+  "journal_file": "ledger/main.beancount.gpg",
+  "bean_check": {
+    "method": "system"
+  }
+}
+```
+
+The `system` and `python-system` checkers run from the journal directory so
+relative encrypted `include` directives resolve correctly. GPG must be available
+on `PATH`, and non-interactive decryption must already work through `gpg-agent`.
+If the key is locked, unlock it before starting diagnostics. The embedded Python
+checker depends on Beancount's in-process encrypted-file behavior; use `system`
+for encrypted journals with relative includes.
+
 ### Configuration Options
 
 | Option         | Type   | Description                                                                                                                                                                                   | Default |

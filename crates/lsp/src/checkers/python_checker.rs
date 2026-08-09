@@ -68,7 +68,7 @@ impl SystemPythonChecker {
             errors.reserve(errors_json.len());
             for err in errors_json {
                 let line_number = err.line.unwrap_or(0);
-                let file_path = if line_number == 0 {
+                let file_path = if line_number == 0 || err.file.as_deref() == Some("<string>") {
                     root_journal_file.to_path_buf()
                 } else if let Some(file) = err.file {
                     match PathBuf::from(&file).canonicalize() {
@@ -89,7 +89,7 @@ impl SystemPythonChecker {
             flagged_entries.reserve(flagged_json.len());
             for entry in flagged_json {
                 let line_number = entry.line.unwrap_or(0);
-                let file_path = if line_number == 0 {
+                let file_path = if line_number == 0 || entry.file.as_deref() == Some("<string>") {
                     root_journal_file.to_path_buf()
                 } else if let Some(file) = entry.file {
                     match PathBuf::from(&file).canonicalize() {
@@ -115,26 +115,40 @@ impl SystemPythonChecker {
 
 impl BeancountChecker for SystemPythonChecker {
     fn check(&self, journal_file: &Path) -> Result<BeancountCheckResult> {
+        let root_journal_file = journal_file.canonicalize().unwrap_or_else(|_| {
+            if journal_file.is_absolute() {
+                journal_file.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(journal_file))
+                    .unwrap_or_else(|_| journal_file.to_path_buf())
+            }
+        });
         debug!(
             "SystemPythonChecker: executing python -c for {}",
-            journal_file.display()
+            root_journal_file.display()
         );
         debug!(
             "SystemPythonChecker: using python {}",
             self.python_cmd.display()
         );
 
-        let output = Command::new(&self.python_cmd)
-            .arg("-c")
-            .arg(self.python_code_for_script())
-            .arg(journal_file)
-            .output()
-            .context(format!(
-                "Failed to execute python checker: {}",
-                self.python_cmd.display()
-            ))?;
+        let mut command = Command::new(&self.python_cmd);
+        command.arg("-c").arg(self.python_code_for_script());
+        if let (Some(parent), Some(file_name)) =
+            (root_journal_file.parent(), root_journal_file.file_name())
+        {
+            command.current_dir(parent).arg(file_name);
+        } else {
+            command.arg(&root_journal_file);
+        }
 
-        let (errors, flagged_entries) = self.parse_stdout(&output.stdout, journal_file);
+        let output = command.output().context(format!(
+            "Failed to execute python checker: {}",
+            self.python_cmd.display()
+        ))?;
+
+        let (errors, flagged_entries) = self.parse_stdout(&output.stdout, &root_journal_file);
 
         Ok(BeancountCheckResult {
             errors,
