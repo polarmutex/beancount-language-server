@@ -4,12 +4,12 @@ use crate::server::LspServerState;
 use crate::server::LspServerStateSnapshot;
 use crate::server::ProgressMsg;
 use crate::server::Task;
+use crate::source;
 use crate::to_json;
 use anyhow::{Context, Result, anyhow};
 use crossbeam_channel::Sender;
 use lsp_types::Notification;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tracing::{debug, warn};
@@ -32,6 +32,10 @@ fn process_includes(
         Some(tree) => tree.clone(),
         None => return Ok(()),
     };
+    let text = match state.doc_store.text_for_path(file_path) {
+        Some(text) => text,
+        None => source::read(file_path)?,
+    };
 
     // Pre-populate already_seen with files already in the forest to skip them.
     let known: Vec<PathBuf> = state.doc_store.forest_keys().cloned().collect();
@@ -39,6 +43,7 @@ fn process_includes(
 
     forest::parse_reachable_includes(
         &tree,
+        &text,
         file_path,
         processed,
         &mut |path, new_tree, content| {
@@ -163,11 +168,16 @@ pub(crate) fn did_change_watched_files(
                 state.doc_store.invalidate_external(&uri);
                 tracing::debug!("Cleared stale cache for {:?}", uri);
 
-                if let Ok(content) = fs::read_to_string(&uri)
-                    && let Some(tree) = crate::treesitter_utils::parse_beancount(&content)
-                {
-                    state.doc_store.insert_parsed(uri.clone(), tree, &content);
-                    tracing::debug!("Re-parsed external file: {:?}", uri);
+                match source::read(&uri) {
+                    Ok(content) => {
+                        if let Some(tree) = crate::treesitter_utils::parse_beancount(&content) {
+                            state.doc_store.insert_parsed(uri.clone(), tree, &content);
+                            tracing::debug!("Re-parsed external file: {:?}", uri);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!("Failed to read changed file {:?}: {}", uri, error);
+                    }
                 }
             }
             lsp_types::FileChangeType::Deleted => {
@@ -264,8 +274,13 @@ fn handle_diagnostics(
 
     let root_journal_path = match snapshot.config.journal_root.clone() {
         Some(path) => {
-            tracing::debug!("Using configured journal_root: {}", path.display());
-            path
+            let resolved = if path.is_relative() {
+                snapshot.config.root_dir.join(path)
+            } else {
+                path
+            };
+            tracing::debug!("Using configured journal_root: {}", resolved.display());
+            resolved
         }
         None => {
             // Fallback to using the current file as the root journal

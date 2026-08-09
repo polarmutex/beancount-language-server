@@ -329,6 +329,15 @@ impl DocumentStore {
         self.forest.get(uri)
     }
 
+    /// Return the in-memory plaintext for a document, preferring the active
+    /// editor buffer over content cached from the parsed forest.
+    pub(crate) fn text_for_path(&self, uri: &PathBuf) -> Option<String> {
+        self.open_docs
+            .get(uri)
+            .map(Document::text_string)
+            .or_else(|| self.forest_content.get(uri).map(|rope| rope.to_string()))
+    }
+
     pub(crate) fn has_open_doc(&self, uri: &PathBuf) -> bool {
         self.open_docs.contains_key(uri)
     }
@@ -389,6 +398,18 @@ mod tests {
         assert!(store.get_tree(&uri).is_some());
         assert!(store.beancount_data.contains_key(&uri));
         assert_eq!(store.open_docs.get(&uri).unwrap().version, 1);
+    }
+
+    #[test]
+    fn test_text_for_path_prefers_open_editor_buffer() {
+        let mut store = DocumentStore::new();
+        let uri = PathBuf::from("/test/file.beancount.gpg");
+        store.insert_parsed(uri.clone(), parse(CONTENT), CONTENT);
+        let edited = "2024-01-01 open Assets:Edited USD\n";
+
+        store.open(uri.clone(), edited, 1);
+
+        assert_eq!(store.text_for_path(&uri).as_deref(), Some(edited));
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub mod providers;
 mod query_cache;
 mod query_utils;
 pub mod server;
+mod source;
 //pub mod session;
 mod treesitter_utils;
 
