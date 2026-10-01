@@ -84,7 +84,7 @@ jobs:
                 persist-credentials: false
 
             - name: Set up Rust
-              uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+              uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v1
               with:
                 cache: false
 
