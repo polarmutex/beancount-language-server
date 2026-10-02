@@ -182,7 +182,11 @@
         "id": "beancount",
         "extensions": [
           ".beancount",
-          ".bean"
+          ".bean",
+          ".beancount.gpg",
+          ".bean.gpg",
+          ".beancount.asc",
+          ".bean.asc"
         ],
         "configuration": "./language-configuration.json"
       }

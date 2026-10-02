@@ -17,6 +17,7 @@ use crate::query_cache;
 use crate::server::LspServerStateSnapshot;
 use crate::server::ProgressMsg;
 use crate::server::Task;
+use crate::source;
 use crossbeam_channel::Sender;
 use glob::glob;
 use ropey::Rope;
@@ -49,7 +50,7 @@ fn read_file_cached(path: &PathBuf, cache: &mut FileCacheMap) -> anyhow::Result<
     }
 
     tracing::debug!("Reading file from disk: {:?}", path);
-    let content = fs::read_to_string(path)?;
+    let content = source::read(path)?;
     cache.insert(
         path.clone(),
         FileCache {
@@ -133,22 +134,22 @@ pub(crate) fn extract_include_paths(
 /// with paths to skip (e.g. already loaded in DocumentStore).
 pub(crate) fn parse_reachable_includes(
     tree: &tree_sitter::Tree,
+    text: &str,
     file: &path::Path,
     already_seen: &mut HashSet<PathBuf>,
     on_parsed: &mut impl FnMut(PathBuf, tree_sitter::Tree, &str) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    let text = fs::read_to_string(file)?;
     let include_paths = extract_include_paths(tree, text.as_bytes(), file);
     for path in include_paths {
         if already_seen.contains(&path) {
             continue;
         }
         already_seen.insert(path.clone());
-        match fs::read_to_string(&path) {
+        match source::read(&path) {
             Ok(content) => {
                 if let Some(new_tree) = crate::treesitter_utils::parse_beancount(&content) {
                     on_parsed(path.clone(), new_tree.clone(), &content)?;
-                    parse_reachable_includes(&new_tree, &path, already_seen, on_parsed)?;
+                    parse_reachable_includes(&new_tree, &content, &path, already_seen, on_parsed)?;
                 }
             }
             Err(e) => {

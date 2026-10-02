@@ -114,7 +114,12 @@ fn setup_logging(log_file: Option<&str>, log_level_arg: Option<&str>) {
         None => BoxMakeWriter::new(io::stderr),
     };
 
-    let filter = EnvFilter::default().add_directive(Directive::from(level));
+    // lsp-server logs complete JSON-RPC frames at debug/trace, including open
+    // document text. Keep protocol traffic out of logs so encrypted journals
+    // are not exposed after the editor has decrypted their buffers.
+    let filter = EnvFilter::default()
+        .add_directive(Directive::from(level))
+        .add_directive("lsp_server=info".parse().expect("valid log directive"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(writer)

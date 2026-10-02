@@ -23,10 +23,13 @@ pub(crate) fn workspace_symbols(
     for (path, tree) in snapshot.forest.iter() {
         let content = match snapshot.open_docs.get(path) {
             Some(doc) => &doc.content,
-            None => {
-                tracing::warn!("Document not found in open_docs: {:?}", path);
-                continue;
-            }
+            None => match snapshot.forest_content.get(path) {
+                Some(content) => content,
+                None => {
+                    tracing::warn!("No content available for: {:?}", path);
+                    continue;
+                }
+            },
         };
 
         let url = match Url::from_file_path(path) {
@@ -475,6 +478,30 @@ mod tests {
             symbols[0].base_symbol_information.name,
             "Assets:Bank:Checking"
         );
+    }
+
+    #[test]
+    fn test_search_accounts_uses_cached_forest_content() {
+        let content = "2024-01-01 open Assets:Encrypted USD\n";
+        let mut state = TestState::new(content).unwrap();
+        let path = state.snapshot.forest.keys().next().unwrap().clone();
+        let mut forest_content = HashMap::new();
+        forest_content.insert(path, Arc::new(Rope::from_str(content)));
+        state.snapshot.open_docs = Arc::new(HashMap::new());
+        state.snapshot.forest_content = Arc::new(forest_content);
+
+        let params = WorkspaceSymbolParams {
+            query: "encrypted".to_string(),
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result = workspace_symbols(state.snapshot, params).unwrap();
+        let WorkspaceSymbolResponse::SymbolInformationList(symbols) = result.unwrap() else {
+            panic!("Expected flat response");
+        };
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].base_symbol_information.name, "Assets:Encrypted");
     }
 
     #[test]

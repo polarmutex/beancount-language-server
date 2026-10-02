@@ -97,7 +97,7 @@ impl SystemCallChecker {
             }
         };
 
-        let file_path = if line_number == 0 {
+        let file_path = if line_number == 0 || file_part == "<string>" {
             root_journal_file.to_path_buf()
         } else {
             match PathBuf::from(file_part).canonicalize() {
@@ -125,22 +125,37 @@ impl SystemCallChecker {
 
 impl BeancountChecker for SystemCallChecker {
     fn check(&self, journal_file: &Path) -> Result<BeancountCheckResult> {
+        let root_journal_file = journal_file.canonicalize().unwrap_or_else(|_| {
+            if journal_file.is_absolute() {
+                journal_file.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(journal_file))
+                    .unwrap_or_else(|_| journal_file.to_path_buf())
+            }
+        });
         debug!(
             "SystemCallChecker: executing bean-check on {}",
-            journal_file.display()
+            root_journal_file.display()
         );
         debug!(
             "SystemCallChecker: using command {}",
             self.bean_check_cmd.display()
         );
 
-        let output = Command::new(&self.bean_check_cmd)
-            .arg(journal_file)
-            .output()
-            .context(format!(
-                "Failed to execute bean-check command: {}",
-                self.bean_check_cmd.display()
-            ))?;
+        let mut command = Command::new(&self.bean_check_cmd);
+        if let (Some(parent), Some(file_name)) =
+            (root_journal_file.parent(), root_journal_file.file_name())
+        {
+            command.current_dir(parent).arg(file_name);
+        } else {
+            command.arg(&root_journal_file);
+        }
+
+        let output = command.output().context(format!(
+            "Failed to execute bean-check command: {}",
+            self.bean_check_cmd.display()
+        ))?;
 
         debug!(
             "SystemCallChecker: command executed, status: {}",
@@ -150,7 +165,7 @@ impl BeancountChecker for SystemCallChecker {
 
         let errors = if !output.status.success() {
             debug!("SystemCallChecker: parsing error output");
-            self.parse_stderr_output(&output.stderr, journal_file)
+            self.parse_stderr_output(&output.stderr, &root_journal_file)
         } else {
             debug!("SystemCallChecker: no errors found");
             Vec::new()
@@ -299,6 +314,38 @@ mod tests {
         assert_eq!(errors[0].line, 0);
         assert_eq!(errors[0].file, root_file);
         assert_eq!(errors[0].message, "Missing Commodity directive for 'USD'");
+    }
+
+    #[test]
+    fn test_parse_stderr_output_maps_encrypted_root_string_source() {
+        let checker = SystemCallChecker::new(PathBuf::from("bean-check"));
+        let stderr = b"<string>:7: Invalid token";
+        let root_file = PathBuf::from("/root/main.beancount.gpg");
+
+        let errors = checker.parse_stderr_output(stderr, &root_file);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].line, 7);
+        assert_eq!(errors[0].file, root_file);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_system_call_checker_runs_from_journal_directory_with_basename() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let journal = temp_dir.path().join("main.beancount.gpg");
+        fs::write(&journal, "ciphertext").unwrap();
+        fs::write(temp_dir.path().join("working-directory-marker"), "ok").unwrap();
+        let command = temp_dir.path().join("mock-bean-check");
+        let script = "#!/bin/sh\nif [ -f working-directory-marker ] && [ \"$1\" = \"main.beancount.gpg\" ]; then\n  exit 0\nfi\necho '<string>:1: wrong working directory or argument' >&2\nexit 1\n";
+        fs::write(&command, script).unwrap();
+        let mut permissions = fs::metadata(&command).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&command, permissions).unwrap();
+
+        let result = SystemCallChecker::new(command).check(&journal).unwrap();
+        assert!(result.errors.is_empty());
     }
 
     #[cfg(windows)]
