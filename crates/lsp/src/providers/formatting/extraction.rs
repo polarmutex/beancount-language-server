@@ -167,7 +167,16 @@ pub(super) fn calculate_format_config(
     // Calculate maximum widths across all lines (bean-format behavior)
     let max_prefix_width = formateable_lines
         .iter()
-        .map(|line| line.prefix.trim_end().len())
+        .map(|line| {
+            let prefix = line.prefix.trim_end();
+            match user_config.indent_width {
+                // Indented lines get the new indent before the padding is applied
+                Some(indent_width) if prefix.starts_with(char::is_whitespace) => {
+                    indent_width + prefix.trim_start().len()
+                }
+                _ => prefix.len(),
+            }
+        })
         .max()
         .unwrap_or(0);
 
