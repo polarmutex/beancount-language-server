@@ -1317,6 +1317,45 @@ mod tests {
     }
 
     #[test]
+    fn test_indent_width_keeps_numbers_in_one_column() {
+        let content = r#"2024-01-01 *
+  Assets:Bank:Checking 10 USD
+  Assets:Cash 20 USD
+"#;
+
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: None,
+            account_amount_spacing: 2,
+            number_currency_spacing: 1,
+            indent_width: Some(4),
+        };
+
+        let state = TestState::new_with_config(content, format_config.clone()).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        let postings: Vec<&str> = formatted.lines().skip(1).collect();
+        assert_eq!(
+            postings,
+            vec![
+                "    Assets:Bank:Checking  10 USD",
+                "    Assets:Cash           20 USD"
+            ],
+            "got\n{formatted}"
+        );
+
+        let state2 = TestState::new_with_config(&formatted, format_config).unwrap();
+        let edits2 = state2.format().unwrap().unwrap();
+        assert_eq!(
+            edits2.len(),
+            0,
+            "Second format should produce no edits (idempotent): got\n{formatted}"
+        );
+    }
+
+    #[test]
     fn test_indent_normalization_preserves_top_level() {
         let content = r#"2023-01-01 * "Test transaction"
     Assets:Cash 100.00 USD
