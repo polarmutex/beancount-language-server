@@ -1,5 +1,6 @@
 use super::extraction::{FormatConfig, FormatableLine};
 use anyhow::Result;
+use unicode_width::UnicodeWidthStr;
 
 /// Generates text edits for currency column mode (bean-format -c option)
 pub(super) fn generate_currency_column_edits(
@@ -50,8 +51,9 @@ pub(super) fn generate_currency_column_edits(
         };
 
         // Calculate spacing needed to align currency at the specified column
-        // Bean-format logic: num_of_spaces = currency_column - len(prefix) - len(number) - 3
-        let prefix_len = indent_str.len() + account_name.len();
+        // Bean-format logic: num_of_spaces = currency_column - len(prefix) - len(number) - 3,
+        // with the prefix measured in display columns instead of code points
+        let prefix_len = indent_str.len() + account_name.width();
         let number_len = line.number.len();
         let spaces_needed = if currency_col >= prefix_len + number_len + 3 {
             currency_col - prefix_len - number_len - 3
@@ -151,19 +153,21 @@ pub(super) fn generate_template_edits(
 
         // Template: "{indent}{account_name:<adjusted_width}  {:>num_width}{custom_rest}"
         // Adjust the prefix width to account for the custom indentation
+        let account_width = account_name.width();
         let adjusted_prefix_width = if config.final_prefix_width > indent_str.len() {
             config.final_prefix_width - indent_str.len()
         } else {
-            account_name.len() // fallback to actual account name length
+            account_width // fallback to actual account name width
         };
 
+        // `{:<width$}` pads by char count, not display width
         let formatted_line = format!(
-            "{}{:<width$}  {:>num_width$}{}",
+            "{}{}{}  {:>num_width$}{}",
             indent_str,
             account_name,
+            " ".repeat(adjusted_prefix_width.saturating_sub(account_width)),
             line.number,
             formatted_rest,
-            width = adjusted_prefix_width,
             num_width = config.final_num_width
         );
 
