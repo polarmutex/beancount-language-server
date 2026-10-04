@@ -39,5 +39,9 @@ updates:
       interval: monthly
     cooldown:
       default-days: 7
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action/*"
     labels:
       - dependabot
