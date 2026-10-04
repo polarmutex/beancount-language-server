@@ -135,6 +135,7 @@ pub(crate) fn format_query() -> &'static tree_sitter::Query {
 )
 ( open
     (account) @prefix
+    .
     (currency) @number
 )
 "#;
