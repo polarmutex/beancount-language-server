@@ -491,31 +491,17 @@ fn calculate_balancing_hint(postings: &[Posting]) -> Option<InlayHint> {
         .collect();
     amounts.sort(); // For consistent output
 
-    // Find the column where amounts start in other postings for alignment
-    let amount_column = find_amount_column(postings);
+    // Find the column where numbers end in other postings
+    let number_end_column = find_number_end_column(postings);
 
     // Find where the account name ends on this posting
     let account_end_column = find_account_end_column(&posting_without_amount.node);
 
-    // Calculate how many spaces we need to align with other amounts
-    let base_spaces = if amount_column > account_end_column {
-        amount_column - account_end_column
-    } else {
-        2 // At least 2 spaces
-    };
-
-    // Check if the first (or only) amount is negative
-    let first_amount_value = totals.values().next()?;
-    let is_negative = (-first_amount_value).is_sign_negative();
-
-    // Adjust spacing: if positive add 1 space, if negative subtract 1 space
-    // (negative sign takes up a character)
-    // But always ensure at least 2 spaces minimum
-    let spaces_needed = if is_negative {
-        base_spaces.saturating_sub(1).max(2)
-    } else {
-        (base_spaces + 1).max(2)
-    };
+    // Pad so that the number in the hint ends in the same column, with at least 2 spaces
+    let number_len = amounts[0].find(' ').unwrap_or(amounts[0].len());
+    let spaces_needed = number_end_column
+        .saturating_sub(account_end_column + number_len)
+        .max(2);
 
     let label = if amounts.len() == 1 {
         format!("{:width$}{}", "", amounts[0], width = spaces_needed)
@@ -542,23 +528,30 @@ fn calculate_balancing_hint(postings: &[Posting]) -> Option<InlayHint> {
     })
 }
 
-/// Find the column where amounts typically appear in postings for alignment
-fn find_amount_column(postings: &[Posting]) -> usize {
-    // Look at postings with amounts to find where the amount starts
-    for posting in postings {
-        if posting.amount.is_some() {
-            // Find the amount node within this posting
+/// Find the column where the number ends in the first posting that has an amount
+fn find_number_end_column(postings: &[Posting]) -> usize {
+    postings
+        .iter()
+        .filter(|posting| posting.amount.is_some())
+        .find_map(|posting| {
             let mut cursor = posting.node.walk();
-            for child in posting.node.children(&mut cursor) {
-                if child.kind() == "incomplete_amount" || child.kind() == "amount" {
-                    return child.start_position().column;
-                }
-            }
-        }
-    }
-
-    // Default to column 52 if we can't find any amounts (common beancount alignment)
-    52
+            let amount = posting
+                .node
+                .children(&mut cursor)
+                .find(|child| matches!(child.kind(), "incomplete_amount" | "amount"))?;
+            let mut amount_cursor = amount.walk();
+            amount
+                .children(&mut amount_cursor)
+                .find(|child| {
+                    matches!(
+                        child.kind(),
+                        "number" | "unary_number_expr" | "binary_number_expr"
+                    )
+                })
+                .map(|number| number.end_position().column)
+        })
+        // Default to column 52 if we can't find any amounts (common beancount alignment)
+        .unwrap_or(52)
 }
 
 /// Find where the account name ends in a posting
@@ -1047,6 +1040,44 @@ mod tests {
         } else {
             panic!("No transaction found");
         }
+    }
+
+    #[test]
+    fn test_balancing_hint_number_ends_in_number_column() {
+        // Returns the column where the number of the balancing hint ends
+        let hint_number_end = |content: &str, number: &str| {
+            let rope_content = ropey::Rope::from_str(content);
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(&tree_sitter_beancount::language())
+                .unwrap();
+            let tree = parser.parse(content, None).unwrap();
+            let txn_query =
+                tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY)
+                    .unwrap();
+            let mut cursor = tree_sitter::QueryCursor::new();
+            let mut matches = cursor.matches(&txn_query, tree.root_node(), content.as_bytes());
+            let txn_node = matches.next().expect("No transaction found").captures[0].node;
+            let hints = process_transaction(&txn_node, &rope_content).unwrap();
+            assert_eq!(hints.len(), 1, "{hints:?}");
+            let label = serde_json::to_value(&hints[0].label).unwrap();
+            let number_start = label.as_str().unwrap().find(number).unwrap();
+            hints[0].position.character as usize + number_start + number.len()
+        };
+
+        // The numbers of the other postings end in column 34
+        let content = r#"2024-01-15 * "Grocery"
+  Assets:Bank:Checking      -16.89 EUR
+  Expenses:Food:Grocery
+  Expenses:Food:Beverages     8.00 EUR
+"#;
+        assert_eq!(hint_number_end(content, "8.89"), 34);
+
+        let content = r#"2024-01-15 * "Salary"
+  Income:Salary               8.00 EUR
+  Assets:Bank:Checking
+"#;
+        assert_eq!(hint_number_end(content, "-8.00"), 34);
     }
 
     #[test]
