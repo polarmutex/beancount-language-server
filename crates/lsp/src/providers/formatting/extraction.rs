@@ -69,6 +69,7 @@ pub(super) fn extract_formateable_lines(
     let mut matches = query_cursor.matches(query, tree.root_node(), RopeProvider(rope_slice));
 
     let mut formateable_lines = Vec::new();
+    let mut seen_lines = std::collections::HashSet::new();
 
     while let Some(matched) = matches.next() {
         let mut prefix_node: Option<tree_sitter::Node> = None;
@@ -86,6 +87,8 @@ pub(super) fn extract_formateable_lines(
 
         if let (Some(prefix), Some(number)) = (prefix_node, number_node)
             && let Some(line) = extract_line_components(doc, prefix, number)
+            // A balance with a tolerance matches once per number
+            && seen_lines.insert(line.line_num)
         {
             formateable_lines.push(line);
         }
@@ -158,6 +161,33 @@ fn extract_line_components(
         .content
         .byte_to_char(number_end_byte)
         .min(doc.content.len_chars());
+
+    // Parentheses around the whole number are outside its node
+    let gap = doc
+        .content
+        .slice(prefix_end_char.min(number_start_char)..number_start_char)
+        .to_string();
+    let gap = gap.trim_start();
+    if !gap.chars().all(|c| c == '(' || c.is_whitespace()) {
+        // Unknown text between the prefix and the number: leave the line alone
+        return None;
+    }
+    let number_start_char = number_start_char - gap.chars().count();
+    let mut open_parens = gap.matches('(').count();
+    let mut number_end_char = number_end_char;
+    let mut next_char = number_end_char;
+    while open_parens > 0 && next_char < line_end_char {
+        match doc.content.char(next_char) {
+            ')' => {
+                open_parens -= 1;
+                number_end_char = next_char + 1;
+            }
+            ' ' | '\t' => {}
+            _ => break,
+        }
+        next_char += 1;
+    }
+
     let number_text = doc
         .content
         .slice(number_start_char..number_end_char)
