@@ -2,6 +2,7 @@ use crate::query_cache;
 use anyhow::Result;
 use tree_sitter::StreamingIterator;
 use tree_sitter_beancount::tree_sitter;
+use unicode_width::UnicodeWidthStr;
 
 /// Represents a formateable line extracted from a Beancount file
 /// Contains the components that bean-format uses for alignment
@@ -185,10 +186,11 @@ pub(super) fn calculate_format_config(
     formateable_lines: &[FormatableLine],
     user_config: &crate::config::FormattingConfig,
 ) -> FormatConfig {
-    // Calculate maximum widths across all lines (bean-format behavior)
+    // Maximum widths across all lines, as in bean-format, but the prefix is measured
+    // in display columns where bean-format counts code points
     let max_prefix_width = formateable_lines
         .iter()
-        .map(|line| line.prefix.trim_end().len())
+        .map(|line| line.prefix.trim_end().width())
         .max()
         .unwrap_or(0);
 

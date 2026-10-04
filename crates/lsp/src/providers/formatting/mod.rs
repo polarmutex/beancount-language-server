@@ -1674,6 +1674,117 @@ mod tests {
     }
 
     #[test]
+    fn test_alignment_uses_display_width() {
+        // Regression test for issue #918
+        use unicode_width::UnicodeWidthStr;
+
+        let content = r#"2024-01-01 *
+  Assets:Test:一二三銀行-A 10 JPY
+  Assets:Test:一二银行-B 20 CNY
+  Assets:Test:은행 30 WON
+  Assets:Test:Manutenção 40 BRL
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        let number_columns: Vec<usize> = formatted
+            .lines()
+            .skip(1)
+            .map(|line| {
+                let number_start = line.find(|c: char| c.is_ascii_digit()).unwrap();
+                line[..number_start].width()
+            })
+            .collect();
+
+        // Widest prefix is 26 columns (indent included), then a 2-space separator
+        assert_eq!(
+            number_columns,
+            vec![28; 4],
+            "Numbers must start in the same display column: got\n{formatted}"
+        );
+
+        let state2 = TestState::new(&formatted).unwrap();
+        let edits2 = state2.format().unwrap().unwrap();
+        assert_eq!(
+            edits2.len(),
+            0,
+            "Second format should produce no edits (idempotent): got\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn test_prefix_width_smaller_than_indent() {
+        let content = r#"2024-01-01 *
+  Assets:Test:一二三銀行-A     10 JPY
+  Assets:Cash 20 USD
+"#;
+
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: Some(2),
+            num_width: None,
+            currency_column: None,
+            account_amount_spacing: 2,
+            number_currency_spacing: 1,
+            indent_width: Some(4),
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        // No padding after the account when the prefix width does not exceed the indent
+        let postings: Vec<&str> = formatted.lines().skip(1).collect();
+        assert_eq!(
+            postings,
+            vec![
+                "    Assets:Test:一二三銀行-A  10 JPY",
+                "    Assets:Cash  20 USD"
+            ],
+            "got\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn test_currency_column_uses_display_width() {
+        use unicode_width::UnicodeWidthStr;
+
+        let content = r#"2024-01-01 *
+  Assets:Test:一二三銀行-A 10 JPY
+  Assets:Cash 20 USD
+"#;
+
+        let format_config = crate::config::FormattingConfig {
+            prefix_width: None,
+            num_width: None,
+            currency_column: Some(50),
+            account_amount_spacing: 2,
+            number_currency_spacing: 1,
+            indent_width: None,
+        };
+
+        let state = TestState::new_with_config(content, format_config).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        let currency_columns: Vec<usize> = formatted
+            .lines()
+            .skip(1)
+            .map(|line| {
+                let currency_start = line.rfind(' ').unwrap() + 1;
+                line[..currency_start].width()
+            })
+            .collect();
+
+        assert_eq!(
+            currency_columns,
+            vec![50; 2],
+            "Currencies must start in display column 50: got\n{formatted}"
+        );
+    }
+
+    #[test]
     fn test_formatting_with_calculations() {
         // Test formatting with calculations in amounts (issue #783 item 5)
         let content = r#"2023-01-01 * "Test calculations"
