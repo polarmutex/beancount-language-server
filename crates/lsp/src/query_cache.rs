@@ -72,13 +72,17 @@ pub(crate) fn option_query() -> &'static tree_sitter::Query {
 
 // ── references query ──────────────────────────────────────────────────────────
 
-static ACCOUNT_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
+static SYMBOL_QUERY: OnceLock<tree_sitter::Query> = OnceLock::new();
 
-/// All account nodes — used for cross-file reference and rename search.
-pub(crate) fn account_query() -> &'static tree_sitter::Query {
-    ACCOUNT_QUERY.get_or_init(|| {
-        tree_sitter::Query::new(&tree_sitter_beancount::language(), "(account) @account")
-            .expect("Failed to compile account query")
+/// All account, payee, tag and link nodes — used for reference, rename and
+/// document highlight search.
+pub(crate) fn symbol_query() -> &'static tree_sitter::Query {
+    SYMBOL_QUERY.get_or_init(|| {
+        tree_sitter::Query::new(
+            &tree_sitter_beancount::language(),
+            "[(account) (payee) (tag) (link)] @symbol",
+        )
+        .expect("Failed to compile symbol query")
     })
 }
 
@@ -154,7 +158,7 @@ mod tests {
         currency_query();
         note_query();
         option_query();
-        account_query();
+        symbol_query();
         include_query();
         format_query();
     }
@@ -163,7 +167,7 @@ mod tests {
     fn queries_are_singletons() {
         assert!(std::ptr::eq(unified_query(), unified_query()));
         assert!(std::ptr::eq(currency_query(), currency_query()));
-        assert!(std::ptr::eq(account_query(), account_query()));
+        assert!(std::ptr::eq(symbol_query(), symbol_query()));
         assert!(std::ptr::eq(include_query(), include_query()));
         assert!(std::ptr::eq(format_query(), format_query()));
     }

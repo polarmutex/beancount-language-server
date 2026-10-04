@@ -19,6 +19,7 @@ A [Language Server Protocol](https://microsoft.github.io/language-server-protoco
 | **Formatting**            | Document formatting compatible with `bean-format`, with support for prefix-width, num-width, and currency-column options | ✅     |
 | **Rename**                | Rename symbols across files                                                                                              | ✅     |
 | **References**            | Find all references to accounts, payees, etc.                                                                            | ✅     |
+| **Document Highlight**    | Highlight all uses of the account, payee, tag, or link under the cursor in the current file                              | ✅     |
 | **Semantic Highlighting** | Advanced syntax highlighting with semantic information                                                                   | ✅     |
 | **Inlay Hints**           | Show calculated balancing amounts and unbalanced transaction warnings                                                    | ✅     |
 
