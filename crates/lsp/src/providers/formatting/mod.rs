@@ -495,6 +495,27 @@ mod tests {
     }
 
     #[test]
+    fn test_edit_range_counts_utf16_code_units() {
+        let posting = "  Assets:Cash 10 USD ; 🍣";
+        let content = format!("2024-01-01 *\n{posting}\n  Assets:Bank:Checking -10 USD\n");
+
+        let state = TestState::new(&content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        let edit = edits
+            .iter()
+            .find(|edit| edit.range.start.line == 1)
+            .expect("the posting with the emoji should be reformatted");
+
+        assert_eq!(edit.range.start.character, 0);
+        assert_eq!(
+            edit.range.end.character as usize,
+            posting.encode_utf16().count(),
+            "The edit must cover the whole line in UTF-16 code units"
+        );
+    }
+
+    #[test]
     fn test_bean_format_prefix_width_override() {
         let content = r#"2023-01-01 * "Test transaction"
   Assets:Cash     100.00 USD
