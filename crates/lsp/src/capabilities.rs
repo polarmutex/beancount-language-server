@@ -35,6 +35,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         definition_provider: Some(true.into()),
         hover_provider: Some(true.into()),
         references_provider: Some(true.into()),
+        document_highlight_provider: Some(true.into()),
         rename_provider: Some(
             RenameOptions {
                 prepare_provider: Some(false),
@@ -222,6 +223,19 @@ mod tests {
     }
 
     #[test]
+    fn test_document_highlight_capability() {
+        let caps = server_capabilities();
+
+        assert!(
+            matches!(
+                caps.document_highlight_provider,
+                Some(lsp_types::DocumentHighlightProvider::Bool(true))
+            ),
+            "document_highlight should be enabled"
+        );
+    }
+
+    #[test]
     fn test_rename_capability() {
         let caps = server_capabilities();
 
@@ -298,6 +312,10 @@ mod tests {
         assert!(
             caps.references_provider.is_some(),
             "references is implemented"
+        );
+        assert!(
+            caps.document_highlight_provider.is_some(),
+            "document_highlight is implemented"
         );
         assert!(caps.rename_provider.is_some(), "rename is implemented");
         assert!(
@@ -423,6 +441,16 @@ mod tests {
                 lsp_types::ReferenceParams,
             ) -> anyhow::Result<Option<Vec<lsp_types::Location>>> =
                 providers::references::references;
+        }
+
+        // Document highlight capability -> providers::document_highlight::document_highlight
+        if caps.document_highlight_provider.is_some() {
+            let _handler: fn(
+                LspServerStateSnapshot,
+                lsp_types::DocumentHighlightParams,
+            )
+                -> anyhow::Result<Option<Vec<lsp_types::DocumentHighlight>>> =
+                providers::document_highlight::document_highlight;
         }
 
         // Definition capability -> providers::definition::definition
