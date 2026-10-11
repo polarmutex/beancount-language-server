@@ -104,8 +104,8 @@ impl DocumentStore {
         changes: &[lsp_types::TextDocumentContentChangeEvent],
         new_version: i32,
     ) -> Result<()> {
-        // Step 1 — calculate tree-sitter edit positions before mutating the rope.
-        let ts_edits = {
+        // Step 1 — check the document is open and the version advances.
+        {
             let doc = match self.open_docs.get(uri) {
                 Some(d) => d,
                 None => {
@@ -123,21 +123,20 @@ impl DocumentStore {
                 );
             }
             tracing::trace!("Document version: {} -> {}", current_version, new_version);
+        }
 
-            changes
-                .iter()
-                .map(|change| lsp_textdocchange_to_ts_inputedit(&doc.content, change))
-                .collect::<Result<Vec<_>, _>>()?
-            // doc borrow released
-        };
-
-        // Step 2 — apply rope edits and update the version.
+        // Step 2 — apply rope edits, recording the tree-sitter edit for each,
+        // and update the version.  A change's positions refer to the document
+        // as the changes before it in the same notification left it, so its
+        // edit is computed against the rope at that point, not on arrival.
+        let mut ts_edits = Vec::with_capacity(changes.len());
         {
             let doc = Arc::make_mut(&mut self.open_docs)
                 .get_mut(uri)
                 .expect("doc should exist after prior check");
 
             for change in changes {
+                ts_edits.push(lsp_textdocchange_to_ts_inputedit(&doc.content, change)?);
                 let (text, range) = match change {
                     lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(c) => {
                         (c.text.as_str(), c.range)
@@ -460,6 +459,42 @@ mod tests {
         let doc = store.open_docs.get(&uri).unwrap();
         assert_eq!(doc.text_string(), "world");
         assert_eq!(doc.version, 2);
+    }
+
+    #[test]
+    fn test_apply_change_batch_positions_follow_earlier_changes() {
+        let mut store = DocumentStore::new();
+        let uri = PathBuf::from("/test/file.beancount");
+        store.open(uri.clone(), CONTENT, 1);
+
+        #[allow(deprecated)]
+        let insert = |line, character, text: &str| {
+            lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+                lsp_types::TextDocumentContentChangePartial {
+                    range: lsp_types::Range {
+                        start: lsp_types::Position::new(line, character),
+                        end: lsp_types::Position::new(line, character),
+                    },
+                    range_length: None,
+                    text: text.to_string(),
+                },
+            )
+        };
+        // Emacs's eglot sends a whole run of typing as one notification.  The
+        // second change is on a line the first one created, two past the end
+        // of the document as it was before the notification.
+        let changes = [
+            insert(1, 0, "\n2024-01-02 * \"Shop\"\n"),
+            insert(3, 0, "  Assets:Checking  -5 USD"),
+        ];
+        store.apply_change(&uri, &changes, 2).unwrap();
+
+        let expected = format!("{CONTENT}\n2024-01-02 * \"Shop\"\n  Assets:Checking  -5 USD");
+        assert_eq!(store.open_docs.get(&uri).unwrap().text_string(), expected);
+        assert_eq!(
+            store.get_tree(&uri).unwrap().root_node().to_sexp(),
+            parse(&expected).root_node().to_sexp()
+        );
     }
 
     #[test]
