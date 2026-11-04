@@ -225,12 +225,23 @@ impl LspServerState {
         }
 
         tracing::debug!("Entering main event loop");
-        while let Some(event) = self.next_event(&receiver) {
+        self.event_loop(&receiver)
+    }
+
+    // Processes events until the client sends `exit` or the connection closes.
+    // Per the LSP spec, `exit` without a prior `shutdown` request is an error so
+    // that the process exits with code 1.
+    fn event_loop(&mut self, receiver: &Receiver<lsp_server::Message>) -> Result<()> {
+        while let Some(event) = self.next_event(receiver) {
             if let Event::Lsp(lsp_server::Message::Notification(notification)) = &event
                 && notification.method == lsp_types::ExitNotification::METHOD.as_str()
             {
-                tracing::info!("Received exit notification, shutting down");
-                return Ok(());
+                if self.shutdown_requested {
+                    tracing::info!("Received exit notification after shutdown, exiting");
+                    return Ok(());
+                }
+                tracing::warn!("Received exit notification without prior shutdown request");
+                anyhow::bail!("received exit notification without prior shutdown request");
             }
             self.handle_event(event)?;
         }
@@ -615,5 +626,70 @@ impl LspServerState {
         }
 
         checker
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lsp_types::Request;
+
+    fn shutdown_request() -> lsp_server::Message {
+        lsp_server::Request {
+            id: lsp_server::RequestId::from(1),
+            method: lsp_types::ShutdownRequest::METHOD.to_string(),
+            params: serde_json::Value::Null,
+        }
+        .into()
+    }
+
+    fn exit_notification() -> lsp_server::Message {
+        lsp_server::Notification {
+            method: lsp_types::ExitNotification::METHOD.to_string(),
+            params: serde_json::Value::Null,
+        }
+        .into()
+    }
+
+    #[test]
+    fn exit_after_shutdown_returns_ok() {
+        let (sender, outgoing) = crossbeam_channel::unbounded();
+        let mut state = LspServerState::new(sender, Config::new(PathBuf::from("/test")));
+
+        let (client, receiver) = crossbeam_channel::unbounded();
+        client.send(shutdown_request()).unwrap();
+        client.send(exit_notification()).unwrap();
+        drop(client);
+
+        state
+            .event_loop(&receiver)
+            .expect("exit after shutdown should exit cleanly");
+        assert!(state.shutdown_requested);
+
+        let response = match outgoing.recv().expect("shutdown response should be sent") {
+            lsp_server::Message::Response(response) => response,
+            other => panic!("expected response, got {other:?}"),
+        };
+        assert_eq!(response.id, lsp_server::RequestId::from(1));
+        assert!(response.error.is_none(), "shutdown should succeed");
+    }
+
+    #[test]
+    fn exit_without_shutdown_returns_err() {
+        let (sender, _outgoing) = crossbeam_channel::unbounded();
+        let mut state = LspServerState::new(sender, Config::new(PathBuf::from("/test")));
+
+        let (client, receiver) = crossbeam_channel::unbounded();
+        client.send(exit_notification()).unwrap();
+        drop(client);
+
+        let err = state
+            .event_loop(&receiver)
+            .expect_err("exit without shutdown should be an error");
+        assert!(!state.shutdown_requested);
+        assert!(
+            err.to_string().contains("without prior shutdown"),
+            "unexpected error: {err}"
+        );
     }
 }
