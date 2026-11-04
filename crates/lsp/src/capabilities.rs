@@ -1,11 +1,13 @@
 use crate::providers::semantic_tokens;
 use lsp_types::{
-    CompletionOptions, InlayHintOptions, RenameOptions, SemanticTokensOptions, ServerCapabilities,
-    TextDocumentSyncKind, TextDocumentSyncOptions, WorkDoneProgressOptions,
+    CompletionOptions, InlayHintOptions, PositionEncodingKind, RenameOptions, SemanticTokensOptions,
+    ServerCapabilities, TextDocumentSyncKind, TextDocumentSyncOptions, WorkDoneProgressOptions,
 };
 
 pub(crate) fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
+        // Positions are computed in UTF-16 code units (see treesitter_utils.rs).
+        position_encoding: Some(PositionEncodingKind::UTF16),
         text_document_sync: Some(
             TextDocumentSyncOptions {
                 open_close: Some(true),
@@ -77,6 +79,21 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn test_position_encoding_capability() {
+        let caps = server_capabilities();
+
+        assert_eq!(
+            caps.position_encoding,
+            Some(PositionEncodingKind::UTF16),
+            "position_encoding should be advertised as UTF-16"
+        );
+
+        // Verify the value sent to the client in the initialize result
+        let json = serde_json::to_value(caps).expect("capabilities should serialize");
+        assert_eq!(json["positionEncoding"], "utf-16");
+    }
 
     #[test]
     fn test_text_document_sync_capabilities() {
