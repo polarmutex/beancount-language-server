@@ -33,6 +33,7 @@ regex.workspace = true
 nucleo = "0.5"
 strum = "0.28.0"
 strum_macros = "0.28.0"
+unicode-width = "0.2"
 
 # Serialization and configuration
 serde.workspace = true
