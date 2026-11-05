@@ -125,8 +125,11 @@ pub(crate) fn inlay_hints(
             }
 
             // Process this transaction
+            // A transaction can start or end outside the range
             if let Some(txn_hints) = process_transaction(&txn_node, content) {
-                hints.extend(txn_hints);
+                hints.extend(txn_hints.into_iter().filter(|hint| {
+                    hint.position >= params.range.start && hint.position <= params.range.end
+                }));
             }
         }
     }
@@ -706,6 +709,72 @@ mod tests {
         } else {
             panic!("No transaction found");
         }
+    }
+
+    #[test]
+    fn test_hints_only_inside_requested_range() {
+        use std::str::FromStr;
+        use std::sync::Arc;
+
+        // The second transaction starts on the line where the first range ends
+        let content = r#"2024-01-15 * "First"
+  Assets:Cash    -1.00 USD
+  Expenses:Food
+2024-01-16 * "Second"
+  Assets:Cash    -2.00 USD
+  Expenses:Food
+"#;
+        let path = std::env::current_dir().unwrap().join("test.beancount");
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_beancount::language())
+            .unwrap();
+        let tree = parser.parse(content, None).unwrap();
+
+        let mut forest = HashMap::new();
+        forest.insert(path.clone(), Arc::new(tree));
+        let mut open_docs = HashMap::new();
+        open_docs.insert(
+            path.clone(),
+            crate::document::Document {
+                content: ropey::Rope::from_str(content),
+                version: 0,
+            },
+        );
+        let url = url::Url::from_file_path(&path).unwrap();
+        let uri = lsp_types::Uri::from_str(url.as_str()).unwrap();
+
+        let hint_lines = |start_line: u32, end_line: u32| -> Vec<u32> {
+            let snapshot = LspServerStateSnapshot {
+                beancount_data: Arc::new(HashMap::new()),
+                config: crate::config::Config::new(std::env::current_dir().unwrap()),
+                forest: Arc::new(forest.clone()),
+                forest_content: Arc::new(HashMap::new()),
+                open_docs: Arc::new(open_docs.clone()),
+                checker: None,
+            };
+            let params = InlayHintParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                range: lsp_types::Range::new(
+                    Position::new(start_line, 0),
+                    Position::new(end_line, 0),
+                ),
+                work_done_progress_params: lsp_types::WorkDoneProgressParams {
+                    work_done_token: None,
+                },
+            };
+            inlay_hints(snapshot, params)
+                .unwrap()
+                .unwrap_or_default()
+                .iter()
+                .map(|hint| hint.position.line)
+                .collect()
+        };
+
+        assert_eq!(hint_lines(0, 3), vec![2]);
+        assert_eq!(hint_lines(3, 6), vec![5]);
+        assert_eq!(hint_lines(0, 6), vec![2, 5]);
+        assert_eq!(hint_lines(6, 7), Vec::<u32>::new());
     }
 
     #[test]
