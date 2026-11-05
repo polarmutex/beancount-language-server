@@ -11,6 +11,7 @@ use crate::forest;
 use crate::progress::Progress;
 use crate::providers::completion;
 use crate::providers::definition;
+use crate::providers::document_highlight;
 use crate::providers::document_symbol;
 use crate::providers::folding_range;
 use crate::providers::formatting;
@@ -519,6 +520,8 @@ impl LspServerState {
             .expect("Failed to register Rename handler")
             .on::<lsp_types::ReferencesRequest>(references::references)
             .expect("Failed to register References handler")
+            .on::<lsp_types::DocumentHighlightRequest>(document_highlight::document_highlight)
+            .expect("Failed to register DocumentHighlight handler")
             .on::<lsp_types::DefinitionRequest>(definition::definition)
             .expect("Failed to register GotoDefinition handler")
             .on::<lsp_types::SemanticTokensRequest>(semantic_tokens::semantic_tokens_full)

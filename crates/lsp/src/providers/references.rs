@@ -139,6 +139,28 @@ pub(crate) fn rename(
     )))
 }
 
+/// Nodes of the given kind (`account`, `payee`, `tag` or `link`) in one tree whose text equals `text`.
+pub(crate) fn matching_nodes<'t>(
+    tree: &'t tree_sitter::Tree,
+    source: &[u8],
+    kind: &str,
+    text: &str,
+) -> Vec<tree_sitter::Node<'t>> {
+    let query = query_cache::symbol_query();
+    let mut query_cursor = tree_sitter::QueryCursor::new();
+    let mut matches = query_cursor.matches(query, tree.root_node(), source);
+    let mut nodes = Vec::new();
+    while let Some(m) = matches.next() {
+        for capture in m.captures {
+            let node = capture.node;
+            if node.kind() == kind && node.utf8_text(source).is_ok_and(|t| t == text) {
+                nodes.push(node);
+            }
+        }
+    }
+    nodes
+}
+
 /// Find all references to a given text in the project using tree-sitter queries.
 fn find_references(
     forest: &HashMap<PathBuf, Arc<tree_sitter::Tree>>,
@@ -146,11 +168,6 @@ fn find_references(
     forest_content: &HashMap<PathBuf, Arc<Rope>>,
     node_text: &str,
 ) -> Vec<lsp_types::Location> {
-    let query = query_cache::account_query();
-    let capture_account = query
-        .capture_index_for_name("account")
-        .expect("account should be captured");
-
     forest
         .iter()
         .flat_map(|(url, tree)| {
@@ -167,21 +184,10 @@ fn find_references(
                 return vec![];
             };
 
-            let source = text.as_bytes();
-
-            let mut query_cursor = tree_sitter::QueryCursor::new();
-            let mut matches = query_cursor.matches(query, tree.root_node(), source);
-            let mut results = Vec::new();
-            while let Some(m) = matches.next() {
-                if let Some(node) = m.nodes_for_capture_index(capture_account).next() {
-                    let m_text = node.utf8_text(source).expect("");
-                    if m_text == node_text {
-                        results.push((url.clone(), rope.clone(), node));
-                    }
-                }
-            }
-
-            results
+            matching_nodes(tree, text.as_bytes(), "account", node_text)
+                .into_iter()
+                .map(|node| (url.clone(), rope.clone(), node))
+                .collect()
         })
         .filter_map(|(url, rope, node): (PathBuf, Rope, tree_sitter::Node)| {
             let uri = lsp_types::Uri::from_file_path(&url).ok()?;
