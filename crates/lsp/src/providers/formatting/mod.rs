@@ -1912,4 +1912,72 @@ mod tests {
             "Second format should produce no edits (idempotent): got\n{formatted}"
         );
     }
+
+    fn format_idempotent(content: &str) -> String {
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        let state2 = TestState::new(&formatted).unwrap();
+        let edits2 = state2.format().unwrap().unwrap();
+        assert_eq!(
+            edits2.len(),
+            0,
+            "Second format should produce no edits (idempotent): got\n{formatted}"
+        );
+        formatted
+    }
+
+    #[test]
+    fn test_open_directive_multiple_currencies() {
+        // Regression test for issue #874
+        let content = r#"2020-01-01 open Expenses:Travel:Gear EUR,USD
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Equity:Opening-Balances
+"#;
+        let expected = r#"2020-01-01 open Expenses:Travel:Gear  EUR,USD
+2020-01-01 open Assets:Cash               USD
+2020-01-01 open Equity:Opening-Balances
+"#;
+        assert_eq!(format_idempotent(content), expected);
+    }
+
+    #[test]
+    fn test_open_directive_multiple_currencies_with_booking_method() {
+        let content = r#"2020-01-01 open Assets:Broker   EUR,USD,CHF   "FIFO"
+"#;
+        let expected = r#"2020-01-01 open Assets:Broker  EUR,USD,CHF "FIFO"
+"#;
+        assert_eq!(format_idempotent(content), expected);
+    }
+
+    #[test]
+    fn test_open_directive_currency_list_with_spaces() {
+        let content = r#"2020-01-01 open Assets:Broker   EUR, USD
+"#;
+        let expected = r#"2020-01-01 open Assets:Broker  EUR, USD
+"#;
+        assert_eq!(format_idempotent(content), expected);
+    }
+
+    #[test]
+    fn test_open_directive_multiple_currencies_multibyte_account() {
+        let content = r#"2020-01-01 open Expenses:Moradia:Manutenção   BRL,USD ; reforma
+"#;
+        let formatted = format_idempotent(content);
+        assert!(
+            formatted.starts_with("2020-01-01 open Expenses:Moradia:Manutenção  ")
+                && formatted.ends_with(" BRL,USD ; reforma\n"),
+            "Currency list and comment must be preserved: got\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn test_open_directive_trailing_comment_preserved() {
+        let content = r#"2020-01-01 open Assets:Cash   USD ; main wallet
+"#;
+        let expected = r#"2020-01-01 open Assets:Cash  USD ; main wallet
+"#;
+        assert_eq!(format_idempotent(content), expected);
+    }
 }

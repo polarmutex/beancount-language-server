@@ -93,6 +93,25 @@ pub(super) fn extract_formateable_lines(
     Ok(formateable_lines)
 }
 
+/// Returns the last currency of a comma-separated list starting at `node`
+/// (an `open` directive's `EUR,USD`), or `node` itself otherwise
+fn currency_list_end(node: tree_sitter::Node) -> tree_sitter::Node {
+    let mut last = node;
+    if node.kind() != "currency" {
+        return last;
+    }
+    let mut next = node.next_sibling();
+    while let Some(sibling) = next {
+        match sibling.kind() {
+            "currency" => last = sibling,
+            "," => {}
+            _ => break,
+        }
+        next = sibling.next_sibling();
+    }
+    last
+}
+
 /// Extracts the components (prefix, number, rest) from a single line
 fn extract_line_components(
     doc: &crate::document::Document,
@@ -127,7 +146,9 @@ fn extract_line_components(
 
     // Extract number text
     let number_start_byte = number_node.start_byte().min(doc.content.len_bytes());
-    let number_end_byte = number_node.end_byte().min(doc.content.len_bytes());
+    let number_end_byte = currency_list_end(number_node)
+        .end_byte()
+        .min(doc.content.len_bytes());
     let number_start_char = doc
         .content
         .byte_to_char(number_start_byte)
