@@ -275,13 +275,13 @@ fn extract_amount_from_node(
     content: &ropey::Rope,
 ) -> Option<Amount> {
     let mut cursor = amount_node.walk();
-    let mut number_str = String::new();
+    let mut value: Option<rust_decimal::Decimal> = None;
     let mut currency_str = String::new();
 
     for child in amount_node.children(&mut cursor) {
         match child.kind() {
             "number" | "unary_number_expr" | "binary_number_expr" => {
-                number_str = text_for_tree_sitter_node(content, &child);
+                value = evaluate_number_node(&child, content);
             }
             "currency" => {
                 currency_str = text_for_tree_sitter_node(content, &child);
@@ -290,27 +290,12 @@ fn extract_amount_from_node(
         }
     }
 
-    if !number_str.is_empty() && !currency_str.is_empty() {
-        // Strip comma thousands separators before parsing (beancount allows them)
-        let number_str = number_str.replace(',', "");
-        // Try to evaluate the expression if it's a calculation
-        let value = if number_str.contains('*')
-            || number_str.contains('+')
-            || (number_str.contains('-') && number_str.matches('-').count() > 1)
-        {
-            // For binary expressions, try to evaluate them
-            evaluate_expression(&number_str)
-                .or_else(|| rust_decimal::Decimal::from_str_exact(&number_str).ok())?
-        } else {
-            rust_decimal::Decimal::from_str_exact(&number_str).ok()?
-        };
-        Some(Amount {
+    value
+        .filter(|_| !currency_str.is_empty())
+        .map(|value| Amount {
             value,
             currency: currency_str,
         })
-    } else {
-        None
-    }
 }
 
 /// Extract price amount from a price_annotation node
@@ -370,13 +355,13 @@ fn extract_compound_amount(
     content: &ropey::Rope,
 ) -> Option<Amount> {
     let mut cursor = compound_amount_node.walk();
-    let mut number_str = String::new();
+    let mut value: Option<rust_decimal::Decimal> = None;
     let mut currency_str = String::new();
 
     for child in compound_amount_node.children(&mut cursor) {
         match child.kind() {
             "number" | "unary_number_expr" | "binary_number_expr" => {
-                number_str = text_for_tree_sitter_node(content, &child);
+                value = evaluate_number_node(&child, content);
             }
             "currency" => {
                 currency_str = text_for_tree_sitter_node(content, &child);
@@ -385,67 +370,66 @@ fn extract_compound_amount(
         }
     }
 
-    if !number_str.is_empty() && !currency_str.is_empty() {
-        // Strip comma thousands separators before parsing (beancount allows them)
-        let number_str = number_str.replace(',', "");
-        // Try to evaluate the expression if it's a calculation
-        let value = if number_str.contains('*')
-            || number_str.contains('+')
-            || number_str.contains('-') && number_str.matches('-').count() > 1
-        {
-            // For binary expressions, try to evaluate them
-            evaluate_expression(&number_str)
-                .or_else(|| rust_decimal::Decimal::from_str_exact(&number_str).ok())?
-        } else {
-            rust_decimal::Decimal::from_str_exact(&number_str).ok()?
-        };
-        Some(Amount {
+    value
+        .filter(|_| !currency_str.is_empty())
+        .map(|value| Amount {
             value,
             currency: currency_str,
         })
-    } else {
-        None
-    }
 }
 
-/// Simple expression evaluator for basic arithmetic
-fn evaluate_expression(expr: &str) -> Option<rust_decimal::Decimal> {
+/// Evaluates a number, unary_number_expr or binary_number_expr node
+fn evaluate_number_node(
+    node: &tree_sitter::Node,
+    content: &ropey::Rope,
+) -> Option<rust_decimal::Decimal> {
     use rust_decimal::Decimal;
 
-    let expr = expr.trim();
+    let is_number_node =
+        |kind: &str| matches!(kind, "number" | "unary_number_expr" | "binary_number_expr");
 
-    // Handle simple binary operations: a * b, a + b, a - b
-    if let Some(pos) = expr.rfind('*') {
-        let left = expr[..pos].trim();
-        let right = expr[pos + 1..].trim();
-        let left_val = Decimal::from_str_exact(left).ok()?;
-        let right_val = Decimal::from_str_exact(right).ok()?;
-        return Some(left_val * right_val);
-    }
-
-    if let Some(pos) = expr.rfind('+') {
-        let left = expr[..pos].trim();
-        let right = expr[pos + 1..].trim();
-        let left_val = Decimal::from_str_exact(left).ok()?;
-        let right_val = Decimal::from_str_exact(right).ok()?;
-        return Some(left_val + right_val);
-    }
-
-    // Handle subtraction (but not unary minus)
-    if let Some(pos) = expr.rfind('-')
-        && pos > 0
-    {
-        let left = expr[..pos].trim();
-        let right = expr[pos + 1..].trim();
-        if let (Ok(left_val), Ok(right_val)) = (
-            Decimal::from_str_exact(left),
-            Decimal::from_str_exact(right),
-        ) {
-            return Some(left_val - right_val);
+    match node.kind() {
+        "unary_number_expr" => {
+            let mut cursor = node.walk();
+            let mut negate = false;
+            let mut operand = None;
+            for child in node.children(&mut cursor) {
+                if child.kind() == "minus" {
+                    negate = true;
+                } else if is_number_node(child.kind()) {
+                    operand = evaluate_number_node(&child, content);
+                }
+            }
+            operand.map(|value| if negate { -value } else { value })
+        }
+        "binary_number_expr" => {
+            let mut cursor = node.walk();
+            let mut left = None;
+            let mut operator = None;
+            let mut right = None;
+            for child in node.children(&mut cursor) {
+                // Parentheses are children too
+                if matches!(child.kind(), "plus" | "minus" | "asterisk" | "slash") {
+                    operator = Some(child.kind());
+                } else if is_number_node(child.kind()) && operator.is_none() {
+                    left = evaluate_number_node(&child, content);
+                } else if is_number_node(child.kind()) {
+                    right = evaluate_number_node(&child, content);
+                }
+            }
+            match (left?, operator?, right?) {
+                (left, "plus", right) => left.checked_add(right),
+                (left, "minus", right) => left.checked_sub(right),
+                (left, "asterisk", right) => left.checked_mul(right),
+                (left, _, right) => left.checked_div(right),
+            }
+        }
+        _ => {
+            // Strip comma thousands separators before parsing (beancount allows them)
+            let text = text_for_tree_sitter_node(content, node).replace(',', "");
+            Decimal::from_str_exact(&text).ok()
         }
     }
-
-    None
 }
 
 /// Calculate hint for balancing amounts (postings without explicit amounts)
@@ -1433,6 +1417,50 @@ mod tests {
         } else {
             panic!("No transaction found");
         }
+    }
+
+    #[test]
+    fn test_nested_expression_in_amount() {
+        let hints_for = |content: &str| {
+            let rope_content = ropey::Rope::from_str(content);
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(&tree_sitter_beancount::language())
+                .unwrap();
+            let tree = parser.parse(content, None).unwrap();
+            let txn_query =
+                tree_sitter::Query::new(&tree_sitter_beancount::language(), TRANSACTION_QUERY)
+                    .unwrap();
+            let mut cursor = tree_sitter::QueryCursor::new();
+            let mut matches = cursor.matches(&txn_query, tree.root_node(), content.as_bytes());
+            let txn_node = matches.next().expect("No transaction found").captures[0].node;
+            process_transaction(&txn_node, &rope_content).unwrap()
+        };
+
+        // 2 * (237.00 * 0.85) = 402.90
+        let hints = hints_for(
+            r#"2024-01-15 * "Optician"
+  Assets:Bank:Checking     -417.90 EUR
+  Expenses:Medical:Vision  2 * (237.00 * 0.85) EUR
+  Expenses:Medical:Vision  15.00 EUR
+"#,
+        );
+        assert!(
+            hints.is_empty(),
+            "Balanced transaction should have no hints: {hints:?}"
+        );
+
+        // -(10 / 4) + 0.50 - 1 = -3.00
+        let hints = hints_for(
+            r#"2024-01-15 * "Split"
+  Assets:Cash        -(10 / 4) + 0.50 - 1 USD
+  Expenses:Food
+"#,
+        );
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0].position.line, 2);
+        let label = serde_json::to_value(&hints[0].label).unwrap();
+        assert_eq!(label.as_str().map(str::trim_start), Some("3.00 USD"));
     }
 
     #[test]
