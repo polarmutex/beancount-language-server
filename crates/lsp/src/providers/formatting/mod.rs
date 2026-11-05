@@ -1717,6 +1717,113 @@ mod tests {
     }
 
     #[test]
+    fn test_format_keeps_parentheses_around_number() {
+        let content = r#"2024-01-01 *
+  Assets:Cash (4) USD
+  Assets:Bank:Checking (1 + 2) USD
+  Assets:Bank:Savings (1 + 2) * 3 USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        let postings: Vec<&str> = formatted.lines().skip(1).collect();
+        assert_eq!(
+            postings,
+            vec![
+                "  Assets:Cash                   (4) USD",
+                "  Assets:Bank:Checking      (1 + 2) USD",
+                "  Assets:Bank:Savings   (1 + 2) * 3 USD"
+            ],
+            "got\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn test_format_keeps_balance_tolerance() {
+        let content = r#"2024-01-01 balance Assets:Cash 1 ~ 0.1 USD
+2024-01-01 balance Assets:Bank:Checking 10 USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+
+        let edited_lines: Vec<u32> = edits.iter().map(|edit| edit.range.start.line).collect();
+        assert_eq!(edited_lines, vec![0, 1], "One edit per line");
+
+        let formatted = apply_edits(content, &edits);
+        assert_eq!(
+            formatted,
+            r#"2024-01-01 balance Assets:Cash            1 ~ 0.1 USD
+2024-01-01 balance Assets:Bank:Checking  10 USD
+"#
+        );
+    }
+
+    #[test]
+    fn test_format_skips_line_with_text_before_number() {
+        let content = r#"2024-01-01 *
+  Assets:Cash x 10 USD
+  Assets:Bank:Checking 1 USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        assert_eq!(
+            formatted.lines().nth(1),
+            Some("  Assets:Cash x 10 USD"),
+            "got\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn test_format_keeps_spaces_inside_parentheses() {
+        let content = r#"2024-01-01 *
+  Assets:Cash ( 5 ) USD
+  Assets:Bank:Checking 1 USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        let postings: Vec<&str> = formatted.lines().skip(1).collect();
+        assert_eq!(
+            postings,
+            vec![
+                "  Assets:Cash           ( 5 ) USD",
+                "  Assets:Bank:Checking      1 USD"
+            ],
+            "got\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn test_format_keeps_text_after_unclosed_parenthesis() {
+        let content = r#"2024-01-01 *
+  Assets:Cash ((4) * 2 USD
+  Assets:Bank:Checking 1 USD
+"#;
+
+        let state = TestState::new(content).unwrap();
+        let edits = state.format().unwrap().unwrap();
+        let formatted = apply_edits(content, &edits);
+
+        let postings: Vec<&str> = formatted.lines().skip(1).collect();
+        assert_eq!(
+            postings,
+            vec![
+                "  Assets:Cash           ((4) * 2 USD",
+                "  Assets:Bank:Checking         1 USD"
+            ],
+            "got\n{formatted}"
+        );
+    }
+
+    #[test]
     fn test_formatting_open_directives() {
         // Test formatting open directives (issue #783 item 4)
         let content = r#"2020-01-01 open Expenses:Moradia:Manutencao BRL

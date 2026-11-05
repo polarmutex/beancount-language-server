@@ -95,15 +95,11 @@ pub(super) fn generate_template_edits(
             // Quoted string (e.g. booking method like "FIFO" on an open directive) —
             // preserve verbatim with a single space; do not strip the leading quote.
             format!(" {rest_content}")
-        } else if let Some(currency_start) = rest_content.find(char::is_alphabetic) {
+        } else if rest_content.starts_with(char::is_alphabetic) {
             // Currency or other alphabetic token — apply configured number-currency spacing
-            format!(
-                "{}{}",
-                " ".repeat(number_currency_spacing),
-                &rest_content[currency_start..]
-            )
+            format!("{}{}", " ".repeat(number_currency_spacing), rest_content)
         } else {
-            // No currency found, use rest as-is
+            // No currency directly after the number, use rest as-is
             format!(" {rest_content}")
         };
 
