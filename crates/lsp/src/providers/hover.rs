@@ -83,11 +83,7 @@ fn find_node_of_kind<'a>(
         if NodeKind::from(node.kind()) == kind {
             return Some(node);
         }
-        if let Some(parent) = node.parent() {
-            node = parent;
-        } else {
-            return None;
-        }
+        node = node.parent()?;
     }
 }
 
