@@ -44,7 +44,7 @@
     "@typescript-eslint/eslint-plugin": "^8.59.0",
     "@typescript-eslint/parser": "^8.59.4",
     "@vscode/test-electron": "^3.1.0",
-    "@vscode/vsce": "^3.9.2",
+    "@vscode/vsce": "^4.1.0",
     "esbuild": "^0.28.1",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
