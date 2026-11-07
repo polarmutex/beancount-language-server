@@ -2,8 +2,9 @@ use super::BeancountChecker;
 use super::types::*;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::OnceLock;
+use std::process::{Command, Output};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use tracing::debug;
 
 /// Static regex for parsing bean-check error output.
@@ -20,18 +21,122 @@ fn get_error_line_regex() -> &'static regex::Regex {
 
 /// Bean-check implementation using system calls to execute the bean-check binary.
 ///
-/// This is the traditional approach that executes bean-check as a subprocess
-/// and parses its stderr output for error messages.
+/// Executes bean-check as a subprocess. Prefers `bean-check --json`
+/// (beancount >= 3.2.1), which emits structured errors on stdout, and falls
+/// back to regex-parsing stderr for older versions that lack the flag.
 #[derive(Debug, Clone)]
 pub struct SystemCallChecker {
     /// Path to the bean-check executable
     bean_check_cmd: PathBuf,
+    /// Set once `--json` output could not be parsed, so subsequent checks
+    /// skip straight to the stderr path instead of invoking bean-check twice.
+    json_unsupported: Arc<AtomicBool>,
+}
+
+/// Top-level object emitted by `bean-check --json`.
+#[derive(Debug, serde::Deserialize)]
+struct BeanCheckJsonOutput {
+    errors: Vec<BeanCheckJsonError>,
+}
+
+/// A single error entry from `bean-check --json`.
+/// Note beancount's field names: `filename` and `lineno`; both may be null.
+#[derive(Debug, serde::Deserialize)]
+struct BeanCheckJsonError {
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    filename: Option<String>,
+    #[serde(default)]
+    lineno: Option<u32>,
 }
 
 impl SystemCallChecker {
     /// Create a new system call checker with the specified bean-check command path.
     pub fn new(bean_check_cmd: PathBuf) -> Self {
-        Self { bean_check_cmd }
+        Self {
+            bean_check_cmd,
+            json_unsupported: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Parse `bean-check --json` stdout into structured errors.
+    ///
+    /// Returns `None` if stdout is not the expected JSON document (e.g. the
+    /// installed bean-check does not support `--json`), signalling the caller
+    /// to fall back to stderr parsing.
+    fn parse_json_output(stdout: &[u8], root_journal_file: &Path) -> Option<Vec<BeancountError>> {
+        let output: BeanCheckJsonOutput = match serde_json::from_slice(stdout) {
+            Ok(output) => output,
+            Err(e) => {
+                debug!("Failed to parse bean-check JSON output: {}", e);
+                return None;
+            }
+        };
+
+        let errors = output
+            .errors
+            .into_iter()
+            .map(|err| {
+                let line_number = err.lineno.unwrap_or(0);
+                let file_path = match err.filename.as_deref() {
+                    Some(file) if line_number != 0 && file != "<string>" => PathBuf::from(file)
+                        .canonicalize()
+                        .unwrap_or_else(|_| PathBuf::from(file)),
+                    _ => root_journal_file.to_path_buf(),
+                };
+                BeancountError::new(
+                    file_path,
+                    line_number,
+                    err.message.unwrap_or_default().trim().to_string(),
+                )
+            })
+            .collect();
+
+        Some(errors)
+    }
+
+    /// Build a bean-check command for the journal, run from the journal's
+    /// directory with its basename so relative includes resolve as bean-check expects.
+    fn build_command(&self, root_journal_file: &Path, json: bool) -> Command {
+        let mut command = Command::new(&self.bean_check_cmd);
+        if json {
+            command.arg("--json");
+        }
+        if let (Some(parent), Some(file_name)) =
+            (root_journal_file.parent(), root_journal_file.file_name())
+        {
+            command.current_dir(parent).arg(file_name);
+        } else {
+            command.arg(root_journal_file);
+        }
+        command
+    }
+
+    fn run(&self, root_journal_file: &Path, json: bool) -> Result<Output> {
+        let output = self
+            .build_command(root_journal_file, json)
+            .output()
+            .context(format!(
+                "Failed to execute bean-check command: {}",
+                self.bean_check_cmd.display()
+            ))?;
+        debug!(
+            "SystemCallChecker: command executed (json={}), status: {}",
+            json, output.status
+        );
+        Ok(output)
+    }
+
+    /// Run bean-check without `--json` and parse stderr (beancount < 3.2.1).
+    fn check_via_stderr(&self, root_journal_file: &Path) -> Result<Vec<BeancountError>> {
+        let output = self.run(root_journal_file, false)?;
+        debug!("SystemCallChecker: stderr length: {}", output.stderr.len());
+        Ok(if output.status.success() {
+            Vec::new()
+        } else {
+            self.parse_stderr_output(&output.stderr, root_journal_file)
+        })
     }
 
     /// Parse bean-check stderr output into structured errors.
@@ -143,32 +248,22 @@ impl BeancountChecker for SystemCallChecker {
             self.bean_check_cmd.display()
         );
 
-        let mut command = Command::new(&self.bean_check_cmd);
-        if let (Some(parent), Some(file_name)) =
-            (root_journal_file.parent(), root_journal_file.file_name())
-        {
-            command.current_dir(parent).arg(file_name);
+        let errors = if self.json_unsupported.load(Ordering::Relaxed) {
+            self.check_via_stderr(&root_journal_file)?
         } else {
-            command.arg(&root_journal_file);
-        }
-
-        let output = command.output().context(format!(
-            "Failed to execute bean-check command: {}",
-            self.bean_check_cmd.display()
-        ))?;
-
-        debug!(
-            "SystemCallChecker: command executed, status: {}",
-            output.status
-        );
-        debug!("SystemCallChecker: stderr length: {}", output.stderr.len());
-
-        let errors = if !output.status.success() {
-            debug!("SystemCallChecker: parsing error output");
-            self.parse_stderr_output(&output.stderr, &root_journal_file)
-        } else {
-            debug!("SystemCallChecker: no errors found");
-            Vec::new()
+            let output = self.run(&root_journal_file, true)?;
+            // bean-check exits 1 when errors exist but still writes JSON to
+            // stdout, so the exit code alone can't detect `--json` support.
+            match Self::parse_json_output(&output.stdout, &root_journal_file) {
+                Some(errors) => errors,
+                None => {
+                    debug!(
+                        "SystemCallChecker: --json unsupported or unparseable, falling back to stderr parsing"
+                    );
+                    self.json_unsupported.store(true, Ordering::Relaxed);
+                    self.check_via_stderr(&root_journal_file)?
+                }
+            }
         };
 
         debug!("SystemCallChecker: found {} errors", errors.len());
@@ -328,21 +423,191 @@ mod tests {
         assert_eq!(errors[0].file, root_file);
     }
 
-    #[cfg(unix)]
     #[test]
-    fn test_system_call_checker_runs_from_journal_directory_with_basename() {
+    fn test_parse_json_output_valid() {
+        let temp_dir = TempDir::new().unwrap();
+        let included = temp_dir.path().join("included.beancount");
+        fs::write(&included, "").unwrap();
+        let root_file = PathBuf::from("/root/main.beancount");
+        let stdout = format!(
+            r#"{{"errors": [{{"message": "Balance failed\n", "filename": {}, "lineno": 42}}]}}"#,
+            serde_json::to_string(included.to_str().unwrap()).unwrap()
+        );
+
+        let errors = SystemCallChecker::parse_json_output(stdout.as_bytes(), &root_file).unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].line, 42);
+        assert_eq!(errors[0].file, included.canonicalize().unwrap());
+        assert_eq!(errors[0].message, "Balance failed");
+    }
+
+    #[test]
+    fn test_parse_json_output_empty_errors() {
+        let root_file = PathBuf::from("/root/main.beancount");
+        let errors =
+            SystemCallChecker::parse_json_output(b"{\"errors\": []}\n", &root_file).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_parse_json_output_lineno_zero_maps_to_root() {
+        let root_file = PathBuf::from("/root/main.beancount");
+        let stdout = br#"{"errors": [{"message": "Missing Commodity directive for 'USD'", "filename": "<check_commodity>", "lineno": 0}]}"#;
+        let errors = SystemCallChecker::parse_json_output(stdout, &root_file).unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].line, 0);
+        assert_eq!(errors[0].file, root_file);
+    }
+
+    #[test]
+    fn test_parse_json_output_string_source_maps_to_root() {
+        let root_file = PathBuf::from("/root/main.beancount.gpg");
+        let stdout =
+            br#"{"errors": [{"message": "Invalid token", "filename": "<string>", "lineno": 7}]}"#;
+        let errors = SystemCallChecker::parse_json_output(stdout, &root_file).unwrap();
+        assert_eq!(errors[0].line, 7);
+        assert_eq!(errors[0].file, root_file);
+    }
+
+    #[test]
+    fn test_parse_json_output_null_and_missing_fields() {
+        let root_file = PathBuf::from("/root/main.beancount");
+        let stdout = br#"{"errors": [
+            {"message": "no source", "filename": null, "lineno": null},
+            {"message": "no filename", "lineno": 5},
+            {"filename": "/some/file.beancount", "lineno": 3},
+            {}
+        ]}"#;
+        let errors = SystemCallChecker::parse_json_output(stdout, &root_file).unwrap();
+        assert_eq!(errors.len(), 4);
+
+        assert_eq!(errors[0].line, 0);
+        assert_eq!(errors[0].file, root_file);
+        assert_eq!(errors[0].message, "no source");
+
+        assert_eq!(errors[1].line, 5);
+        assert_eq!(errors[1].file, root_file);
+
+        assert_eq!(errors[2].line, 3);
+        assert_eq!(errors[2].file, PathBuf::from("/some/file.beancount"));
+        assert_eq!(errors[2].message, "");
+
+        assert_eq!(errors[3].line, 0);
+        assert_eq!(errors[3].file, root_file);
+    }
+
+    #[test]
+    fn test_parse_json_output_rejects_non_json() {
+        let root_file = PathBuf::from("/root/main.beancount");
+        assert!(SystemCallChecker::parse_json_output(b"", &root_file).is_none());
+        assert!(
+            SystemCallChecker::parse_json_output(b"Error: No such option: --json\n", &root_file)
+                .is_none()
+        );
+        assert!(SystemCallChecker::parse_json_output(b"[]", &root_file).is_none());
+    }
+
+    #[cfg(unix)]
+    /// Write an executable mock bean-check script.
+    ///
+    /// Executing a freshly written file can fail with ETXTBSY when another test
+    /// thread forks while the write fd is still open (the child inherits it until
+    /// exec). Probe-run the script until exec succeeds so the real check doesn't
+    /// race. Scripts are prefixed so the probe exits without side effects.
+    fn write_mock_bean_check(dir: &Path, script: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp_dir = TempDir::new().unwrap();
-        let journal = temp_dir.path().join("main.beancount.gpg");
-        fs::write(&journal, "ciphertext").unwrap();
-        fs::write(temp_dir.path().join("working-directory-marker"), "ok").unwrap();
-        let command = temp_dir.path().join("mock-bean-check");
-        let script = "#!/bin/sh\nif [ -f working-directory-marker ] && [ \"$1\" = \"main.beancount.gpg\" ]; then\n  exit 0\nfi\necho '<string>:1: wrong working directory or argument' >&2\nexit 1\n";
+        let body = script.strip_prefix("#!/bin/sh\n").unwrap_or(script);
+        let script = format!("#!/bin/sh\n[ -n \"$MOCK_PROBE\" ] && exit 0\n{body}");
+        let command = dir.join("mock-bean-check");
         fs::write(&command, script).unwrap();
         let mut permissions = fs::metadata(&command).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&command, permissions).unwrap();
+
+        for _ in 0..100 {
+            match Command::new(&command).env("MOCK_PROBE", "1").status() {
+                Ok(_) => return command,
+                Err(e) if e.raw_os_error() == Some(26) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(e) => panic!("failed to run mock bean-check: {e}"),
+            }
+        }
+        panic!("mock bean-check stayed busy (ETXTBSY)");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_system_call_checker_uses_json_output() {
+        let temp_dir = TempDir::new().unwrap();
+        let journal = temp_dir.path().join("main.beancount");
+        fs::write(&journal, "").unwrap();
+        // Mimics beancount >= 3.2.1: JSON on stdout, exit 1 when errors exist.
+        let script = r#"#!/bin/sh
+if [ "$1" = "--json" ] && [ "$2" = "main.beancount" ]; then
+  echo '{"errors": [{"message": "Transaction does not balance", "filename": "main.beancount", "lineno": 4}]}'
+  exit 1
+fi
+echo 'main.beancount:1: wrong invocation' >&2
+exit 1
+"#;
+        let command = write_mock_bean_check(temp_dir.path(), script);
+
+        let result = SystemCallChecker::new(command).check(&journal).unwrap();
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.errors[0].line, 4);
+        assert_eq!(result.errors[0].message, "Transaction does not balance");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_system_call_checker_falls_back_to_stderr_without_json_support() {
+        let temp_dir = TempDir::new().unwrap();
+        let journal = temp_dir.path().join("main.beancount");
+        fs::write(&journal, "").unwrap();
+        let log = temp_dir.path().join("invocations.log");
+        // Mimics beancount < 3.2.1: click rejects --json with exit code 2.
+        let script = format!(
+            r#"#!/bin/sh
+echo "$@" >> '{}'
+if [ "$1" = "--json" ]; then
+  echo 'Error: No such option: --json' >&2
+  exit 2
+fi
+echo 'main.beancount:9: Balance failed' >&2
+exit 1
+"#,
+            log.display()
+        );
+        let command = write_mock_bean_check(temp_dir.path(), &script);
+        let checker = SystemCallChecker::new(command);
+
+        let result = checker.check(&journal).unwrap();
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.errors[0].line, 9);
+        assert_eq!(result.errors[0].message, "Balance failed");
+
+        // Second check should skip the --json attempt entirely.
+        let result = checker.check(&journal).unwrap();
+        assert_eq!(result.errors.len(), 1);
+
+        let invocations = fs::read_to_string(&log).unwrap();
+        assert_eq!(
+            invocations.lines().collect::<Vec<_>>(),
+            vec!["--json main.beancount", "main.beancount", "main.beancount"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_system_call_checker_runs_from_journal_directory_with_basename() {
+        let temp_dir = TempDir::new().unwrap();
+        let journal = temp_dir.path().join("main.beancount.gpg");
+        fs::write(&journal, "ciphertext").unwrap();
+        fs::write(temp_dir.path().join("working-directory-marker"), "ok").unwrap();
+        let script = "#!/bin/sh\nif [ -f working-directory-marker ] && [ \"$1\" = \"--json\" ] && [ \"$2\" = \"main.beancount.gpg\" ]; then\n  echo '{\"errors\": []}'\n  exit 0\nfi\necho '<string>:1: wrong working directory or argument' >&2\nexit 1\n";
+        let command = write_mock_bean_check(temp_dir.path(), script);
 
         let result = SystemCallChecker::new(command).check(&journal).unwrap();
         assert!(result.errors.is_empty());
