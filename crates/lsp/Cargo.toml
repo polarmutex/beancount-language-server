@@ -7,7 +7,6 @@ authors = ["Brian Ryall <polarmutex@users.noreply.github.com>"]
 license = "MIT"
 readme = "../../README.md"
 repository = "https://github.com/polarmutex/beancount-language-server"
-homepage = "https://github.com/polarmutex/beancount-language-server"
 documentation = "https://docs.rs/beancount-language-server"
 keywords = ["beancount", "lsp", "language-server", "accounting", "finance"]
 categories = ["development-tools", "text-editors"]
