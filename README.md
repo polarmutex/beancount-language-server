@@ -101,6 +101,40 @@ nix shell nixpkgs#beancount-language-server
 nix develop
 ```
 
+The nixpkgs package is built without PyO3 support. To use the `python-embedded`
+checker, use the flake package `beancount-language-server-python`. It is built
+with the `python-embedded` feature and wrapped so it can find a Python that has
+`beancount` installed:
+
+```bash
+nix run github:polarmutex/beancount-language-server#beancount-language-server-python
+```
+
+Or override the nixpkgs package yourself:
+
+```nix
+let
+  beancountPython = pkgs.python3.withPackages (ps: [ ps.beancount ]);
+in
+pkgs.beancount-language-server.overrideAttrs (old: {
+  cargoBuildFeatures = (old.cargoBuildFeatures or [ ]) ++ [ "python-embedded" ];
+  nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+    pkgs.makeWrapper
+    pkgs.pkg-config
+    beancountPython
+  ];
+  buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.python3 ];
+  PYO3_PYTHON = "${beancountPython}/bin/python3";
+  postInstall = (old.postInstall or "") + ''
+    wrapProgram $out/bin/beancount-language-server \
+      --set-default BEANCOUNT_LSP_PYTHON ${beancountPython}/bin/python3 \
+      --prefix PYTHONPATH : ${beancountPython}/${pkgs.python3.sitePackages}
+  '';
+})
+```
+
+Then set `bean_check.method` to `"python-embedded"` in your editor's LSP settings.
+
 ### Method 5: Build from Source
 
 ```bash

@@ -90,6 +90,40 @@
             inherit (craneLib.crateNameFromCargoToml {cargoToml = ./Cargo.toml;}) version;
             pname = "beancount-language-server";
           });
+
+        # Python interpreter bundling the beancount library, used by the
+        # PyO3 embedded checker (bean_check.method = "python-embedded").
+        python = pkgs.python3;
+        beancountPython = python.withPackages (ps: [ps.beancount]);
+
+        pythonEmbeddedArgs =
+          commonArgs
+          // {
+            cargoExtraArgs = "--locked --features python-embedded";
+            nativeBuildInputs = [pkgs.pkg-config beancountPython];
+            buildInputs = commonArgs.buildInputs ++ [python];
+            PYO3_PYTHON = "${beancountPython}/bin/python3";
+          };
+
+        cargoArtifactsPython = craneLib.buildDepsOnly (pythonEmbeddedArgs
+          // {
+            pname = "beancount-language-server-python-deps";
+          });
+
+        beancount-language-server-python = craneLib.buildPackage (pythonEmbeddedArgs
+          // {
+            cargoArtifacts = cargoArtifactsPython;
+            inherit (craneLib.crateNameFromCargoToml {cargoToml = ./Cargo.toml;}) version;
+            pname = "beancount-language-server-python";
+            nativeBuildInputs = pythonEmbeddedArgs.nativeBuildInputs ++ [pkgs.makeWrapper];
+            # Tests are covered by the default package's nextest check
+            doCheck = false;
+            postInstall = ''
+              wrapProgram $out/bin/beancount-language-server \
+                --set-default BEANCOUNT_LSP_PYTHON ${beancountPython}/bin/python3 \
+                --prefix PYTHONPATH : ${beancountPython}/${python.sitePackages}
+            '';
+          });
       in {
         checks = {
           # Build the crate as part of `nix flake check` for convenience
@@ -129,7 +163,7 @@
         };
 
         packages = {
-          inherit beancount-language-server;
+          inherit beancount-language-server beancount-language-server-python;
           default = beancount-language-server;
 
           # VSCode extension VSIX package
