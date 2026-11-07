@@ -697,7 +697,7 @@ mod tests {
             other => panic!("expected response, got {other:?}"),
         };
         assert_eq!(response.id, lsp_server::RequestId::from(1));
-        assert!(response.error.is_none(), "shutdown should succeed");
+        assert!(response.response_result.is_ok(), "shutdown should succeed");
     }
 
     #[test]
