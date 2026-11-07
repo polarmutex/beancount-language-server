@@ -1,7 +1,6 @@
 use crate::checkers::{BeancountCheckConfig, BeancountCheckMethod};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_with::{DisplayFromStr, serde_as};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -135,14 +134,25 @@ impl Config {
 
         // Update bean-check configuration
         if let Some(bean_check) = beancount_lsp_settings.bean_check {
+            // Parsed here rather than during deserialization so an unknown method
+            // (e.g. a newer config with an older server) only drops this one field
+            // instead of discarding journal_file and every other setting.
             if let Some(method) = bean_check.method {
-                self.bean_check.method = Some(method);
+                match method.parse::<BeancountCheckMethod>() {
+                    Ok(method) => self.bean_check.method = Some(method),
+                    Err(err) => tracing::warn!(
+                        "Ignoring bean_check.method: {err}; falling back to auto-discovery"
+                    ),
+                }
             }
             if let Some(bean_check_cmd) = bean_check.bean_check_cmd {
                 self.bean_check.bean_check_cmd = Some(PathBuf::from(bean_check_cmd));
             }
             if let Some(python_cmd) = bean_check.python_cmd {
                 self.bean_check.python_cmd = Some(PathBuf::from(python_cmd));
+            }
+            if let Some(rustledger_cmd) = bean_check.rustledger_cmd {
+                self.bean_check.rustledger_cmd = Some(PathBuf::from(rustledger_cmd));
             }
         }
 
@@ -199,16 +209,17 @@ pub struct CompletionOptions {
     pub fuzzy_match_accounts: Option<bool>,
 }
 
-#[serde_as]
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct BeancountCheckOptions {
-    /// Method for bean-check execution: "system", "python-system", or "python-embedded"
-    #[serde_as(as = "Option<DisplayFromStr>")]
-    pub method: Option<BeancountCheckMethod>,
+    /// Method for bean-check execution: "system", "python-system", "python-embedded",
+    /// or "rustledger" (experimental)
+    pub method: Option<String>,
     /// Path to bean-check executable (for system method)
     pub bean_check_cmd: Option<String>,
     /// Path to Python executable (for python method)
     pub python_cmd: Option<String>,
+    /// Path to rustledger `rledger` executable (for rustledger method)
+    pub rustledger_cmd: Option<String>,
 }
 
 #[cfg(test)]
@@ -378,6 +389,42 @@ mod tests {
         assert_eq!(
             config.bean_check.method,
             Some(BeancountCheckMethod::PythonEmbedded)
+        );
+    }
+
+    #[test]
+    fn test_unknown_bean_check_method_keeps_other_settings() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(
+                serde_json::from_str(
+                    r#"{"journal_file": "main.beancount", "bean_check": {"method": "nope"}}"#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(config.bean_check.method, None);
+        assert_eq!(config.journal_root, Some(PathBuf::from("main.beancount")));
+    }
+
+    #[test]
+    fn test_bean_check_method_rustledger() {
+        let mut config = Config::new(PathBuf::new());
+        config
+            .update(
+                serde_json::from_str(
+                    r#"{"bean_check": {"method": "rustledger", "rustledger_cmd": "/opt/rledger"}}"#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            config.bean_check.method,
+            Some(BeancountCheckMethod::Rustledger)
+        );
+        assert_eq!(
+            config.bean_check.rustledger_cmd,
+            Some(PathBuf::from("/opt/rledger"))
         );
     }
 

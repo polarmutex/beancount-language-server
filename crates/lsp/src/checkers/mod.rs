@@ -8,6 +8,7 @@ mod pyo3_embedded;
 #[cfg(not(feature = "python-embedded"))]
 mod pyo3_embedded_stub;
 mod python_checker;
+pub mod rustledger;
 pub mod system_call;
 pub mod types;
 
@@ -17,6 +18,7 @@ pub use pyo3_embedded::PyO3EmbeddedChecker;
 pub use pyo3_embedded_stub::PyO3EmbeddedChecker;
 pub use python_checker::SystemPythonChecker;
 use python_checker::is_python_available;
+pub use rustledger::RustledgerChecker;
 pub use system_call::SystemCallChecker;
 pub use types::*;
 
@@ -39,6 +41,11 @@ pub trait BeancountChecker: Send + Sync {
     /// Used for logging and debugging purposes.
     fn name(&self) -> &'static str;
 
+    /// Label shown as the diagnostic `source` in the editor.
+    fn diagnostic_source(&self) -> &'static str {
+        "bean-check"
+    }
+
     /// Check if this checker implementation is available on the current system.
     /// For example, system call checker needs bean-check binary, Python checker needs Python.
     fn is_available(&self) -> bool;
@@ -53,6 +60,8 @@ pub enum BeancountCheckMethod {
     PythonEmbedded,
     /// Use python interpreter to run embedded bean_check code
     PythonSystem,
+    /// Run the rustledger `rledger check` binary (experimental, opt-in only)
+    Rustledger,
 }
 
 impl BeancountCheckMethod {
@@ -61,6 +70,7 @@ impl BeancountCheckMethod {
             BeancountCheckMethod::SystemCall => "system",
             BeancountCheckMethod::PythonEmbedded => "python-embedded",
             BeancountCheckMethod::PythonSystem => "python-system",
+            BeancountCheckMethod::Rustledger => "rustledger",
         }
     }
 }
@@ -73,6 +83,7 @@ impl std::str::FromStr for BeancountCheckMethod {
             "system" => Ok(BeancountCheckMethod::SystemCall),
             "python-embedded" | "pyo3" => Ok(BeancountCheckMethod::PythonEmbedded),
             "python-system" => Ok(BeancountCheckMethod::PythonSystem),
+            "rustledger" | "rledger" => Ok(BeancountCheckMethod::Rustledger),
             _ => Err(format!("invalid BeancountCheckMethod: {:?}", s)),
         }
     }
@@ -93,6 +104,8 @@ pub struct BeancountCheckConfig {
     pub bean_check_cmd: Option<PathBuf>,
     /// Path to Python executable (for Python method)
     pub python_cmd: Option<PathBuf>,
+    /// Path to rustledger `rledger` executable (for Rustledger method)
+    pub rustledger_cmd: Option<PathBuf>,
 }
 
 impl Default for BeancountCheckConfig {
@@ -107,6 +120,7 @@ impl BeancountCheckConfig {
             method: None, // None means auto-discovery
             bean_check_cmd: None,
             python_cmd: None,
+            rustledger_cmd: None,
         }
     }
 }
@@ -283,6 +297,17 @@ fn create_system_call_checker(config: &BeancountCheckConfig, root_dir: &Path) ->
     SystemCallChecker::new(bean_check_cmd)
 }
 
+fn create_rustledger_checker(config: &BeancountCheckConfig) -> RustledgerChecker {
+    let cmd = config
+        .rustledger_cmd
+        .clone()
+        .filter(|cmd| !cmd.as_os_str().is_empty())
+        .or_else(|| find_in_path("rledger"))
+        .unwrap_or_else(|| PathBuf::from("rledger"));
+    tracing::info!("Using rledger command: {}", cmd.to_string_lossy());
+    RustledgerChecker::new(cmd)
+}
+
 /// An ordered list of checker candidates; returns the first available one.
 ///
 /// Enables deterministic, testable fallback without nested match arms.
@@ -305,6 +330,10 @@ fn build_chain(config: &BeancountCheckConfig, root_dir: &Path) -> Vec<Box<dyn Be
     let mut candidates: Vec<Box<dyn BeancountChecker>> = Vec::new();
     match config.method {
         Some(BeancountCheckMethod::SystemCall) => {
+            candidates.push(Box::new(create_system_call_checker(config, root_dir)));
+        }
+        Some(BeancountCheckMethod::Rustledger) => {
+            candidates.push(Box::new(create_rustledger_checker(config)));
             candidates.push(Box::new(create_system_call_checker(config, root_dir)));
         }
         Some(BeancountCheckMethod::PythonSystem) => {
@@ -614,6 +643,7 @@ mod tests {
             method: None,
             bean_check_cmd: None,
             python_cmd: Some(PathBuf::from("/config/python")),
+            rustledger_cmd: None,
         };
 
         let result = resolve_python_cmd(&config, temp_dir.path());
@@ -650,6 +680,7 @@ mod tests {
             method: None,
             bean_check_cmd: None,
             python_cmd: Some(PathBuf::from("/custom/python")),
+            rustledger_cmd: None,
         };
 
         let temp_dir = TempDir::new().unwrap();
@@ -673,6 +704,7 @@ mod tests {
             method: None,
             bean_check_cmd: None,
             python_cmd: Some(PathBuf::from("")),
+            rustledger_cmd: None,
         };
 
         use tempfile::TempDir;
@@ -705,6 +737,7 @@ mod tests {
                 method: None,
                 bean_check_cmd: None,
                 python_cmd: None,
+                rustledger_cmd: None,
             };
             let result = resolve_python_cmd(&config, temp_dir.path());
 
@@ -720,6 +753,7 @@ mod tests {
             method: None,
             bean_check_cmd: Some(PathBuf::from("/custom/bean-check")),
             python_cmd: None,
+            rustledger_cmd: None,
         };
 
         use tempfile::TempDir;
@@ -751,6 +785,7 @@ mod tests {
                 method: None,
                 bean_check_cmd: None,
                 python_cmd: None,
+                rustledger_cmd: None,
             };
 
             let result = resolve_bean_check_cmd(&config, temp_dir.path());
@@ -780,12 +815,49 @@ mod tests {
                 method: None,
                 bean_check_cmd: None,
                 python_cmd: None,
+                rustledger_cmd: None,
             };
 
             let result = resolve_bean_check_cmd(&config, temp_dir.path());
             assert!(result.is_some());
             assert_eq!(result.unwrap(), bean_check_path);
         }
+    }
+
+    #[test]
+    fn test_rustledger_method_chain() {
+        let config = BeancountCheckConfig {
+            method: Some(BeancountCheckMethod::Rustledger),
+            rustledger_cmd: Some(PathBuf::from("/nonexistent/rledger")),
+            ..BeancountCheckConfig::new()
+        };
+        let names: Vec<_> = build_chain(&config, Path::new("."))
+            .iter()
+            .map(|c| c.name())
+            .collect();
+        // rustledger first, falling back to bean-check when rledger is missing
+        assert_eq!(names, vec!["Rustledger", "SystemCall"]);
+    }
+
+    #[test]
+    fn test_auto_discovery_excludes_rustledger() {
+        let names: Vec<_> = build_chain(&BeancountCheckConfig::new(), Path::new("."))
+            .iter()
+            .map(|c| c.name())
+            .collect();
+        assert!(!names.contains(&"Rustledger"));
+    }
+
+    #[test]
+    fn test_rustledger_method_round_trip() {
+        use std::str::FromStr;
+        let m = BeancountCheckMethod::from_str("rustledger").unwrap();
+        assert_eq!(m, BeancountCheckMethod::Rustledger);
+        assert_eq!(m.to_string(), "rustledger");
+        assert_eq!(
+            BeancountCheckMethod::from_str("rledger").unwrap(),
+            BeancountCheckMethod::Rustledger
+        );
     }
 
     #[test]
@@ -802,6 +874,7 @@ mod tests {
             method: None,
             bean_check_cmd: None,
             python_cmd: Some(PathBuf::from("/nonexistent/python")),
+            rustledger_cmd: None,
         };
 
         let result = create_python_checker(&config, Path::new("."));
@@ -816,6 +889,7 @@ mod tests {
             method: Some(BeancountCheckMethod::PythonEmbedded),
             bean_check_cmd: Some(PathBuf::from("/nonexistent/bean-check")),
             python_cmd: Some(PathBuf::from("/nonexistent/python")),
+            rustledger_cmd: None,
         };
 
         let checker = create_checker(&config, Path::new("."));

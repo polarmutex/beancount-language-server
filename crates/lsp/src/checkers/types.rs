@@ -51,6 +51,25 @@ impl Default for BeancountCheckResult {
     }
 }
 
+/// Severity of a checker diagnostic.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BeancountSeverity {
+    #[default]
+    Error,
+    Warning,
+}
+
+/// Precise extent of a diagnostic, already converted to LSP coordinates.
+///
+/// `end_line` is 1-based like [`BeancountError::line`]; character offsets are
+/// 0-based UTF-16 code units, as the LSP requires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ErrorSpan {
+    pub start_character: u32,
+    pub end_line: u32,
+    pub end_character: u32,
+}
+
 /// Represents a validation error from bean-check.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BeancountError {
@@ -60,16 +79,34 @@ pub struct BeancountError {
     pub line: u32,
     /// Error message
     pub message: String,
+    /// Diagnostic severity (bean-check only reports errors; rustledger also reports warnings)
+    pub severity: BeancountSeverity,
+    /// Exact range, when the checker reports columns; `None` highlights the whole line
+    pub span: Option<ErrorSpan>,
 }
 
 impl BeancountError {
-    /// Create a new beancount error.
+    /// Create a new beancount error with `Error` severity.
     pub fn new(file: PathBuf, line: u32, message: String) -> Self {
         Self {
             file,
             line,
             message,
+            severity: BeancountSeverity::Error,
+            span: None,
         }
+    }
+
+    /// Attach an exact range to this error.
+    pub fn with_span(mut self, span: ErrorSpan) -> Self {
+        self.span = Some(span);
+        self
+    }
+
+    /// Override the severity of this error.
+    pub fn with_severity(mut self, severity: BeancountSeverity) -> Self {
+        self.severity = severity;
+        self
     }
 
     /// Check if this is a file-level error (line 0).

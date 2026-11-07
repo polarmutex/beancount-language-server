@@ -1,5 +1,5 @@
 use crate::beancount_data::BeancountData;
-use crate::checkers::{BeancountChecker, BeancountError, FlaggedEntry};
+use crate::checkers::{BeancountChecker, BeancountError, BeancountSeverity, FlaggedEntry};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -136,8 +136,9 @@ pub fn checker_diagnostics(
         }
     };
 
-    let mut map = convert_errors_to_diagnostics(check_result.errors);
-    merge_flagged_entries_from_checker(&mut map, check_result.flagged_entries);
+    let source = checker.diagnostic_source();
+    let mut map = convert_errors_to_diagnostics(check_result.errors, source);
+    merge_flagged_entries_from_checker(&mut map, check_result.flagged_entries, source);
     map
 }
 
@@ -156,6 +157,7 @@ pub fn flagged_entry_diagnostics(
 /// Convert checker errors to LSP diagnostic format.
 fn convert_errors_to_diagnostics(
     errors: Vec<BeancountError>,
+    source: &str,
 ) -> HashMap<PathBuf, Vec<lsp_types::Diagnostic>> {
     let mut diagnostics_map: HashMap<PathBuf, Vec<lsp_types::Diagnostic>> = HashMap::new();
 
@@ -167,11 +169,28 @@ fn convert_errors_to_diagnostics(
             error.line.saturating_sub(1)
         };
 
+        let range = match error.span {
+            Some(span) => lsp_types::Range {
+                start: lsp_types::Position {
+                    line: line_number,
+                    character: span.start_character,
+                },
+                end: lsp_types::Position {
+                    line: span.end_line.saturating_sub(1).max(line_number),
+                    character: span.end_character,
+                },
+            },
+            None => full_line_range(line_number),
+        };
+
         let diagnostic = lsp_types::Diagnostic {
-            range: full_line_range(line_number),
+            range,
             message: error.message,
-            severity: Some(lsp_types::DiagnosticSeverity::Error),
-            source: Some("bean-check".to_string()),
+            severity: Some(match error.severity {
+                BeancountSeverity::Error => lsp_types::DiagnosticSeverity::Error,
+                BeancountSeverity::Warning => lsp_types::DiagnosticSeverity::Warning,
+            }),
+            source: Some(source.to_string()),
             code: None,
             code_description: None,
             tags: None,
@@ -192,6 +211,7 @@ fn convert_errors_to_diagnostics(
 fn merge_flagged_entries_from_checker(
     diagnostics_map: &mut HashMap<PathBuf, Vec<lsp_types::Diagnostic>>,
     flagged_entries: Vec<FlaggedEntry>,
+    source: &str,
 ) {
     for entry in flagged_entries {
         // Convert 1-based line numbers to 0-based for LSP
@@ -205,7 +225,7 @@ fn merge_flagged_entries_from_checker(
             range: full_line_range(line_number),
             message: entry.message,
             severity: Some(lsp_types::DiagnosticSeverity::Warning),
-            source: Some("bean-check".to_string()),
+            source: Some(source.to_string()),
             code: Some(lsp_types::Code::String("flagged-entry".to_string())),
             ..lsp_types::Diagnostic::default()
         };
