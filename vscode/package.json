@@ -136,10 +136,11 @@
               "enum": [
                 "system",
                 "python-system",
-                "python-embedded"
+                "python-embedded",
+                "rustledger"
               ],
               "default": "python-system",
-              "description": "Execution method for bean-check (system, python-system, python-embedded)."
+              "description": "Execution method for bean-check (system, python-system, python-embedded, or experimental rustledger)."
             },
             "bean_check_cmd": {
               "type": "string",
@@ -148,6 +149,10 @@
             "python_cmd": {
               "type": "string",
               "description": "Python executable to use for the python methods."
+            },
+            "rustledger_cmd": {
+              "type": "string",
+              "description": "Path to the rustledger `rledger` executable when using the experimental rustledger method."
             }
           }
         },

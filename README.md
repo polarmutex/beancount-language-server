@@ -323,11 +323,12 @@ When editing files in `~/finances/personal/`, completions only show accounts lik
 
 ### Bean-check Configuration
 
-| Option                      | Type   | Description                                                        | Default |
-| --------------------------- | ------ | ------------------------------------------------------------------ | ------- |
-| `bean_check.method`         | string | Validation method: "system", "python-system", or "python-embedded" | None    |
-| `bean_check.bean_check_cmd` | string | Path to bean-check binary (for "system" method)                    | None    |
-| `bean_check.python_cmd`     | string | Path to Python executable (for Python methods)                     | None    |
+| Option                      | Type   | Description                                                                                       | Default |
+| --------------------------- | ------ | ------------------------------------------------------------------------------------------------- | ------- |
+| `bean_check.method`         | string | Validation method: "system", "python-system", "python-embedded", or "rustledger" (experimental) | None    |
+| `bean_check.bean_check_cmd` | string | Path to bean-check binary (for "system" method)                                                   | None    |
+| `bean_check.python_cmd`     | string | Path to Python executable (for Python methods)                                                    | None    |
+| `bean_check.rustledger_cmd` | string | Path to rustledger's `rledger` binary (for "rustledger" method; defaults to `rledger` on `PATH`)  | None    |
 
 **Preferred checker order (when `bean_check.method` is not set):**
 
@@ -373,6 +374,25 @@ Only configure `bean_check.method` if you need to override auto-detection:
 {
   "bean_check": {
     "method": "python-embedded" // Force PyO3 (already default)
+  }
+}
+```
+
+**Experimental: rustledger**
+
+[rustledger](https://github.com/rustledger/rustledger) is a pure-Rust
+reimplementation of Beancount. The `rustledger` method runs
+`rledger check --format json` and is never selected automatically. If `rledger`
+can't be found, the server falls back to the `system` checker. Diagnostics
+include rustledger's rule code (e.g. `[E1001]`), and rustledger warnings show
+up as LSP warnings. rustledger is not fully compatible with every Beancount
+plugin, so results may differ from `bean-check`.
+
+```json
+{
+  "bean_check": {
+    "method": "rustledger",
+    "rustledger_cmd": "/home/me/.cargo/bin/rledger" // optional
   }
 }
 ```
@@ -665,7 +685,7 @@ lspconfig.beancount.setup({
 -- lspconfig.beancount.setup({
 --   init_options = {
 --     bean_check = {
---       method = "system",  -- Force specific method: "python-embedded", "python-system", or "system"
+--       method = "system",  -- Force specific method: "python-embedded", "python-system", "system", or "rustledger"
 --     },
 --   },
 -- })
@@ -720,7 +740,7 @@ args = ["--stdio"]
 
 # Optional: bean_check config (uses python-embedded by default)
 # [language-server.beancount-language-server.config.bean_check]
-# method = "python-embedded"  # or "python-system" or "system"
+# method = "python-embedded"  # or "python-system", "system", or "rustledger" (experimental)
 
 # Optional: completion behavior
 # [language-server.beancount-language-server.config.completion]

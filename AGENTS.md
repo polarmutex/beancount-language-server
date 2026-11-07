@@ -12,6 +12,7 @@ This is a Rust workspace with the following structure:
     - **`system_call.rs`** - Traditional bean-check binary execution
     - **`python.rs`** - Python script integration via subprocess
     - **`pyo3_embedded.rs`** - PyO3 embedded Python integration
+    - **`rustledger.rs`** - Experimental rustledger `rledger check --format json` subprocess (GPL-3.0, so never linked as a crate)
     - **`types.rs`** - Shared data structures
 - **`vscode/`** - VSCode extension (TypeScript)
 - **Root workspace** - Cargo workspace configuration
@@ -128,7 +129,8 @@ Factory pattern in `checkers/mod.rs` handles creation based on configuration.
 
 Language server accepts configuration via LSP initialization:
 - **journal_file** - Path to main beancount journal file
-- **bean_check.method** - Validation method: "system" (default), "python-script", or "python-embedded"
+- **bean_check.method** - Validation method: "system" (default), "python-script", "python-embedded", or "rustledger" (experimental)
+- **bean_check.rustledger_cmd** - Path to rustledger `rledger` binary (for rustledger method)
 - **bean_check.bean_check_cmd** - Path to bean-check binary (for system method)
 - **bean_check.python_cmd** - Path to Python executable (for Python methods)
 - **bean_check.python_script** - Path to Python validation script (for python-script method)

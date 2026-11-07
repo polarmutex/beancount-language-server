@@ -118,6 +118,7 @@ fn benchmark_checker_comparison(c: &mut Criterion) {
         method: Some(BeancountCheckMethod::SystemCall),
         bean_check_cmd: None,
         python_cmd: None,
+        rustledger_cmd: None,
     };
 
     if let Some(checker) = create_checker(&config, Path::new(".")) {
@@ -141,6 +142,7 @@ fn benchmark_checker_comparison(c: &mut Criterion) {
         method: Some(BeancountCheckMethod::PythonSystem),
         bean_check_cmd: None,
         python_cmd: None,
+        rustledger_cmd: None,
     };
 
     if let Some(checker) = create_checker(&config, Path::new(".")) {
@@ -166,6 +168,7 @@ fn benchmark_checker_comparison(c: &mut Criterion) {
             method: Some(BeancountCheckMethod::PythonEmbedded),
             bean_check_cmd: None,
             python_cmd: None,
+            rustledger_cmd: None,
         };
 
         if let Some(checker) = create_checker(&config, Path::new(".")) {
@@ -197,6 +200,7 @@ fn benchmark_system_call_scaling(c: &mut Criterion) {
         method: Some(BeancountCheckMethod::SystemCall),
         bean_check_cmd: None,
         python_cmd: None,
+        rustledger_cmd: None,
     };
 
     let checker = match create_checker(&config, Path::new(".")) {
@@ -261,6 +265,7 @@ fn benchmark_pyo3_scaling(c: &mut Criterion) {
         method: Some(BeancountCheckMethod::PythonEmbedded),
         bean_check_cmd: None,
         python_cmd: None,
+        rustledger_cmd: None,
     };
 
     let checker = match create_checker(&config, Path::new(".")) {
