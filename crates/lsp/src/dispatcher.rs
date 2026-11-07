@@ -232,7 +232,9 @@ mod tests {
             other => panic!("expected response, got {other:?}"),
         };
 
-        let error = response.error.expect("expected error response");
+        let error = response
+            .response_result
+            .expect_err("expected error response");
         assert_eq!(
             error.code,
             lsp_server::ErrorCode::InvalidParams as i32,

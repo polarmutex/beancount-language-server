@@ -427,7 +427,7 @@ impl LspServerState {
     pub(crate) fn respond(&mut self, response: lsp_server::Response) {
         if let Some((method, start)) = self.req_queue.incoming.complete(&response.id) {
             let duration = start.elapsed();
-            let is_error = response.error.is_some();
+            let is_error = response.response_result.is_err();
 
             if is_error {
                 tracing::warn!(
@@ -435,7 +435,7 @@ impl LspServerState {
                     response.id,
                     method,
                     duration,
-                    response.error
+                    response.response_result.as_ref().err()
                 );
             } else {
                 tracing::trace!(
@@ -470,7 +470,7 @@ impl LspServerState {
                 tracing::debug!(
                     "Sending response to client: id={}, has_error={}",
                     resp.id,
-                    resp.error.is_some()
+                    resp.response_result.is_err()
                 );
             }
             lsp_server::Message::Notification(notif) => {
@@ -590,7 +590,7 @@ impl LspServerState {
 
         // Send registration request to client (fire-and-forget, we don't need the response)
         self.send_request::<lsp_types::RegistrationRequest>(params, |_state, response| {
-            if let Some(error) = response.error {
+            if let Err(error) = response.response_result {
                 tracing::warn!(
                     "Failed to register file watchers: {} (code: {})",
                     error.message,
