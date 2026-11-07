@@ -1,7 +1,8 @@
 use crate::providers::semantic_tokens;
 use lsp_types::{
-    CompletionOptions, InlayHintOptions, PositionEncodingKind, RenameOptions, SemanticTokensOptions,
-    ServerCapabilities, TextDocumentSyncKind, TextDocumentSyncOptions, WorkDoneProgressOptions,
+    CompletionOptions, InlayHintOptions, PositionEncodingKind, RenameOptions,
+    SemanticTokensOptions, ServerCapabilities, TextDocumentSyncKind, TextDocumentSyncOptions,
+    WorkDoneProgressOptions,
 };
 
 pub(crate) fn server_capabilities() -> ServerCapabilities {
